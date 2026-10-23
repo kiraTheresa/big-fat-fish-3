@@ -1,6 +1,6 @@
 # QQ Chat Bot 架构方向文档
 
-> 版本：v0.2 · 2026-10-24
+> 版本：v0.3 · 2026-10-24
 > 定位：指明项目方向与架构划分，不构成实施规范。实现细节在开发中自行决策。
 
 ---
@@ -70,14 +70,52 @@ flowchart LR
 - 定时任务落盘持久化，重启恢复、错过的跳过；
 - 连接建议用正向 WS（Bot 连 NapCat），单连接全双工。
 
-## 5. 协议与文档
+## 5. 项目结构规范
+
+目录 = 分层职责，与第 4 节数据流一一对应：
+
+```
+big-fat-fish-3/
+├── docker-compose.yml        # 编排：napcat（bot-core 容器化后续加入）
+├── package.json              # ESM · 零框架 · 依赖极简（ws）
+├── .env / .env.example       # 本地配置：WS 地址 / token
+├── src/
+│   ├── index.js              # 装配入口：注册触发器、接线、启动
+│   ├── config.js             # 配置：env 优先 + 默认值
+│   ├── connection/           # WS 连接层
+│   │   └── onebot.js         #   连接/重连/API 调用（echo 匹配）
+│   ├── dispatch/             # 事件分发
+│   │   ├── dispatcher.js     #   事件 → 触发器链（按注册顺序，命中即停）
+│   │   └── registry.js       #   触发器注册表
+│   ├── triggers/             # 触发器：一文件一功能（现有 ping → pong）
+│   ├── sender/               # 发送层
+│   │   └── sender.js         #   队列 + 固定间隔限流，出站消息唯一收口
+│   └── utils/
+│       └── logger.js
+├── scheduler/                # 定时任务（下一期，占位）
+├── data/                     # 任务持久化（gitignore）
+├── napcat/                   # NapCat 挂卷：QQ 登录态 + 配置（gitignore）
+└── tmp/                      # 临时文件（gitignore）
+```
+
+分层规则：
+
+1. **目录 = 层职责**，数据单向流动：`connection → dispatch → triggers → sender`，禁止跨层乱穿；
+2. **触发器注册式**：新功能 = `triggers/` 加一个文件 + `index.js` 一行 `register()`，分发器内禁止出现业务 if-else；
+3. **触发器契约**：`{ name, match(event) → boolean, handle(ctx) }`，按注册顺序匹配，**命中即停**；
+4. **出站消息只走 sender**（限流全项目唯一位置）；触发器不直接触碰连接层，只通过 `ctx.reply()` / sender；
+5. **连接层只认识 OneBot 11**：事件上抛（`onEvent`）、API 下调（`callApi` + echo 匹配），不含任何业务。
+
+当前状态：连接/分发/发送三层的最小闭环与 `ping` 触发器已实现；`scheduler/` 为占位。
+
+## 6. 协议与文档
 
 Bot 核心只对接一套协议：**OneBot 11**。事件与 API 的完整定义以官方文档为准，本文不复制：
 
 - OneBot 11 标准：https://github.com/botuniverse/onebot-11
 - NapCat 文档（部署、WebUI 配置、扩展 API）：https://napcat.napneko.icu/
 
-## 6. 部署形态
+## 7. 部署形态
 
 Docker Compose，三容器（面板后续加入）：
 
@@ -92,7 +130,7 @@ flowchart LR
 
 要点：NapCat 登录态与配置挂卷持久化（重启免扫码）；Bot 核心的 `data/` 目录挂卷（任务持久化）。
 
-## 7. 技术栈
+## 8. 技术栈
 
 | 部分 | 选型 | 说明 |
 |---|---|---|
@@ -100,7 +138,7 @@ flowchart LR
 | 前端面板 | Next.js | 后续扩展，仅调 Bot 核心内部 API |
 | 接入层 | NapCat（Docker） | 只在 WebUI 里配网络与 token |
 
-## 8. 扩展方向（未排期）
+## 9. 扩展方向（未排期）
 
 - 聊天命令动态管理定时任务（需管理员命令体系）
 - 接入 LLM 生成回复（需会话上下文设计，届时评估触发器契约）
