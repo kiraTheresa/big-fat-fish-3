@@ -17,6 +17,15 @@ Desktop.ini
 tmp/
 temp/
 
+# ---- Node ----
+node_modules/
+
+# ---- 运行时数据 ----
+data/
+
+# ---- NapCat 挂卷（QQ 登录态与配置）----
+napcat/
+
 # ---- 环境与密钥（勿提交敏感信息）----
 .env
 .env.local
