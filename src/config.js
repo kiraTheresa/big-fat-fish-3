@@ -18,4 +18,16 @@ export const config = {
   sendIntervalMs: num(process.env.SEND_INTERVAL_MS, 1000),
   // 数据目录（消息 JSONL 落盘根目录）
   dataDir: process.env.DATA_DIR ?? 'data',
+  // ---- AIChat（LLM）----
+  // DeepSeek API Key（留空 = chat 触发器不生效）
+  deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
+  // OpenAI 兼容接口地址
+  deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
+  deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
+  // LLM 调用超时（ms）
+  chatTimeoutMs: num(process.env.CHAT_TIMEOUT_MS, 60000),
+  // 每次对话携带的历史条数（会话 JSONL 尾部）
+  chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
+  // 会话级冷却（ms）：窗口内后续消息静默跳过，防刷防刷量
+  chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 5000),
 };

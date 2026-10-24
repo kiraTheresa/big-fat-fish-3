@@ -1,5 +1,6 @@
-// Task 6 验证（spec G6）：消息存储——群/私聊 JSONL 落盘路径与字段形状、
-// 同会话 append-only、出站回复不回存。mock + 真连接 + 真 dispatcher 全链路。
+// Task 6 验证（spec G6）+ add-aichat-mvp 回存演进：消息存储——群/私聊 JSONL 落盘
+// 路径与字段形状、同会话 append-only、出站回复以 bot:true 回存（add-aichat-mvp spec
+// MODIFIED Requirement：落实 bot-core-design §6.3 预留条款）。
 // 模式：先起 mock → 设 env → 动态 import；DATA_DIR 注入 tmp/test-store，after 清理。
 // 存储故障隔离用例需要不同的 DATA_DIR，拆在独立文件 test/store-failure.test.js。
 import { test, after } from 'node:test';
@@ -59,7 +60,7 @@ async function waitForApiReady() {
 onebot.onEvent(dispatcher.dispatch);
 registry.register({
   name: 'store-echo',
-  match: (e) => e.raw_message.startsWith('hi'),
+  match: (e) => e.raw_message === 'hi group', // 精确匹配：后续 append-only 用例的 'hi again' 不触发回复，行数可预期
   handle: (ctx) => { ctx.reply('echo-back'); },
 });
 onebot.startConnection();
@@ -71,7 +72,7 @@ async function readLines(sessionKey) {
   return text.split('\n').filter((line) => line !== '');
 }
 
-test('群消息落盘：g-{group_id}.jsonl 追加一行，JSON 可解析、字段完整正确；回复不回存', { timeout: 10000 }, async () => {
+test('群消息落盘：入站行 + bot 回复行（bot:true 回存），字段完整正确', { timeout: 10000 }, async () => {
   server.injectEvent({
     post_type: 'message',
     message_type: 'group',
@@ -89,17 +90,16 @@ test('群消息落盘：g-{group_id}.jsonl 追加一行，JSON 可解析、字�
   );
   assert.equal(replyFrame.action, 'send_msg');
 
-  // 落盘为 fire-and-forget 异步写：轮询等待文件出现
+  // 落盘为 fire-and-forget 异步写：轮询等待两行齐备（入站 + bot 回复）
   await waitUntil(async () => {
     try {
-      return (await readLines('g-123')).length === 1;
+      return (await readLines('g-123')).length === 2;
     } catch {
       return false;
     }
   });
 
   const lines = await readLines('g-123');
-  assert.equal(lines.length, 1, '一条入站消息应恰好一行');
   const rec = JSON.parse(lines[0]);
   assert.equal(rec.sessionKey, 'g-123');
   assert.equal(rec.time, 1760000501);
@@ -109,13 +109,24 @@ test('群消息落盘：g-{group_id}.jsonl 追加一行，JSON 可解析、字�
   assert.equal(rec.user_id, 1001);
   assert.equal(rec.raw_message, 'hi group');
   assert.deepEqual(rec.sender, { nickname: '阿群', card: '', role: 'member' });
+  assert.ok(!rec.bot, '入站行不带 bot 标记');
 
-  // 出站回复不回存：回复已出站（上方 waitForFrame），等待超过一个发送间隔后行数不变
+  const botLine = JSON.parse(lines[1]);
+  assert.equal(botLine.bot, true, '回复行应带 bot:true 标记');
+  assert.equal(botLine.sessionKey, 'g-123');
+  assert.equal(botLine.message_type, 'group');
+  assert.equal(botLine.group_id, 123);
+  assert.equal(botLine.user_id, 1001, 'bot 行的 user_id 为对话对方');
+  assert.equal(botLine.raw_message, 'echo-back');
+  assert.ok(!('message_id' in botLine), 'bot 行不应有 message_id');
+  assert.ok(Number.isInteger(botLine.time), 'bot 行应有 time');
+
+  // 等待一个观察窗口后行数不再增长（无重复回存）
   await delay(SEND_INTERVAL_MS * 4);
-  assert.equal((await readLines('g-123')).length, 1, '出站回复不得回存（仍只含入站那条）');
+  assert.equal((await readLines('g-123')).length, 2, '两行后不再增长');
 });
 
-test('append-only：同会话第二条消息后文件恰好 2 行', { timeout: 10000 }, async () => {
+test('append-only：同会话第二条消息后文件恰好 3 行（入站/回复/入站）', { timeout: 10000 }, async () => {
   server.injectEvent({
     post_type: 'message',
     message_type: 'group',
@@ -126,18 +137,20 @@ test('append-only：同会话第二条消息后文件恰好 2 行', { timeout: 1
     raw_message: 'hi again',
     sender: { nickname: '阿二', card: '', role: 'member' },
   });
-  await waitUntil(async () => (await readLines('g-123')).length === 2);
+  await waitUntil(async () => (await readLines('g-123')).length === 3);
 
   const lines = await readLines('g-123');
-  assert.equal(lines.length, 2, '同会话两条消息应恰好 2 行（追加而非覆盖）');
+  assert.equal(lines.length, 3, '追加而非覆盖：hi group / echo-back(bot) / hi again');
   const first = JSON.parse(lines[0]);
   const second = JSON.parse(lines[1]);
+  const third = JSON.parse(lines[2]);
   assert.equal(first.message_id, 5001, '首条记录应原样保留');
-  assert.equal(second.sessionKey, 'g-123');
-  assert.equal(second.time, 1760000502);
-  assert.equal(second.message_id, 5002);
-  assert.equal(second.user_id, 1002);
-  assert.equal(second.raw_message, 'hi again');
+  assert.equal(second.bot, true);
+  assert.equal(third.sessionKey, 'g-123');
+  assert.equal(third.time, 1760000502);
+  assert.equal(third.message_id, 5002);
+  assert.equal(third.user_id, 1002);
+  assert.equal(third.raw_message, 'hi again');
 });
 
 test('私聊落盘：p-{user_id}.jsonl，快照不含 group_id', { timeout: 10000 }, async () => {

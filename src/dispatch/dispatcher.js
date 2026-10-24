@@ -36,6 +36,17 @@ export async function dispatch(event) {
     event,
     sessionKey,
     reply(text) {
+      // 出站回复回存（add-aichat-mvp spec，bot-core-design §6.3 预留条款）：
+      // 与入站同会话文件追加一行，bot:true 标记（无 message_id，发送前落盘）
+      appendMessage({
+        sessionKey,
+        time: Math.floor(Date.now() / 1000),
+        message_type: event.message_type,
+        ...(event.group_id !== undefined ? { group_id: event.group_id } : {}),
+        user_id: event.user_id,
+        raw_message: text,
+        bot: true,
+      });
       if (event.message_type === 'group') return sendGroup(event.group_id, text);
       return sendPrivate(event.user_id, text);
     },

@@ -153,20 +153,20 @@ test('E 完整流通路径日志（G7）：启动 → 已连接 → 收到消息
   assert.ok(iHit < iAck, `「触发器命中」应先于「发送确认」（${iHit} < ${iAck}）`);
 });
 
-test('F E2E 落盘（G6）：g-741883823.jsonl 恰 1 行、字段正确，回复 pong 不回存', { timeout: 10000 }, async () => {
+test('F E2E 落盘（G6 + aichat 回存演进）：g-741883823.jsonl 恰 2 行（入站 ping + bot pong）', { timeout: 10000 }, async () => {
   const file = join(MSG_DIR, 'g-741883823.jsonl');
-  // 存储为 fire-and-forget 异步写：轮询等待文件出现内容
+  // 存储为 fire-and-forget 异步写：轮询等待两行齐备（入站 + bot 回复）
   await waitUntil(async () => {
     try {
-      return (await readFile(file, 'utf8')).trim() !== '';
+      return (await readFile(file, 'utf8')).split('\n').filter((line) => line !== '').length === 2;
     } catch {
       return false;
     }
   });
-  await delay(SEND_INTERVAL_MS * 2); // 留出「误回存」观察窗口（用例 A 的 pong 早已出站）
+  await delay(SEND_INTERVAL_MS * 2); // 留出观察窗口（用例 A 的 pong 早已出站）
 
   const lines = (await readFile(file, 'utf8')).split('\n').filter((line) => line !== '');
-  assert.equal(lines.length, 1, '恰 1 行：一条入站 ping，出站 pong 不回存');
+  assert.equal(lines.length, 2, '恰 2 行：入站 ping + bot:true 的 pong 回存');
   const rec = JSON.parse(lines[0]);
   assert.equal(rec.sessionKey, 'g-741883823');
   assert.equal(rec.raw_message, 'ping');
@@ -174,6 +174,12 @@ test('F E2E 落盘（G6）：g-741883823.jsonl 恰 1 行、字段正确，回复
   assert.equal(rec.group_id, 741883823);
   assert.equal(rec.message_type, 'group');
   assert.equal(rec.sender.nickname, '测试者');
+  assert.ok(!rec.bot, '入站行不带 bot 标记');
+  const botLine = JSON.parse(lines[1]);
+  assert.equal(botLine.bot, true, '回复 pong 以 bot:true 回存（add-aichat-mvp spec）');
+  assert.equal(botLine.raw_message, 'pong');
+  assert.equal(botLine.sessionKey, 'g-741883823');
+  assert.ok(!('message_id' in botLine), 'bot 行不应有 message_id');
 });
 
 test('G 非 message 事件静默：注入 meta_event.heartbeat，无任何出站帧', { timeout: 10000 }, async () => {
