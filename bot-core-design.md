@@ -1,6 +1,6 @@
 # Bot 核心设计：分层、模块与消息流
 
-> 版本：v0.1 · 2026-10-24
+> 版本：v0.2 · 2026-10-24（新增：分发打标 sessionKey、消息存储设计）
 > 定位：讲清 Bot 核心的模块划分、分层职责与**一条消息的完整流通路径**。
 > 姊妹文档：[qq-chatbot-architecture.md](./qq-chatbot-architecture.md)（项目方向与边界），本文不重复。
 
@@ -23,7 +23,7 @@ flowchart TB
     SCH["scheduler/ 定时任务<br/>（预留，旁路）"] --> S1
     CFG["config.js 配置"] -.-> C1
     LOG["utils/logger.js 日志"] -.-> MAIN
-    STORE["data/ 持久化（预留）"] -.-> SCH
+    STORE["data/ 持久化<br/>消息存储 + 任务落盘"] -.-> SCH
 
     style MAIN fill:#f0fdf4,stroke:#86efac
     style SCH fill:#fff7ed,stroke:#fdba74
@@ -68,7 +68,7 @@ flowchart LR
 
 ### 2.2 生成与出站：命中即处理
 
-过了三道门的消息进入触发器链，匹配成功就生成回复，然后统一出站：
+过了三道门的消息，在分发层还有一步**打标**：计算会话键并挂到 `ctx.sessionKey`（群聊 `g-{group_id}`、私聊 `p-{user_id}`）。同一个 sessionKey 的消息属于同一场对话——冷却计数、上下文记忆、消息存储都以它为索引，下游谁都不用自己拼。打完标的消息进入触发器链，匹配成功就生成回复，然后统一出站：
 
 ```mermaid
 flowchart LR
@@ -103,7 +103,7 @@ sequenceDiagram
     N->>C: 推送 message 事件（JSON，含 raw_message="ping"）
     C->>C: 筛选①②：JSON ✓ · 无 echo ✓ → 上抛
     C->>D: onEvent(事件)
-    D->>D: 筛选③：post_type=message ✓ · 构造 ctx（含 reply()）
+    D->>D: 筛选③ ✓ · 打标 sessionKey · 构造 ctx（含 reply()）
     D->>T: 按注册顺序匹配
     T->>T: ping 触发器 match 命中 → handle → ctx.reply("pong")
     T->>S: reply 交给发送队列
@@ -127,7 +127,7 @@ sequenceDiagram
 | 层 | 目录 | 职责一句话 | 关键决策 | 禁止事项 |
 |---|---|---|---|---|
 | L1 连接 | `src/connection/` | 字节与协议：收帧、发帧、重连、echo 匹配 | 正向 WS + Bearer 鉴权 + 15s 调用超时 | 出现任何业务词汇 |
-| L2 分发 | `src/dispatch/` | 筛选与路由：决定什么事件能到业务层 | MVP 只放行 message 事件 | 写业务 if-else |
+| L2 分发 | `src/dispatch/` | 筛选 → 打标 → 派发 | MVP 只放行 message；打标 sessionKey 后进触发器 | 写业务 if-else |
 | L3 处理 | `src/triggers/` | 触发器链：一条消息触发什么回复 | 注册式、按序匹配、命中即停 | 触发器之间互相调用 |
 | L4 发送 | `src/sender/` | 出站收口：队列 + 限流 | 固定 1s 间隔 | 提供绕过队列的接口 |
 
@@ -151,13 +151,55 @@ sequenceDiagram
 | 配置 | `src/config.js` | ✅ | env 优先 + 默认值，全项目唯一配置来源 |
 | 日志 | `src/utils/logger.js` | ✅ | 统一格式 `[时间] LEVEL 消息` |
 | 发送队列 | `src/sender/sender.js` | ✅ | 1s 固定间隔，全项目唯一出站口 |
-| 持久化 | `data/` | 预留 | 定时任务落盘，重启恢复 |
+| 持久化 | `data/` | 设计已定（§6） | 消息 JSONL 先行；定时任务落盘随后 |
 | 权限 | 未建 | 预留 | 管理员命令需要，一个 QQ 号白名单即可 |
 | 调度器 | `scheduler/` | 预留 | 旁路直插发送层，见第 1 节 |
 
 ---
 
-## 6. MVP 范围与现状
+## 6. 消息存储设计
+
+### 6.1 背景：为什么必须自己存
+
+- OneBot 11 正向 WS **只推实时事件，不补发**：断线/重启期间的消息不会重推，连接前的历史更不会回放；
+- NapCat 不维护可靠的消息库：`get_group_msg_history` 等拉取 API 查的是 QQNT 本地缓存，掉线期间会缺，且不是为分析设计的形状；
+- 结论：**消息流过分发层时自己落一份**，这是唯一可靠的历史来源。
+
+### 6.2 设计决策
+
+| 决策点 | 结论 | 理由 |
+|---|---|---|
+| 挂载点 | 分发层出口（打标后的 ctx 快照），不存原始帧 | 存"洗干净 + 带 sessionKey"的形状，业务与 LLM 直接可用 |
+| 存的范围 | 仅 message 事件 | 心跳/notice 对历史无价值，需要时再扩 |
+| 文件粒度 | 按会话分文件：`data/messages/{sessionKey}.jsonl` | sessionKey 即文件名；单会话重放/喂上下文只读一个文件 |
+| 格式 | JSONL 追加写（append-only） | 零依赖、可 grep、可重放；查询复杂了再迁 SQLite，届时写转换脚本 |
+
+存储条目 = ctx 快照，一条一行：
+
+```json
+{ "sessionKey": "g-741883823", "time": 1760000000, "message_id": -114514,
+  "message_type": "group", "group_id": 741883823, "user_id": 2434546640,
+  "raw_message": "ping", "sender": { "nickname": "天子", "card": "", "role": "member" } }
+```
+
+### 6.3 两条纪律（比位置更重要）
+
+1. **旁听者模式**：dispatcher 派发前把 ctx 快照丢给存储钩子即返回，落盘失败/变慢不影响主管道与回复（fire-and-forget）；
+2. **出站回复不回存**：MVP 只记录入站消息；将来 LLM 需要完整对话上下文时，再把 `reply()` 的内容一并落盘。
+
+```mermaid
+flowchart LR
+    D["分发层<br/>筛选+打标完成"] --> ST["存储钩子<br/>fire-and-forget"]
+    D --> T["触发器链"]
+    ST --> F["data/messages/{sessionKey}.jsonl<br/>追加写"]
+
+    style ST fill:#fff7ed,stroke:#fdba74
+    style F fill:#f0fdf4,stroke:#86efac
+```
+
+---
+
+## 7. MVP 范围与现状
 
 | 项 | 状态 |
 |---|---|
@@ -166,6 +208,7 @@ sequenceDiagram
 | L3 触发器链 + ping | ✅ 已实现（闭环验证进行中） |
 | L4 发送层（队列限流） | ✅ 已实现 |
 | 心跳监控 / 事件去重 | ⏸ 遇到问题再补（保险丝项） |
-| 调度器 / 持久化 / 权限 | 下一期 |
+| sessionKey 打标 + 消息存储 | ⏭ 已定设计（§6），待实现 |
+| 调度器 / 权限 | 下一期 |
 
 MVP 验收标准就一条：**群里发 `ping`，机器人回 `pong`，日志里能看到完整流通路径**。
