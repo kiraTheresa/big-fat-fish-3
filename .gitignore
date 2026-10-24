@@ -30,3 +30,6 @@ napcat/
 .env
 .env.local
 *.pem
+
+# AI IDE
+.trae/
