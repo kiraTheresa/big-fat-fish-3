@@ -1,7 +1,18 @@
-const ts = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
+// 统一日志格式：[HH:mm:ss] LEVEL 消息（spec「可观测性」要求）
+// 三级日志均经 console.log 输出，便于测试与 E2E 统一捕获 stdout
+function log(level, args) {
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  console.log(`[${time}] ${level} ${args.join(' ')}`);
+}
 
 export const logger = {
-  info: (...args) => console.log(`[${ts()}] INFO `, ...args),
-  warn: (...args) => console.warn(`[${ts()}] WARN `, ...args),
-  error: (...args) => console.error(`[${ts()}] ERROR`, ...args),
+  info(...args) {
+    log('INFO', args);
+  },
+  warn(...args) {
+    log('WARN', args);
+  },
+  error(...args) {
+    log('ERROR', args);
+  },
 };
