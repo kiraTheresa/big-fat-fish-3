@@ -16,6 +16,13 @@ const ENV_KEYS = [
   'CHAT_TIMEOUT_MS',
   'CHAT_CONTEXT_LINES',
   'CHAT_COOLDOWN_MS',
+  'ADMIN_QQ',
+  'PERSONA_DIR',
+  'PERSONA_MAX_BYTES',
+  'DISTILL_SILENCE_MS',
+  'DISTILL_BATCH_SIZE',
+  'DISTILL_INTERVAL_MS',
+  'USAGE_DIR',
 ];
 
 // ESM 模块按完整 URL 缓存：同一路径第二次 import 拿到的是缓存对象。
@@ -53,6 +60,14 @@ test('默认值：未设置相关 env 时返回全部默认值', async () => {
   assert.equal(config.chatTimeoutMs, 60000);
   assert.equal(config.chatContextLines, 20);
   assert.equal(config.chatCooldownMs, 5000);
+  // 自进化人设（add-self-evolving-persona spec）
+  assert.deepEqual(config.adminQq, []);
+  assert.equal(config.personaDir, 'data/personas');
+  assert.equal(config.personaMaxBytes, 4096);
+  assert.equal(config.distillSilenceMs, 600000);
+  assert.equal(config.distillBatchSize, 50);
+  assert.equal(config.distillIntervalMs, 60000);
+  assert.equal(config.usageDir, 'data/usage');
 });
 
 test('env 覆盖：设置变量后加载全新模块实例，注入值生效', async () => {
@@ -69,6 +84,13 @@ test('env 覆盖：设置变量后加载全新模块实例，注入值生效', a
     CHAT_TIMEOUT_MS: '789',
     CHAT_CONTEXT_LINES: '5',
     CHAT_COOLDOWN_MS: '100',
+    ADMIN_QQ: '111,222',
+    PERSONA_DIR: 'data/personas-tmp',
+    PERSONA_MAX_BYTES: '2048',
+    DISTILL_SILENCE_MS: '120000',
+    DISTILL_BATCH_SIZE: '10',
+    DISTILL_INTERVAL_MS: '5000',
+    USAGE_DIR: 'data/usage-tmp',
   });
   assert.equal(config.wsUrl, 'ws://127.0.0.1:9999');
   assert.equal(config.accessToken, 'test-token');
@@ -82,6 +104,13 @@ test('env 覆盖：设置变量后加载全新模块实例，注入值生效', a
   assert.equal(config.chatTimeoutMs, 789);
   assert.equal(config.chatContextLines, 5);
   assert.equal(config.chatCooldownMs, 100);
+  assert.deepEqual(config.adminQq, ['111', '222']);
+  assert.equal(config.personaDir, 'data/personas-tmp');
+  assert.equal(config.personaMaxBytes, 2048);
+  assert.equal(config.distillSilenceMs, 120000);
+  assert.equal(config.distillBatchSize, 10);
+  assert.equal(config.distillIntervalMs, 5000);
+  assert.equal(config.usageDir, 'data/usage-tmp');
 });
 
 test('num 辅助：env 值不可解析为整数时回退默认值', async () => {
@@ -91,4 +120,11 @@ test('num 辅助：env 值不可解析为整数时回退默认值', async () => 
   });
   assert.equal(config.sendIntervalMs, 1000);
   assert.equal(config.reconnectDelayMs, 5000);
+});
+
+test('ADMIN_QQ 解析：逗号分隔转数组，空串与空白项被过滤', async () => {
+  const config = await loadFreshConfig('admin-qq', {
+    ADMIN_QQ: '123,, 456 ,',
+  });
+  assert.deepEqual(config.adminQq, ['123', '456']);
 });

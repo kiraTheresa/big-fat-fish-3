@@ -6,11 +6,27 @@ import { dispatch } from './dispatch/dispatcher.js';
 import { register } from './dispatch/registry.js';
 import { logger } from './utils/logger.js';
 import ping from './triggers/ping.js';
+import command from './triggers/command.js';
 import chat from './triggers/chat.js';
+import { startDistiller, stopDistiller } from './distill/distiller.js';
 
 register(ping); // L3：加功能 = triggers/ 加一个文件 + 此处一行注册（ping 先注册，优先于 chat）
+register(command); // L3 指令：'/' 前缀（help/status/persona/memory/remember/reset/history），置于 chat 前优先（命中即停，指令不落入 LLM）
 register(chat); // AIChat：私聊全量 / 群聊 @bot（未配置 DEEPSEEK_API_KEY 时自动不生效）
 onEvent(dispatch); // 接线：L1 连接层事件上抛 → L2 分发层（筛选 / 打标 / 存储 / 触发器链）
 
 logger.info(`Bot 核心启动，目标: ${config.wsUrl}`);
 startConnection(); // L1：连上 OneBot（NapCat）正向 WS
+
+// 离线提炼调度器（add-self-evolving-persona「离线提炼」）：未配置 LLM 不启动。
+// 启动后才接管 SIGINT/SIGTERM（未启动时保持 Node 默认信号行为），退出路径停掉
+// 调度器 interval 的最小清理。
+if (config.deepseekApiKey !== '') {
+  startDistiller();
+  const shutdown = () => {
+    stopDistiller();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}

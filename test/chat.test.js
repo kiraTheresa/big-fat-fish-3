@@ -1,6 +1,8 @@
-// AIChat MVP · Task 5 验证（add-aichat-mvp spec G1/G3/G4/G5/G6）：
-// chat 触发器全链路——私聊全量、群 @bot、不触发矩阵、空文本、多轮上下文（LLM messages
-// 形状断言）、冷却跳过、LLM 失败/超时兜底、ping 优先、未配置 key 不生效、注册顺序。
+// AIChat 触发器验证（add-aichat-mvp G1/G3/G4/G5/G6 + add-self-evolving-persona Task 7）：
+// 全链路——私聊全量、群 @bot、不触发矩阵、空文本、多轮上下文（LLM messages 形状断言）、
+// 冷却跳过、LLM 失败/超时兜底、ping 优先、未配置 key 不生效、注册顺序；
+// Task 7 增补——system 组装（种子人设 + applyPersonaPatch 自定义注入）、resetAt 水位
+// 过滤（入站与 bot 行同滤）、usage 落盘（带 usage 记账 / null 不记）。
 // 装配：mock OneBot + mock LLM 双服务器 → env → 手动 register(ping)+register(chat)
 //（与 index.js 同序；index.js 的真实顺序另做静态断言）。
 import { test, after } from 'node:test';
@@ -13,6 +15,8 @@ import { startLlmServer } from './llm-server.js';
 const TOKEN = 'chat-test-token';
 const DATA_DIR = `tmp/test-chat-${process.pid}`;
 const MSG_DIR = join(DATA_DIR, 'messages');
+const PERSONA_DIR = join(DATA_DIR, 'personas');
+const USAGE_DIR = join(DATA_DIR, 'usage');
 const SEND_INTERVAL_MS = 50;
 const SELF_ID = 10000; // 事件里的 self_id：@bot 判断依据
 const FALLBACK = 'AI 开小差了，稍后再试～';
@@ -37,6 +41,8 @@ process.env.SEND_INTERVAL_MS = String(SEND_INTERVAL_MS);
 process.env.RECONNECT_DELAY_MS = '100';
 process.env.API_TIMEOUT_MS = '2000';
 process.env.DATA_DIR = DATA_DIR;
+process.env.PERSONA_DIR = PERSONA_DIR; // 人设/用量随 DATA_DIR 落临时目录，测后一并清理（不污染真实 data/）
+process.env.USAGE_DIR = USAGE_DIR;
 process.env.DEEPSEEK_API_KEY = 'test-key';
 process.env.DEEPSEEK_BASE_URL = llmServer.url;
 process.env.CHAT_TIMEOUT_MS = '500';
@@ -138,6 +144,11 @@ test('私聊触发：LLM 收到 [system, user]，回复出站，会话文件含 
     { role: 'user', content: '你好' },
   ]);
   assert.equal(req.body.messages[0].role, 'system');
+  // system 组装断言（add-self-evolving-persona）：种子标题 + 记忆段 + 行为规则；子串即可，不断全文
+  const system = req.body.messages[0].content;
+  assert.ok(system.includes('# 大肥鱼'), 'system 应含种子人设标题');
+  assert.ok(system.includes('## 记忆'), 'system 应含记忆段标题');
+  assert.ok(system.includes('## 行为规则'), 'system 应含行为规则标题');
 
   // 回存：入站行 + bot 行（bot:true、无 message_id）
   await waitUntil(async () => {
@@ -331,6 +342,137 @@ test('未配置 key：chat 触发器不生效（私聊消息不吞、不调 LLM�
     assert.equal(onebotServer.frames.length, frameBaseline, '未配置 key 不得产生出站帧');
   } finally {
     config.deepseekApiKey = savedKey;
+  }
+});
+
+test('system 组装：种子人设注入（空记忆保留标题与空行）；patch 自定义 character/memory 注入', { timeout: 10000 }, async () => {
+  const { applyPersonaPatch } = await import('../src/store/persona-store.js');
+
+  // 种子会话（persona 首访落种子）：system = 种子 character + 空记忆段 + 行为规则
+  const frameBaseline = onebotServer.frames.length;
+  onebotServer.injectEvent(privateEvent('你是谁', 7001));
+  await waitNextFrame(
+    frameBaseline,
+    (f) => f.action === 'send_msg' && f.params?.user_id === 7001 && f.params?.message === 'MOCK_LLM_REPLY'
+  );
+
+  let system = llmServer.requests.at(-1).body.messages[0].content;
+  assert.ok(system.startsWith('# 大肥鱼'), 'system 应以种子 character 开头');
+  assert.ok(system.includes('呆萌心大，反应慢半拍，但很真诚'), '种子性格内容应注入');
+  assert.ok(system.includes('## 记忆'), '记忆段标题应保留（空记忆亦然）');
+  // 空 memory：『## 记忆』与『## 行为规则』之间仅保留固定空行（结构稳定 > 内容紧凑，缓存友好）
+  assert.equal(
+    system.split('## 记忆')[1].split('## 行为规则')[0],
+    '\n\n\n\n',
+    '空记忆应保留标题与空行结构'
+  );
+  assert.ok(system.includes('## 行为规则'), '行为规则标题应在');
+  assert.ok(system.includes('- 用简短口语化的中文回复，不要使用 Markdown 格式'), '行为规则行应注入');
+
+  // patch 会话：applyPersonaPatch 预置自定义 character/memory 后，注入的应是自定义内容
+  await applyPersonaPatch('p-7002', {
+    character: '你是七号测试鱼，冷静话少。',
+    memory: '- [2026-10-25 10:00] 测试者: 七号鱼爱吃火锅',
+  });
+  const baseline2 = onebotServer.frames.length;
+  onebotServer.injectEvent(privateEvent('你记得啥', 7002));
+  await waitNextFrame(
+    baseline2,
+    (f) => f.action === 'send_msg' && f.params?.user_id === 7002 && f.params?.message === 'MOCK_LLM_REPLY'
+  );
+
+  system = llmServer.requests.at(-1).body.messages[0].content;
+  assert.ok(system.startsWith('你是七号测试鱼，冷静话少。'), 'patch 的 character 应注入');
+  assert.ok(system.includes('七号鱼爱吃火锅'), 'patch 的 memory 应注入');
+  assert.ok(system.includes('## 记忆') && system.includes('## 行为规则'), '段结构保持固定');
+  assert.ok(!system.includes('呆萌心大'), 'patch 后不得残留种子性格');
+});
+
+test('reset 水位过滤：resetAt 之前的入站行与 bot 行同滤，之后的消息保留', { timeout: 10000 }, async () => {
+  const { updateState } = await import('../src/store/session-state.js');
+  const { writeFile } = await import('node:fs/promises');
+
+  // 手工构造历史：resetAt 之前一条入站 + 一条 bot 行（水位同滤的两类对象），之后一条入站
+  const rows = [
+    { sessionKey: 'p-7101', time: 1000, message_id: -91001, message_type: 'private', user_id: 7101, raw_message: '水位前的旧话', sender: { nickname: '旧人' } },
+    { sessionKey: 'p-7101', time: 2000, message_type: 'private', user_id: 7101, raw_message: '水位前的旧回复', bot: true },
+    { sessionKey: 'p-7101', time: 3000, message_id: -91002, message_type: 'private', user_id: 7101, raw_message: '水位后的新话', sender: { nickname: '新人' } },
+  ];
+  await writeFile(join(MSG_DIR, 'p-7101.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  await updateState('p-7101', { resetAt: 2500 }); // 水位落在 2000 与 3000 之间
+
+  const frameBaseline = onebotServer.frames.length;
+  onebotServer.injectEvent(privateEvent('过水位的新消息', 7101));
+  await waitNextFrame(
+    frameBaseline,
+    (f) => f.action === 'send_msg' && f.params?.user_id === 7101 && f.params?.message === 'MOCK_LLM_REPLY'
+  );
+
+  const messages = llmServer.requests.at(-1).body.messages;
+  assert.deepEqual(
+    messages.map((m) => m.role),
+    ['system', 'user', 'user'],
+    '历史仅剩 resetAt 之后的入站行 + 当前消息'
+  );
+  assert.equal(messages[1].content, '水位后的新话');
+  assert.equal(messages[2].content, '过水位的新消息');
+  const all = messages.map((m) => m.content).join('\n');
+  assert.ok(!all.includes('水位前的旧话'), 'resetAt 之前的入站行应被水位过滤');
+  assert.ok(!all.includes('水位前的旧回复'), 'resetAt 之前的 bot 行应被水位过滤（bot 行同滤）');
+});
+
+test('usage 落盘：LLM 带 usage 记一行 kind:chat（token 数对应）；usage 为 null 不记账', { timeout: 10000 }, async () => {
+  const { appendUsage } = await import('../src/store/usage-store.js');
+  const { access } = await import('node:fs/promises');
+
+  // 带 usage：新会话 p-7201，用量文件从无到有、恰一行、字段一一对应
+  llmServer.setReply('USAGE_REPLY', { prompt_tokens: 101, completion_tokens: 202, total_tokens: 303, prompt_cache_hit_tokens: 404 });
+  try {
+    const frameBaseline = onebotServer.frames.length;
+    onebotServer.injectEvent(privateEvent('用量记账', 7201));
+    await waitNextFrame(
+      frameBaseline,
+      (f) => f.action === 'send_msg' && f.params?.user_id === 7201 && f.params?.message === 'USAGE_REPLY'
+    );
+    await waitUntil(async () => {
+      try {
+        return (await readFile(join(USAGE_DIR, 'p-7201.jsonl'), 'utf8')).trim() !== '';
+      } catch {
+        return false; // fire-and-forget 异步落盘，未到即未到
+      }
+    });
+    const lines = (await readFile(join(USAGE_DIR, 'p-7201.jsonl'), 'utf8')).split('\n').filter((l) => l !== '');
+    assert.equal(lines.length, 1, '新会话应恰记一行');
+    const rec = JSON.parse(lines[0]);
+    assert.equal(rec.kind, 'chat');
+    assert.equal(rec.model, 'deepseek-chat');
+    assert.equal(rec.prompt_tokens, 101);
+    assert.equal(rec.completion_tokens, 202);
+    assert.equal(rec.total_tokens, 303);
+    assert.equal(rec.prompt_cache_hit_tokens, 404);
+    assert.ok(Number.isFinite(rec.time), 'time 应为毫秒时间戳');
+
+    // usage 为 null（响应整体缺 usage 字段）：不记账。直接调 handle 取确定性——handle
+    // 返回即 usage 分支已同步执行完；再往用量链尾塞 sentinel 并等其落盘，此前提交
+    //（若有）必已写完，此时断言文件不存在才是可靠否定。
+    llmServer.setReply('NO_USAGE_REPLY', null);
+    const event = privateEvent('免记账', 7202);
+    await chat.handle({ event, sessionKey: 'p-7202', reply: async () => {} });
+    appendUsage('sentinel-null-usage', { time: 1, kind: 'chat', model: 'probe' });
+    await waitUntil(async () => {
+      try {
+        return (await readFile(join(USAGE_DIR, 'sentinel-null-usage.jsonl'), 'utf8')).trim() !== '';
+      } catch {
+        return false;
+      }
+    });
+    await assert.rejects(
+      () => access(join(USAGE_DIR, 'p-7202.jsonl')),
+      (err) => err.code === 'ENOENT',
+      'usage 为 null 不得落盘'
+    );
+  } finally {
+    llmServer.setReply('MOCK_LLM_REPLY');
   }
 });
 

@@ -30,4 +30,22 @@ export const config = {
   chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
   // 会话级冷却（ms）：窗口内后续消息静默跳过，防刷防刷量
   chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 5000),
+  // ---- 自进化人设（默认值出处：add-self-evolving-persona spec 设计决策）----
+  // 管理员 QQ 白名单（ADMIN_QQ 逗号分隔 → 字符串数组，跨群统一；默认 [] = 群聊管理指令全拒）
+  adminQq: (process.env.ADMIN_QQ ?? '')
+    .split(',')
+    .map((qq) => qq.trim())
+    .filter((qq) => qq !== ''),
+  // 人设文件根目录（按会话隔离的 character.md / memory.md）
+  personaDir: process.env.PERSONA_DIR ?? 'data/personas',
+  // character.md / memory.md 单文件字节上限（append 超限环形淘汰，patch 超限拒绝）
+  personaMaxBytes: num(process.env.PERSONA_MAX_BYTES, 4096),
+  // 离线提炼触发条件一：会话静默毫秒数（与批量条件先到先触发）
+  distillSilenceMs: num(process.env.DISTILL_SILENCE_MS, 600000),
+  // 离线提炼触发条件二：水位后新增消息条数
+  distillBatchSize: num(process.env.DISTILL_BATCH_SIZE, 50),
+  // 离线提炼调度器扫描间隔（ms）
+  distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 60000),
+  // LLM 用量 JSONL 落盘根目录
+  usageDir: process.env.USAGE_DIR ?? 'data/usage',
 };

@@ -1,10 +1,18 @@
 // mock LLM（OpenAI 兼容 /chat/completions）HTTP 服务器：自动化验证专用，零真实外呼。
-// 与 test/mock-onebot.js 同思路：记录请求、可注入行为（setReply/setFail/setHang）。
+// 与 test/mock-onebot.js 同思路：记录请求、可注入行为（setReply/setFail/setHang/setEmpty）。
 import { createServer } from 'node:http';
+
+// ok 模式默认携带的 usage（仿 DeepSeek 形状，含缓存命中 prompt_cache_hit_tokens）
+const DEFAULT_USAGE = {
+  prompt_tokens: 11,
+  completion_tokens: 22,
+  total_tokens: 33,
+  prompt_cache_hit_tokens: 44,
+};
 
 export async function startLlmServer() {
   const requests = []; // { method, url, headers, body }（body 为已解析 JSON）
-  let mode = { kind: 'ok', content: 'MOCK_LLM_REPLY' };
+  let mode = { kind: 'ok', content: 'MOCK_LLM_REPLY', usage: DEFAULT_USAGE };
 
   const server = createServer((req, res) => {
     let raw = '';
@@ -29,9 +37,11 @@ export async function startLlmServer() {
         res.end(JSON.stringify({ error: 'mock llm down' }));
         return;
       }
-      // kind === 'ok'
+      // kind === 'ok'：usage 为 null 时响应整体不含 usage 字段（缺 usage 容错用例）
+      const payload = { choices: [{ message: { role: 'assistant', content: mode.content } }] };
+      if (mode.usage !== null) payload.usage = mode.usage;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: mode.content } }] }));
+      res.end(JSON.stringify(payload));
     });
   });
 
@@ -41,8 +51,8 @@ export async function startLlmServer() {
     port: server.address().port,
     url: `http://127.0.0.1:${server.address().port}`,
     requests,
-    setReply(content) {
-      mode = { kind: 'ok', content };
+    setReply(content, usage = DEFAULT_USAGE) {
+      mode = { kind: 'ok', content, usage };
     },
     setFail() {
       mode = { kind: 'fail' };

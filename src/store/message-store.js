@@ -50,3 +50,31 @@ export async function readRecentMessages(sessionKey, limit) {
     return [];
   }
 }
+
+// 读时间水位 sinceTime 之后的消息（尾部最多 limit 条，升序），供 distiller 取
+// 「待提炼增量」与 /status 统计未提炼条数（add-self-evolving-persona Task 8 预留，
+// Task 6 的 /status 先行使用）。项目数据量小，直接全读后过滤（无需尾部动态扩读）：
+// JSONL 追加写天然按时间升序，过滤 rec.time > sinceTime（严格大于，水位本身不重复
+// 处理）后取尾部 limit 条即得。文件不存在返回 []；损坏行跳过；读失败仅记 WARN。
+export async function readMessagesSince(sessionKey, sinceTime, limit) {
+  try {
+    const file = join(config.dataDir, 'messages', `${sessionKey}.jsonl`);
+    const text = await readFile(file, 'utf8');
+    const records = [];
+    for (const line of text.split('\n')) {
+      if (line === '') continue;
+      try {
+        records.push(JSON.parse(line));
+      } catch {
+        // 损坏行跳过：不因单行坏数据丢掉整个水位区间
+      }
+    }
+    const filtered = records.filter((rec) => (rec.time ?? 0) > sinceTime);
+    // limit ≤ 0 时 slice(-0) 会误返回全量，显式归一为 []
+    return limit > 0 ? filtered.slice(-limit) : [];
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    logger.warn(`消息读取失败: ${err.message}`);
+    return [];
+  }
+}
