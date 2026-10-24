@@ -173,6 +173,9 @@ sequenceDiagram
 | 存的范围 | 仅 message 事件 | 心跳/notice 对历史无价值，需要时再扩 |
 | 文件粒度 | 按会话分文件：`data/messages/{sessionKey}.jsonl` | sessionKey 即文件名；单会话重放/喂上下文只读一个文件 |
 | 格式 | JSONL 追加写（append-only） | 零依赖、可 grep、可重放；查询复杂了再迁 SQLite，届时写转换脚本 |
+| 定时任务 | `data/jobs.json` 单文件全量读写 | 任务量级小（几十条），改一条写一次；原子写（写临时文件 + rename）防半截文件 |
+
+**最终选型（已拍板）**：消息与任务均先用 JSON 文件，出现跨会话查询/统计需求时再迁移 SQLite（嵌入式，非服务器型）。
 
 存储条目 = ctx 快照，一条一行：
 
