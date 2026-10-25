@@ -4,8 +4,9 @@ services:
     container_name: napcat
     restart: always
     ports:
-      - "6099:6099"   # WebUI：扫码登录 / 配置网络
-      - "3001:3001"   # OneBot 11 正向 WebSocket（Bot 连接入口）
+      - "6099:6099"   # WebUI：扫码登录 / 配置网络（必须保留，登录入口）
+      - "3001:3001"   # OneBot 11 正向 WebSocket：容器网络内 bot 走 ws://napcat:3001，
+                      # 本宿主映射仅供开发期宿主机 node 直连调试，生产可移除
     environment:
       NAPCAT_UID: "1000"
       NAPCAT_GID: "1000"
@@ -14,4 +15,21 @@ services:
       - ./napcat/QQ:/app/.config/QQ         # QQ 登录态持久化（重启免扫码）
       - ./napcat/config:/app/napcat/config  # NapCat 配置持久化
 
-  # bot-core（容器化后加入本编排；开发期直接宿主机 node 运行）
+  # bot-core：与 napcat 同编排，容器网络内以服务名互连；纯出站客户端，不暴露端口
+  bot:
+    build: .
+    container_name: big-fat-fish
+    restart: always
+    depends_on:
+      - napcat          # 只保证启动顺序；napcat 就绪慢无妨，bot 断线 5s 自动重连兜底
+    environment:
+      # 覆盖 .env 里的 localhost（compose 的 environment 优先级高于 env_file）：
+      # 容器网络内经服务名访问 napcat
+      ONEBOT_WS_URL: ws://napcat:3001
+      # 时区：日志与记忆条目时间戳取本地时区（镜像内已装 tzdata）
+      TZ: Asia/Shanghai
+    env_file:
+      - .env            # 其余配置（token / LLM key / 管理白名单等）与宿主机同源
+    volumes:
+      - ./data:/app/data            # 全部运行时数据（messages / personas / usage / session-state）
+      - ./config.json:/app/config.json:ro  # 行为开关（CONFIG_PATH 默认 ./config.json）
