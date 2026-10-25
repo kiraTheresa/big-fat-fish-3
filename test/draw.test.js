@@ -1,6 +1,7 @@
 // draw 触发器全链路验证（draw 接入）：mock OneBot + mock 图片 API 双服务器端到端。
 // 覆盖：注册顺序静态断言（draw 必须排在 command 前，否则 /draw 被 '/' match 吃掉）、
-// match 边界（'/draw 独词/带参' 命中、'/drawxxx' 不命中、非指令不命中）、白名单外
+// match 边界（'/draw 独词/带参' 命中（含未 @——match 不判寻址）、'/drawxxx' 不命中、
+// 非指令不命中）、群聊 @ 门控（白名单内裸发也静默零出站零请求）、白名单外 @ 也
 // 静默（零出站零 API 请求，防探测）、空 prompt 用法提示、群/私成功流（先回「在画了」
 // → 图片段 base64:// 出站 → 占位 bot 行落盘 JSONL → prompt 原样上送 API）、
 // 生成失败兜底文案、'/drawxxx' 落 command 走「不认识」（反向证明 draw 边界正确）。
@@ -67,8 +68,11 @@ after(async () => {
 
 // ---- 事件构造：与 dispatcher 同入口（post_type=message + 消息段数组）----
 let messageSeq = 0;
-function groupDrawEvent(raw, userId) {
+function groupDrawEvent(raw, userId, atBot = false) {
   ++messageSeq;
+  const message = [];
+  if (atBot) message.push({ type: 'at', data: { qq: String(SELF_ID) } });
+  message.push({ type: 'text', data: { text: raw } });
   return {
     post_type: 'message',
     message_type: 'group',
@@ -77,8 +81,8 @@ function groupDrawEvent(raw, userId) {
     self_id: SELF_ID,
     time: 1760004000 + messageSeq,
     message_id: -700000 + messageSeq,
-    message: [{ type: 'text', data: { text: raw } }],
-    raw_message: raw,
+    message,
+    raw_message: `${atBot ? '[@bot] ' : ''}${raw}`,
     sender: { nickname: `群友${userId}`, card: '', role: 'member' },
   };
 }
@@ -138,7 +142,7 @@ function onlyNew(mark, pred) {
   return (f) => pred(f) && onebotServer.frames.indexOf(f) >= mark;
 }
 
-test('match 边界：/draw 独词与带参命中；/drawxxx、/help、普通消息不命中', () => {
+test('match 边界：/draw 独词与带参命中（含未 @——match 不判寻址）；/drawxxx、/help、普通消息不命中', () => {
   assert.equal(draw.match(groupDrawEvent('/draw 一只猫', WHITELIST_QQ)), true);
   assert.equal(draw.match(groupDrawEvent('/draw', WHITELIST_QQ)), true);
   assert.equal(draw.match(groupDrawEvent('/drawxxx', WHITELIST_QQ)), false); // 正则边界：防误触
@@ -146,8 +150,8 @@ test('match 边界：/draw 独词与带参命中；/drawxxx、/help、普通消�
   assert.equal(draw.match(groupDrawEvent('你好呀', WHITELIST_QQ)), false);
 });
 
-test('白名单外（群聊）：静默——零出站帧、零图片 API 请求（防探测）', async () => {
-  onebotServer.injectEvent(groupDrawEvent('/draw 一只猫', OUTSIDER_QQ));
+test('白名单外（群聊，@ 本鱼）：静默——零出站帧、零图片 API 请求（防探测）', async () => {
+  onebotServer.injectEvent(groupDrawEvent('/draw 一只猫', OUTSIDER_QQ, true));
   await delay(300); // 静默语义：给足时间也不该有任何出站
   assert.equal(onebotServer.frames.filter(isSendMsg).length, 0);
   assert.equal(imageServer.requests.length, 0);
@@ -160,6 +164,13 @@ test('白名单外（私聊同样校验）：静默', async () => {
   assert.equal(imageServer.requests.length, 0);
 });
 
+test('群聊 @ 门控（白名单内）：裸发 /draw 未 @ —— 静默，零出站帧、零图片 API 请求', async () => {
+  onebotServer.injectEvent(groupDrawEvent('/draw 一只猫', WHITELIST_QQ)); // 未 @：白名单内也不动笔
+  await delay(300); // 静默语义：给足时间也不该有任何出站
+  assert.equal(onebotServer.frames.filter(isSendMsg).length, 0);
+  assert.equal(imageServer.requests.length, 0);
+});
+
 test('空 prompt（白名单内）：回用法提示，不调图片 API', async () => {
   onebotServer.injectEvent(privateDrawEvent('/draw', WHITELIST_QQ));
   const frame = await onebotServer.waitForFrame((f) => textFrame(f)?.startsWith('用法：/draw'));
@@ -167,9 +178,9 @@ test('空 prompt（白名单内）：回用法提示，不调图片 API', async 
   assert.equal(imageServer.requests.length, 0);
 });
 
-test('群聊成功流：「在画了」文本帧 → 图片段帧（base64://）→ 占位 bot 行落盘 JSONL', async () => {
+test('群聊成功流（@ 本鱼）：「在画了」文本帧 → 图片段帧（base64://）→ 占位 bot 行落盘 JSONL', async () => {
   const mark = onebotServer.frames.length;
-  onebotServer.injectEvent(groupDrawEvent('/draw 一只橘猫', WHITELIST_QQ));
+  onebotServer.injectEvent(groupDrawEvent('/draw 一只橘猫', WHITELIST_QQ, true));
 
   // 帧①：先回「在画了」（出图 20-70s 的体验铺垫）
   const ackFrame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f)?.includes('本鱼在画「一只橘猫」')));
@@ -210,7 +221,7 @@ test('生成失败（API 500）：回兜底文案，无图片段出站', async (
   const mark = onebotServer.frames.length;
   imageServer.setFail();
   try {
-    onebotServer.injectEvent(groupDrawEvent('/draw 失败的猫', WHITELIST_QQ));
+    onebotServer.injectEvent(groupDrawEvent('/draw 失败的猫', WHITELIST_QQ, true));
     const failFrame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f)?.includes('颜料打翻')));
     assert.equal(failFrame.params.group_id, GROUP_ID);
     await delay(SEND_INTERVAL_MS * 3); // 兜底后队列不会再吐图片段
@@ -220,9 +231,9 @@ test('生成失败（API 500）：回兜底文案，无图片段出站', async (
   }
 });
 
-test('/drawxxx 不命中 draw → 落 command 走「不认识」分支（边界正确性的反向证明）', async () => {
+test('/drawxxx 不命中 draw → 落 command 走「不认识」分支（@ 本鱼；边界正确性的反向证明）', async () => {
   const mark = onebotServer.frames.length;
-  onebotServer.injectEvent(groupDrawEvent('/drawxxx', WHITELIST_QQ));
+  onebotServer.injectEvent(groupDrawEvent('/drawxxx', WHITELIST_QQ, true));
   const frame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f)?.includes('不认识')));
   assert.ok(frame !== undefined);
 });

@@ -2,6 +2,9 @@
 // 注册顺序 ping → draw → command → chat（index.js）：command 的 match 是「'/' 开头就吃」，
 // draw 必须排在它前面——否则 /draw 永远收到「本鱼不认识这个指令」；命中即停保证
 // /draw 不会误入 chat 白白调一次 LLM。
+// 群聊 @ 门控（同 command 的指令寻址制）：群聊 /draw 须 @ 本鱼，裸发一律静默（与
+// 白名单未命中的静默同风格——不回引导、不暴露功能存在）；私聊免 @。match 仍宽吞
+// /^\/draw(\s|$)/，@ 判定在 handle 开头（未 @ 的 '/draw' 也不落入 chat 白调 LLM）。
 // 防滥用（白名单制）：DRAW_WHITELIST_QQ 白名单，群聊私聊一律校验（画图是真实成本，
 // 私聊也要防刷）；空名单全拒（安全默认）；未命中静默忽略——不回任何话，不暴露
 // 功能存在，防探测。名单内用户空 prompt 时回用法提示（对可信用户保持友好）。
@@ -13,6 +16,7 @@
 // 回存占位：图不进对话上下文（JSONL 只存文本），raw_message 记「[图片] prompt」——
 // 后续「刚才画的那张」类追问在 LLM 眼里 bot 曾发过一条与 prompt 相关的图，可接上。
 import { config } from '../config.js';
+import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
 import { appendMessage } from '../store/message-store.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
@@ -28,7 +32,8 @@ export default {
   name: 'draw',
   // 触发规则：配置了 key 才生效（同 chat 的 deepseekApiKey 模式，未配置恒不触发）；
   // '/draw' 独词或 '/draw + 空白 + 内容' 命中——'/drawxxx' 不命中（正则边界，防误触），
-  // 它会落到 command 走「不认识」分支
+  // 它会落到 command 走「不认识」分支。群聊不判 @（同 command：match 宽吞防误入
+  // chat，@ 门控在 handle 开头）
   match(event) {
     if (config.imageApiKey === '') return false;
     return /^\/draw(\s|$)/.test(extractText(event));
@@ -36,6 +41,13 @@ export default {
 
   async handle(ctx) {
     const { event, sessionKey } = ctx;
+
+    // 群聊 @ 门控（同 command）：未 @ 本鱼 → 静默。白名单内也不例外——寻址未明确
+    // 不动笔画图，与白名单未命中的静默合流为同一种「装没听见」
+    if (event.message_type === 'group' && !matchAt(event)) {
+      logger.info(`[draw] ${sessionKey} 群聊 /draw 未 @ 本鱼，静默忽略`);
+      return;
+    }
 
     // 白名单：群聊私聊一律校验（画图是真实成本，私聊同样防刷）；未命中静默（防探测）
     if (!config.drawWhitelist.includes(String(event.user_id))) {

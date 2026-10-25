@@ -3,6 +3,12 @@
 All notable changes to **Big Fat Fish** (大肥鱼) are documented here, from a user's perspective.
 Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new features), `fix` (bug fixes), `docs`, `chore`.
 
+## [0.9.4] - 2026-10-25
+
+### feat
+
+- **Group commands now need @ first** — in group chats, commands only take effect when the message @-mentions the fish (e.g. `@大肥鱼 /help`); without @, the fish stays quiet no matter what the message starts with. This ends three kinds of noise: replies to casual messages that merely start with `/` ("unknown command"), permission errors when non-admins poke admin commands, and — in groups with several bots — every prefix-matching bot answering the same bare command at once. Private chats are unchanged (`/help` works directly); `/draw` follows the same rule.
+
 ## [0.9.3] - 2026-10-25
 
 ### fix

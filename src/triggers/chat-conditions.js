@@ -4,17 +4,13 @@
 // 约定读 config.behavior.trigger[name].enabled——模块名即开关键，后续 nameCall/replyQuote
 // 模块直接 push 进数组即可，chat.js 消费端零改动。
 import { config } from '../config.js';
+import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
 import { isBotMessageId } from '../sender/bot-msg-ids.js';
 
-// @命中条件（MVP 起唯一条件）：消息段含 at 段且 qq === self_id（'all' @全体不算，
-// String() 双侧归一兼容数字/字符串两型 qq）；message 非数组（非标准/容错场景）不命中。
-export function matchAt(event) {
-  if (!Array.isArray(event.message)) return false;
-  return event.message.some(
-    (seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event.self_id)
-  );
-}
+// @命中条件（MVP 起唯一条件）：谓词本体在 utils/at.js——chat 的 at 条件与
+// command/draw 的群聊指令 @ 门控同源同语义（一处定义，防止两处对「@ 了本鱼」
+// 的认定各自漂移）。
 
 // 名字呼唤条件（upgrade-chat-pipeline「名字呼唤触发」）：消息纯文本包含任一别名即命中，
 // 大小写不敏感（text 与别名双侧 toLowerCase——中文无大小写不受影响，英文别名可被

@@ -7,11 +7,17 @@
 // 未配置 ADMIN_QQ（空数组）时群聊管理指令一律拒绝（安全默认，includes 恒 false）。
 // 唯一例外：/persona 对所有人开放查看，但其 reset 子操作是管理指令——该模块
 // adminOnly: false，reset 分支在 handle 内部自行判管理员（保留原语义与文案）。
+// 群聊 @ 门控（指令寻址制）：群聊指令必须 @ 本鱼——未 @ 的 '/' 消息一律静默返回，
+// 不回指引不回权限错误（闲聊带 / 文本、多 bot 群裸指令齐响都属越界回应，宁可装
+// 没听见）；私聊免 @（无寻址歧义）。match 仍宽吞 '/' 前缀（命中即停防其落入 chat
+// 白调 LLM），@ 判定收敛在 handle 开头——与 '/' 空内容静默同一模式。
 // 注册顺序 ping → command → chat（index.js）：命中即停，指令消息不会落入 chat 调 LLM。
 // 回复只经 ctx.reply() 交给发送层；所有存储操作走各 store 的既有串行化与容错；
 // handler 异常不在本模块捕获——dispatcher 对 trigger.handle 已有统一 try/catch 记 ERROR。
 import { config } from '../config.js';
+import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
+import { logger } from '../utils/logger.js';
 import { appendMemory, getPersona, readHistory, resetPersona } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
 import { readUsageStats } from '../store/usage-store.js';
@@ -181,12 +187,23 @@ export const COMMANDS = [
 export default {
   name: 'command',
   // 触发规则（spec）：extractText 后内容以 '/' 开头（'/' 单独一个字符同样命中——
-  // 命中即停可避免它落入 chat 白白调一次 LLM，是否执行指令在 handle 内判定）
+  // 命中即停可避免它落入 chat 白白调一次 LLM）。群聊不判 @：match 刻意宽吞（未 @
+  // 的 '/xxx 喊名' 也不得经 nameCall 误入 LLM），@ 门控与「是否回应」统一在 handle
+  // 开头判定（见下）
   match(event) {
     return extractText(event).startsWith('/');
   },
 
   async handle(ctx) {
+    // 群聊 @ 门控：未 @ 本鱼 → 静默返回。已知/未知/无权限一律不回——越界回应
+    // （闲聊里的 / 文本被回「不认识」、多 bot 群裸指令齐响、非管理员试探被回
+    // 权限错误）在此统一掐掉；管理员未 @ 同样不执行（寻址未明确，宁可漏响应
+    // 不乱响应）
+    if (ctx.event.message_type === 'group' && !matchAt(ctx.event)) {
+      logger.info(`[command] ${ctx.sessionKey} 群聊指令未 @ 本鱼，静默忽略`);
+      return;
+    }
+
     const text = extractText(ctx.event);
     const body = text.slice(1).trim();
 

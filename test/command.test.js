@@ -1,6 +1,7 @@
 // 指令触发器测试（add-self-evolving-persona spec「指令触发器」+ 注册表化重构）：
 // 注册表完整性（8 指令契约字段）、/help 由注册表自动生成（防手工列表漂移回归）、
-// 全指令回复等价、权限三态（私聊放行 / 群白名单内放行 / 群白名单外拒绝）、
+// 全指令回复等价、权限三态（私聊放行 / 群白名单内 @ 放行 / 群白名单外 @ 拒绝）、
+// 群聊 @ 门控（裸发已知/未知/无权限一律静默且无副作用，match 仍宽吞 '/' 前缀）、
 // ADMIN_QQ 未配置全拒、remember 落盘联动、未知指令指引、'/' 空内容静默、
 // /version 读 CHANGELOG（mock CHANGELOG_PATH）与缺失兜底、readMessagesSince 直测、
 // index.js 注册顺序静态断言。
@@ -94,6 +95,34 @@ test("'/' 单独一个字符：match 按前缀规则命中，但指令词为空 
   assert.equal(command.match(event), true, 'spec 规则：以 / 开头即命中（命中即停，不落入 chat）');
   const replies = await run(event);
   assert.equal(replies.length, 0, '指令词为空：选择静默忽略（@bot 空指令不回未知指引，避免骚扰）');
+});
+
+test('群聊 @ 门控：裸发指令（未 @）一律静默——已知/未知/无权限零回复、零副作用', async () => {
+  // 管理员裸发已知管理指令：不执行不回确认（寻址未明确，宁可漏响应不乱响应）
+  const adminBare = await run(groupEvent('/reset', 1201, 9001, '管理员甲'));
+  assert.equal(adminBare.length, 0, '管理员裸发 /reset 不得执行');
+  await assert.rejects(readFile(stateFile('g-1201')), (err) => err.code === 'ENOENT', '未 @ 不得落盘 resetAt');
+
+  // 白名单外裸发管理指令：不回权限错误（原先回「管理员可以用」的越界场景在此掐掉）
+  const outsiderBare = await run(groupEvent('/reset', 1202, 9003, '路人乙'));
+  assert.equal(outsiderBare.length, 0, '未 @ 的无权限指令静默');
+
+  // 未知指令裸发：不回「不认识」指引（闲聊带 / 文本不再被骚扰式回应）
+  const unknownBare = await run(groupEvent('/飞起来', 1203, 9001, '管理员甲'));
+  assert.equal(unknownBare.length, 0, '未 @ 的未知指令静默');
+
+  // 对照：@ 本鱼后管理员同指令正常执行（寻址明确才回应——门控放行后的既有路径）
+  const atOk = await run(groupEvent('/reset', 1204, 9001, '管理员甲', true));
+  assert.equal(atOk.length, 1, '@ 本鱼后指令正常执行');
+  await assert.doesNotReject(readFile(stateFile('g-1204')), '@ 后 resetAt 正常落盘');
+});
+
+test('群聊 @ 门控：match 仍宽吞 \'/\' 前缀（未 @ 也命中——命中即停，防裸指令误入 chat）', () => {
+  assert.equal(
+    command.match(groupEvent('/help', 1301, 9001, '管理员甲')),
+    true,
+    '未 @ 的 \'/\' 消息 match 仍命中（@ 门控在 handle 内判定）'
+  );
 });
 
 test('注册表完整性：7 个旧指令 + version 共 8 个，name 唯一、summary 非空、契约字段齐全', () => {
@@ -203,15 +232,15 @@ test('/reset 权限三态：私聊放行并落盘 resetAt；群白名单内放�
     '已重置会话的 /status 应展示本年份的可读时间（秒级换算毫秒后格式化）'
   );
 
-  // 群聊白名单内（9001 ∈ ADMIN_QQ）：放行并落盘
-  const grp = await run(groupEvent('/reset', 2001, 9001, '管理员甲'));
+  // 群聊白名单内（9001 ∈ ADMIN_QQ，@ 本鱼）：放行并落盘
+  const grp = await run(groupEvent('/reset', 2001, 9001, '管理员甲', true));
   assert.equal(grp.length, 1);
   assert.ok(!grp[0].includes('管理员可以用'), '白名单内不得回无权限提示');
   const grpState = JSON.parse(await readFile(stateFile('g-2001'), 'utf8'));
   assert.ok(Number.isInteger(grpState.resetAt), '群聊白名单内 resetAt 已落盘');
 
-  // 群聊白名单外（9003 ∉）：拒绝 → 提示且无任何副作用
-  const denied = await run(groupEvent('/reset', 2002, 9003, '路人乙'));
+  // 群聊白名单外（9003 ∉，@ 本鱼）：拒绝 → 提示且无任何副作用
+  const denied = await run(groupEvent('/reset', 2002, 9003, '路人乙', true));
   assert.equal(denied.length, 1);
   assert.ok(denied[0].includes('管理员'), '应回无权限提示');
   await assert.rejects(readFile(stateFile('g-2002')), (err) => err.code === 'ENOENT', '拒绝时不得落盘任何状态');
@@ -221,7 +250,7 @@ test('/reset 权限：ADMIN_QQ 未配置（adminQq=[]）时群聊管理指令一
   const saved = config.adminQq;
   config.adminQq = []; // 临时改写（沿袭 chat.test.js 的 config 变更法），用毕恢复
   try {
-    const denied = await run(groupEvent('/reset', 2101, 9001, '管理员甲')); // 白名单里的常客也一律拒绝
+    const denied = await run(groupEvent('/reset', 2101, 9001, '管理员甲', true)); // 白名单里的常客也一律拒绝
     assert.equal(denied.length, 1);
     assert.ok(denied[0].includes('管理员'), '未配置白名单：群聊管理指令一律拒绝');
     await assert.rejects(readFile(stateFile('g-2101')), (err) => err.code === 'ENOENT', '拒绝不得有副作用');
@@ -242,8 +271,8 @@ test('/persona reset（管理）：私聊放行恢复种子人设并审计；群
   const hist = await readFile(personaFile('p-7701', 'history.jsonl'), 'utf8');
   assert.ok(hist.includes('persona-reset'), 'reset 应记审计');
 
-  // 群白名单外拒绝
-  const denied = await run(groupEvent('/persona reset', 2201, 9003, '路人乙'));
+  // 群白名单外拒绝（@ 本鱼：寻址明确，权限判定照常）
+  const denied = await run(groupEvent('/persona reset', 2201, 9003, '路人乙', true));
   assert.equal(denied.length, 1);
   assert.ok(denied[0].includes('管理员'), '群白名单外 /persona reset 应拒绝');
 });
@@ -263,7 +292,7 @@ test('/history（管理）：空审计提示；有记录时每条一行（时间
 });
 
 test('/history 权限（adminOnly）：群白名单外拒绝回无权限提示（私聊放行见上）', async () => {
-  const denied = await run(groupEvent('/history', 2301, 9003, '路人乙'));
+  const denied = await run(groupEvent('/history', 2301, 9003, '路人乙', true));
   assert.equal(denied.length, 1);
   assert.ok(denied[0].includes('管理员'), '群白名单外 /history 应拒绝');
 });

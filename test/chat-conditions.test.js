@@ -1,6 +1,8 @@
 // upgrade-chat-pipeline Task 2 验证：入口条件组合器——at 模块纯谓词 + 组合器开关语义。
 // Task 7 增补：nameCall 名字呼唤（别名子串、大小写不敏感、空别名兜底、与 @ 任一命中）。
 // Task 8 增补：replyQuote 引用回复（reply 段 + bot 出站 id 集合、id 两型归一）。
+// matchAt 谓词现居 utils/at.js（与 command/draw 的群聊指令 @ 门控同源共享），
+// at 等价回归用例仍在此覆盖同一契约。
 // chat.js 的群聊判定入口即 matchGroupChat；端到端触发链路（LLM 不调、无出站帧）另见 chat.test.js。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +14,8 @@ import { join } from 'node:path';
 const tmp = mkdtempSync(join(tmpdir(), 'bff-chat-cond-'));
 process.env.CONFIG_PATH = join(tmp, 'absent.json');
 
-const { matchAt, matchNameCall, matchReplyQuote, matchGroupChat, chatConditions } = await import('../src/triggers/chat-conditions.js');
+const { matchNameCall, matchReplyQuote, matchGroupChat, chatConditions } = await import('../src/triggers/chat-conditions.js');
+const { matchAt } = await import('../src/utils/at.js');
 const { config } = await import('../src/config.js');
 const { recordBotMessageId, clearBotMessageIds } = await import('../src/sender/bot-msg-ids.js');
 
