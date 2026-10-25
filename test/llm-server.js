@@ -13,6 +13,7 @@ const DEFAULT_USAGE = {
 export async function startLlmServer() {
   const requests = []; // { method, url, headers, body }（body 为已解析 JSON）
   let mode = { kind: 'ok', content: 'MOCK_LLM_REPLY', usage: DEFAULT_USAGE };
+  let failOnce = false; // 仅下一次请求 500（识图回退链：flash 首调挂、chat 重试成）
 
   const server = createServer((req, res) => {
     let raw = '';
@@ -37,6 +38,12 @@ export async function startLlmServer() {
         res.end(JSON.stringify({ error: 'mock llm down' }));
         return;
       }
+      if (failOnce) {
+        failOnce = false; // 只挂一次，下一次恢复 ok（回退重试用例的关键）
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'mock llm down once' }));
+        return;
+      }
       // kind === 'ok'：usage 为 null 时响应整体不含 usage 字段（缺 usage 容错用例）
       const payload = { choices: [{ message: { role: 'assistant', content: mode.content } }] };
       if (mode.usage !== null) payload.usage = mode.usage;
@@ -56,6 +63,9 @@ export async function startLlmServer() {
     },
     setFail() {
       mode = { kind: 'fail' };
+    },
+    setFailOnce() {
+      failOnce = true;
     },
     setEmpty() {
       mode = { kind: 'empty' };

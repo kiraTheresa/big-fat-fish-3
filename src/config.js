@@ -99,6 +99,14 @@ export const config = {
   chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
   // 会话级冷却（ms）：窗口内后续消息静默跳过，防刷防刷量
   chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 5000),
+  // ---- 识图（chat 触发器图分流；DeepSeek 视觉款，与上共用同一 Key/BaseUrl）----
+  // 视觉模型（留空 = 识图关闭，同 deepseekApiKey 模式；deepseek-flash 实测可看图，
+  // 单图约 1024 tokens，图只能放 user 消息块——system/assistant 带图 400）
+  deepseekVisionModel: process.env.DEEPSEEK_VISION_MODEL ?? 'deepseek-flash',
+  // 周围图时间窗（ms）：@ 消息不带图时，群聊同用户该窗口内最新一条图可被识图引用
+  visionImageWindowMs: num(process.env.VISION_IMAGE_WINDOW_MS, 120000),
+  // 图片现拉超时（ms）：QQ CDN rkey URL 直接 GET（带 UA 防 403，实测可下）
+  visionFetchTimeoutMs: num(process.env.VISION_FETCH_TIMEOUT_MS, 30000),
   // ---- 自进化人设（默认值出处：add-self-evolving-persona spec 设计决策）----
   // 管理员 QQ 白名单（ADMIN_QQ 逗号分隔 → 字符串数组，跨群统一；默认 [] = 群聊管理指令全拒）
   adminQq: (process.env.ADMIN_QQ ?? '')

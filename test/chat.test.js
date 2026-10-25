@@ -812,7 +812,9 @@ test('名字呼唤端到端：群聊无 @ 喊「大肥鱼」→ chat 触发、LL
   assert.equal(last.role, 'user');
   assert.equal(last.content, '喊名君: 大肥鱼今天吃什么', '喊名正文进 prompt（无 at 段可剥离，原样携带）');
   // 回复出站到了同群；群聊首帧带引用（Task 9：reply 段指向触发消息 message_id）
-  const frame = onebotServer.frames.slice(frameBaseline).find((f) => f.params?.group_id === 7601);
+  const frame = onebotServer.frames.slice(frameBaseline).find(
+    (f) => f.action === 'send_msg' && f.params?.group_id === 7601
+  );
   assert.deepEqual(frame.params.message, [
     { type: 'reply', data: { id: String(ev.message_id) } },
     { type: 'text', data: { text: 'MOCK_LLM_REPLY' } },

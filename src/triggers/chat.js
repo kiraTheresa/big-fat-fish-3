@@ -15,6 +15,9 @@
 //   || 分段连发）→ 存储合并 + 逐条发送；
 //   usage 旁路 appendUsage(kind: 'chat') fire-and-forget 落盘；
 //   LLM 失败/超时 → 固定兜底文案 + WARN（兜底不走加工链，告警类消息无需拟人延迟）。
+// 识图分流（upgrade-vision）：消息带图（或群聊同用户时间窗内近图）→「在看」提示 →
+//   现拉 base64（不落盘）→ 最后一条 user content 换块数组、模型换 deepseek-flash；
+//   任一步失败回退纯文本路径（看图是增强不是依赖）；DEEPSEEK_VISION_MODEL 空 = 关闭。
 import { config } from '../config.js';
 import { chatCompletion } from '../llm.js';
 import { appendMessage, readRecentMessages } from '../store/message-store.js';
@@ -22,6 +25,9 @@ import { getPersona } from '../store/persona-store.js';
 import { readState } from '../store/session-state.js';
 import { appendUsage } from '../store/usage-store.js';
 import { extractText } from '../utils/extract-text.js';
+import { extractImages } from '../utils/extract-images.js';
+import { fetchImageAsB64, mimeOfB64 } from '../utils/fetch-image.js';
+import { callApi } from '../connection/onebot.js';
 import { logger } from '../utils/logger.js';
 import { matchGroupChat } from './chat-conditions.js';
 import { fitHistoryToBudget } from './chat-context.js';
@@ -30,6 +36,38 @@ import { chatReplyChain } from './chat-reply-chain.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 
 const FALLBACK_REPLY = 'AI 开小差了，稍后再试～';
+const LOOKING_IMAGE_REPLY = '本鱼凑近看看这张图哦，稍等～';
+
+// 识图图源判定：@ 消息自带图优先（段内 URL 直接可用，取第一张——单次一张边界）；
+// 无图时群聊查同用户时间窗内最新近图（get_group_msg_history，实测 NapCat
+// params { group_id, count }、响应 data.messages[]；私聊历史查询暂不支持——
+// get_friend_msg_history 未实测，列入已知行为）。只定 URL 不下载（下载在「在看」
+// 提示之后）；无图源 → null。
+async function resolveImageUrl(event) {
+  const own = extractImages(event);
+  if (own.length > 0) return own[0].data.url;
+  if (event.message_type !== 'group') return null;
+  let history;
+  try {
+    const data = await callApi('get_group_msg_history', { group_id: event.group_id, count: 20 });
+    history = Array.isArray(data?.messages) ? data.messages : [];
+  } catch (err) {
+    logger.warn(`[chat] 周围图历史查询失败，跳过识图: ${err.message}`);
+    return null;
+  }
+  // 从最新往旧找第一条：同 user_id（String 双侧归一兼容数字/字符串两型，同 matchAt
+  // 纪律；bot 出站行天然排除）+ 秒级时间差在窗口内 + 非本条消息
+  const windowSec = config.visionImageWindowMs / 1000;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.message_id === event.message_id) continue;
+    if (String(msg.user_id) !== String(event.user_id)) continue;
+    if (Math.abs(event.time - msg.time) > windowSec) continue;
+    const seg = extractImages(msg)[0];
+    if (seg !== undefined) return seg.data.url;
+  }
+  return null;
+}
 
 // 会话级冷却表：sessionKey → 上次开始响应的时刻（进程内 Map，重启即清）
 const cooldowns = new Map();
@@ -109,6 +147,37 @@ export default {
       { role: 'user', content: isGroup ? `${speaker}: ${content}` : content },
     ];
 
+    // ---- 识图分流：图源判定 →「在看」提示 → 现拉 base64（不落盘）----
+    // 任一步失败（无图源/历史查询挂/下载挂）均 visionB64=null，messages 原样走纯文本——
+    // 看图是增强不是依赖。入站 raw_message 本就含 [CQ:image] 痕迹（dispatcher 已落盘），
+    // 后续上下文天然知道「发过图」；图本身不进上下文（边界纪律），追问靠首答文字自洽
+    let visionB64 = null;
+    if (config.deepseekVisionModel !== '') {
+      const imageUrl = await resolveImageUrl(event);
+      if (imageUrl !== null) {
+        await ctx.reply(LOOKING_IMAGE_REPLY); // 过渡提示先出站，赶在拉图/视觉推理前
+        try {
+          visionB64 = await fetchImageAsB64(imageUrl, config.visionFetchTimeoutMs);
+        } catch (err) {
+          logger.warn(`[chat] 图片现拉失败，回退纯文本: ${err.message}`);
+        }
+      }
+    }
+
+    // 视觉路径：最后一条 user 的 content 换块数组（text + image_url data URL）。
+    // 图只能放 user 消息（实测 system/assistant 带图 400）；历史保持纯文本。
+    // plainContent 留作 flash 失败时的还原保底
+    const lastUser = messages.at(-1);
+    const plainContent = lastUser.content;
+    let usedModel = config.deepseekModel;
+    if (visionB64 !== null) {
+      lastUser.content = [
+        { type: 'text', text: plainContent },
+        { type: 'image_url', image_url: { url: `data:${mimeOfB64(visionB64)};base64,${visionB64}` } },
+      ];
+      usedModel = config.deepseekVisionModel;
+    }
+
     // 统一出口：存储职责 + 发送职责。与 dispatcher 的 ctx.reply 分道——ctx.reply 留给
     // ping/command，chat 的出口由加工链驱动，为分段连发（Task 4）预留职责切分：
     //   - 存储：一次 LLM 调用只 appendMessage **一条** bot 行，raw_message 取 LLM
@@ -132,7 +201,21 @@ export default {
     };
 
     try {
-      const { content: reply, usage } = await chatCompletion(messages);
+      let reply;
+      let usage;
+      if (visionB64 !== null) {
+        try {
+          ({ content: reply, usage } = await chatCompletion(messages, { model: usedModel }));
+        } catch (err) {
+          // flash 挂了不整个对话兜底：还原纯文本、换 deepseek-chat 重试一次（分流策略拍板）
+          logger.warn(`[chat] 视觉模型调用失败，回退纯文本: ${err.message}`);
+          usedModel = config.deepseekModel;
+        }
+      }
+      if (reply === undefined) {
+        lastUser.content = plainContent; // 还原 string（纯文本路径此赋值恒等，无害）
+        ({ content: reply, usage } = await chatCompletion(messages));
+      }
 
       // 出口加工链：LLM 原始输出装入 segments 数组（Task 4 的 split 从这里接管拆分），
       // 各模块按 enabled(config) 自决参与、依序 await 加工（delay 在此吃掉随机时长）
@@ -148,7 +231,7 @@ export default {
         appendUsage(sessionKey, {
           time: Date.now(),
           kind: 'chat',
-          model: config.deepseekModel,
+          model: usedModel, // 按实际调用款记账（识图 flash / 文字 chat）
           prompt_tokens: usage.prompt_tokens,
           completion_tokens: usage.completion_tokens,
           total_tokens: usage.total_tokens,

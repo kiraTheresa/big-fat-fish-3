@@ -21,6 +21,7 @@ export async function startMockServer({ token = '' } = {}) {
   let pendingFailure = null;
   let nextMessageId = 1000;
   let closed = false;
+  const actionResponses = new Map(); // action → data（识图测试注入 get_group_msg_history 等）
 
   function settleFrameWaiters() {
     for (let i = frameWaiters.length - 1; i >= 0; i--) {
@@ -87,7 +88,20 @@ export async function startMockServer({ token = '' } = {}) {
 
       if (frame === null || typeof frame !== 'object' || typeof frame.action !== 'string') return;
 
-      if (pendingFailure) {
+      // 定制响应优先（比 pendingFailure/autoRespond 更具体的注入，仅影响指定 action）
+      if (actionResponses.has(frame.action)) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              status: 'ok',
+              retcode: 0,
+              data: actionResponses.get(frame.action),
+              echo: frame.echo,
+              wording: '',
+            })
+          );
+        }
+      } else if (pendingFailure) {
         const { retcode, wording } = pendingFailure;
         pendingFailure = null;
         if (ws.readyState === WebSocket.OPEN) {
@@ -134,6 +148,14 @@ export async function startMockServer({ token = '' } = {}) {
 
     failNextCall(retcode = 1400, wording = 'mock failure') {
       pendingFailure = { retcode, wording };
+    },
+
+    setActionResponse(action, data) {
+      actionResponses.set(action, data);
+    },
+
+    clearActionResponse(action) {
+      actionResponses.delete(action);
     },
 
     disconnectClients() {
