@@ -109,8 +109,24 @@ test('splitSegments：拆分结果全空时回退原 segments（LLM 全吐分隔
   assert.deepEqual(splitSegments([], '||'), []); // 空 segments 无内容可回退，原样透传
 });
 
-test('splitSegments：separator 为空串直接透传（split("") 单字符拆分属配置事故，兜底）', () => {
-  assert.deepEqual(splitSegments(['a||b', 'c'], ''), ['a||b', 'c']);
+test('splitSegments：换行同样视为分段符（0.9.3——真机实测 LLM 几乎不用 ||，总用换行连发）', () => {
+  // 单换行 / 连续换行（\n\n 是 LLM 最常见的分段写法）都拆
+  assert.deepEqual(splitSegments(['今天好冷\n想吃火锅了咕噜'], '||'), ['今天好冷', '想吃火锅了咕噜']);
+  assert.deepEqual(
+    splitSegments(['泡泡接住啦咕噜。\n\n主人要画图啦？本鱼只会啃啃鳍。'], '||'),
+    ['泡泡接住啦咕噜。', '主人要画图啦？本鱼只会啃啃鳍。']
+  );
+  // \r\n 归一后同样拆（Windows 风格换行不漏拆）
+  assert.deepEqual(splitSegments(['a\r\nb'], '||'), ['a', 'b']);
+  // 换行与 || 混用：两种分隔符一视同仁
+  assert.deepEqual(splitSegments(['a||b\nc'], '||'), ['a', 'b', 'c']);
+  // 无任何分隔符的单行原样保留（trim 仍生效）
+  assert.deepEqual(splitSegments(['一条整消息 '], '||'), ['一条整消息']);
+});
+
+test('splitSegments：separator 为空串时跳过 || 拆分但换行拆分仍生效（换行是内建行为，不依赖配置）', () => {
+  assert.deepEqual(splitSegments(['a||b', 'c'], ''), ['a||b', 'c']); // 无换行：|| 不拆
+  assert.deepEqual(splitSegments(['a||b\nc'], ''), ['a||b', 'c']); // 有换行：仅按行拆
 });
 
 test('split.enabled(config)：读传入 config 实参的 behavior.reply.split.enabled（契约面）', () => {

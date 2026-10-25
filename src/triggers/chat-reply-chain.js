@@ -15,13 +15,20 @@ export function pickDelayMs(minMs, maxMs, random = Math.random) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 分段拆分纯函数（导出便于单测）：segments 每条按 separator 拆 → trim → 滤空 → flat。
+// 分段拆分纯函数（导出便于单测）：segments 每条按 separator 与换行拆 → trim → 滤空 → flat。
+// 换行为何也当分隔符（0.9.3 修复）：真机实测 LLM 几乎不用 ||（约定遵从度极低），却总用
+// 换行表达「连发多条」——与其逼它学新符号，不如顺着习惯把换行视为同一种分段意图，
+// 两种写法拆出来的效果一致。separator 先归一到换行再统一拆，\r\n 一并归一。
 // 拆分结果全空（LLM 只吐分隔符/空白）时回退原 segments——宁可整段发出，不吞回复；
-// separator 为空串时直接透传：split('') 会把消息拆成单字符数组，属配置事故兜底
+// separator 为空串时跳过 || 拆分（split('') 单字符事故），但换行拆分仍生效（内建行为，
+// 不依赖配置）。
 export function splitSegments(segments, separator) {
-  if (separator === '') return segments;
   const parts = segments
-    .flatMap((seg) => seg.split(separator))
+    .flatMap((seg) => {
+      const text = String(seg).replace(/\r\n/g, '\n');
+      const unified = separator === '' ? text : text.split(separator).join('\n');
+      return unified.split('\n');
+    })
     .map((part) => part.trim())
     .filter((part) => part !== '');
   return parts.length > 0 ? parts : segments;

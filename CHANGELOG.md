@@ -3,11 +3,17 @@
 All notable changes to **Big Fat Fish** (大肥鱼) are documented here, from a user's perspective.
 Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new features), `fix` (bug fixes), `docs`, `chore`.
 
-## [0.10.0] - 2026-10-25
+## [0.9.3] - 2026-10-25
+
+### fix
+
+- **Message splitting now actually works** — the fish was sending multi-part replies as one single bubble. Root cause: the prompt asked the LLM to separate back-to-back messages with `||`, but in real traffic the LLM almost never used `||` and always split with line breaks instead — which the splitter didn't recognize. Now line breaks (single, double, or Windows-style) are treated as split markers just like `||`, and the prompt explicitly tells the fish that each line becomes its own message. Multi-part replies now arrive as several short bubbles, the way a person types.
+
+## [0.9.2] - 2026-10-25
 
 ### feat
 
-- **/version command** — check the fish's current version (`/version` → `本鱼版本：0.10.0`). The version source is CHANGELOG.md's top heading, kept in sync with git commit numbers; if unreadable, it safely reports `unknown`.
+- **/version command** — check the fish's current version (`/version` → `本鱼版本：0.9.2`). The version source is CHANGELOG.md's top heading, kept in sync with git commit numbers; if unreadable, it safely reports `unknown`.
 
 ### fix
 
@@ -20,6 +26,12 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 ### refactor
 
 - Command system rebuilt as an extensible registry: each command is a self-contained module (`name` / `adminOnly` / `summary` / `handle`), `/help` is auto-generated from the registry and can no longer drift, and admin permission checks happen in one place. No behavior change to existing commands.
+
+## [0.9.1] - 2026-10-25
+
+### docs
+
+- Introduced this CHANGELOG as the user-facing feature record. Version numbers follow git commit history; `/version` reads the top heading of this file.
 
 ## [0.9.0] - 2026-10-25
 

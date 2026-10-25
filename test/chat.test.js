@@ -621,6 +621,29 @@ test('index.js 注册顺序静态断言：register(ping) 先于 register(chat)',
 
 // ---- upgrade-chat-pipeline Task 4：|| 分段连发 ----
 
+test('分段连发（换行分隔）：LLM 输出 \n\n 分段 → 两条消息逐条出站（0.9.3 修复：LLM 实际爱用换行不爱用 ||）', { timeout: 10000 }, async () => {
+  llmServer.setReply('泡泡接住啦咕噜。\n\n主人要画图啦？本鱼只会啃啃鳍。');
+  try {
+    const frameBaseline = onebotServer.frames.length;
+    onebotServer.injectEvent(privateEvent('换行连发试试', 7404));
+
+    const first = await waitNextFrame(
+      frameBaseline,
+      (f) => f.action === 'send_msg' && f.params?.user_id === 7404 && f.params?.message === '泡泡接住啦咕噜。'
+    );
+    assert.ok(first, '第一行应先出站');
+    const afterFirst = onebotServer.frames.length;
+    const second = await waitNextFrame(
+      afterFirst,
+      (f) =>
+        f.action === 'send_msg' && f.params?.user_id === 7404 && f.params?.message === '主人要画图啦？本鱼只会啃啃鳍。'
+    );
+    assert.ok(second, '第二行应随后逐条出站（不得合并成一个带换行的气泡）');
+  } finally {
+    llmServer.setReply('MOCK_LLM_REPLY');
+  }
+});
+
 test('分段连发：LLM 输出含 || → 两条消息逐条出站，JSONL 恰一条 bot 行存原始输出', { timeout: 10000 }, async () => {
   llmServer.setReply('今天好冷||想吃火锅了咕噜');
   try {
