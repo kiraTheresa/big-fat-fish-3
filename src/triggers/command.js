@@ -18,7 +18,7 @@ import { config } from '../config.js';
 import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
 import { logger } from '../utils/logger.js';
-import { appendMemory, getPersona, readHistory, resetPersona } from '../store/persona-store.js';
+import { appendCharacter, appendMemory, getPersona, readHistory, resetPersona } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
 import { readUsageStats } from '../store/usage-store.js';
 import { readMessagesSince } from '../store/message-store.js';
@@ -143,6 +143,22 @@ export const COMMANDS = [
       const speaker = ctx.event.sender?.nickname ?? ctx.event.user_id;
       const ok = await appendMemory(ctx.sessionKey, speaker, content);
       await ctx.reply(ok ? '本鱼记住啦～' : '呜，没记住，再试一次？');
+    },
+  },
+  {
+    name: 'character',
+    adminOnly: false,
+    summary: '让本鱼学会一种性格或说话方式',
+    // /remember 的 character 对应物：原话即时追加 character.md 尾部（- [时间] 内容
+    // 钦定行，锁定行保护防提炼误删），不经 LLM、零成本零延迟、所有人可用——教性格
+    // 与教事实同权重，都是用户亲手调教
+    async handle(ctx, content) {
+      if (content === '') {
+        await ctx.reply('用法：/character 要本鱼学会的性格或说话方式');
+        return;
+      }
+      const ok = await appendCharacter(ctx.sessionKey, content);
+      await ctx.reply(ok ? '本鱼学会啦～' : '呜，没学会，再试一次？');
     },
   },
   {

@@ -125,12 +125,12 @@ test('群聊 @ 门控：match 仍宽吞 \'/\' 前缀（未 @ 也命中——命�
   );
 });
 
-test('注册表完整性：7 个旧指令 + version 共 8 个，name 唯一、summary 非空、契约字段齐全', () => {
-  assert.equal(COMMANDS.length, 8, '7 旧 + 1 新（version）');
+test('注册表完整性：8 个旧指令 + character 共 9 个，name 唯一、summary 非空、契约字段齐全', () => {
+  assert.equal(COMMANDS.length, 9, '8 旧 + 1 新（character）');
   const names = COMMANDS.map((c) => c.name);
-  assert.equal(new Set(names).size, 8, 'name 不得重复（主流程按 name 精确匹配查表）');
-  // 旧 7 个一个不少 + 新增 version：防迁移时静默丢指令
-  for (const name of ['help', 'status', 'persona', 'memory', 'remember', 'reset', 'history', 'version']) {
+  assert.equal(new Set(names).size, 9, 'name 不得重复（主流程按 name 精确匹配查表）');
+  // 旧 8 个一个不少 + 新增 character：防迁移时静默丢指令
+  for (const name of ['help', 'status', 'persona', 'memory', 'remember', 'character', 'reset', 'history', 'version']) {
     assert.ok(names.includes(name), `注册表应含 /${name}`);
   }
   for (const cmd of COMMANDS) {
@@ -176,6 +176,29 @@ test('/remember 无内容：回复用法提示，不落盘', async () => {
   assert.equal(replies.length, 1);
   assert.ok(replies[0].includes('/remember'), '应提示 /remember 用法');
   await assert.rejects(readFile(personaFile('p-7302', 'memory.md')), (err) => err.code === 'ENOENT', '无内容不得产生记忆文件');
+});
+
+test('/character：原话即时落盘 character.md（- [日期 内容 钦定行格式）并回复确认', async () => {
+  const replies = await run(privateEvent('/character 说话要傲娇一点', 7303, '阿鱼'));
+  assert.equal(replies.length, 1);
+  assert.ok(replies[0].includes('学会'), '回复应为简短确认');
+  const char = await readFile(personaFile('p-7303', 'character.md'), 'utf8');
+  assert.ok(char.startsWith('# 大肥鱼'), '底稿为种子（首访自动以种子为底）');
+  assert.match(
+    char,
+    /\n\n- \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] 说话要傲娇一点\n$/,
+    '钦定行格式：- [YYYY-MM-DD HH:mm] 内容（无昵称前缀，性格是 Bot 自身属性）'
+  );
+  // /persona 查看可见钦定行（同一文件，读路径联动）
+  const show = await run(privateEvent('/persona', 7303));
+  assert.ok(show[0].includes('说话要傲娇一点'), '/persona 应能查到刚学会的钦定行');
+});
+
+test('/character 无内容：回复用法提示，不落盘', async () => {
+  const replies = await run(privateEvent('/character', 7304));
+  assert.equal(replies.length, 1);
+  assert.ok(replies[0].includes('/character'), '应提示 /character 用法');
+  await assert.rejects(readFile(personaFile('p-7304', 'character.md')), (err) => err.code === 'ENOENT', '无内容不得产生人设文件');
 });
 
 test('/memory：空记忆提示暂无；写入后可查到内容', async () => {

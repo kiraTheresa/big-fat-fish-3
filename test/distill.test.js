@@ -281,6 +281,8 @@ test('distillSession 全流程：patch 落盘 + 审计 + 水位推进 + usage �
   // Task 12：memory 条目式约束——每条一行、以 "- " 开头
   assert.ok(sys.content.includes('每条一行'), 'system 应含 memory 条目式约束（每条一行）');
   assert.ok(sys.content.includes('"- "'), 'system 应含条目以 "- " 开头约束');
+  // /character 钦定行保留规则：character.md 中 "- [" 开头行必须逐行原样保留
+  assert.ok(sys.content.includes('钦定'), 'system 应含 /character 钦定行保留规则');
   assert.ok(sys.content.includes(String(config.personaMaxBytes)), 'system 应含字节上限');
   assert.ok(sys.content.includes('只输出 JSON'), 'system 应含只输出 JSON 约束');
   assert.equal(user.role, 'user');
@@ -492,6 +494,37 @@ test('锁定条目保护：补丁丢 /remember 行 → 文件/水位不动；保
   assert.equal(await readFile(personaFile(key, 'memory.md'), 'utf8'), goodPatch.memory, '锁定行齐全：memory 正常落盘');
   const stGood = JSON.parse(await readFile(stateFile(key), 'utf8'));
   assert.equal(stGood.distillMark, 1760000700, '锁定行齐全：水位正常推进');
+  assert.equal(stGood.distillFails, 0, '成功后失败计数清零');
+});
+
+// ---- character 锁定条目保护（/character 钦定行）：补丁丢失整体拒绝 ----
+test('character 锁定条目保护：补丁丢 /character 行 → 文件/水位不动；保留后正常落盘', async () => {
+  const key = 'g-d750';
+  const rows = [msg(key, 1760000750, '以后说话傲娇一点', { nickname: '阿甲' })];
+  await writeMessages(key, rows);
+
+  // 预置一条 /character 钦定行（与 appendCharacter 固定格式一字不差；直接写文件等价于
+  // 指令层已落盘，避免依赖 appendCharacter 的当前时间）
+  const base = '# 大肥鱼\n\n- [2026-10-25 10:00] 说话要傲娇\n';
+  await mkdir(join(PERSONA_DIR, key), { recursive: true });
+  await writeFile(personaFile(key, 'character.md'), base);
+
+  // LLM 返回合法 JSON，但 character 把钦定行「整理」没了（memory 侧无锁定行不阻塞）
+  llmServer.setReply(JSON.stringify({ character: '# 大肥鱼\n\n整理后的性格。', memory: '' }));
+  await distillSession(key, rows);
+
+  assert.equal(await readFile(personaFile(key, 'character.md'), 'utf8'), base, '钦定行被丢：character.md 不得变');
+  const stBad = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(stBad.distillMark, undefined, '整体拒绝：水位不动');
+  assert.equal(stBad.distillFails, 1, 'character 锁定校验失败：计失败退避 1 次');
+
+  // 保留钦定行原文的补丁：正常落盘 + 推进水位 + 失败计数清零
+  const goodPatch = { character: '# 大肥鱼\n\n- [2026-10-25 10:00] 说话要傲娇\n更傲娇了。', memory: '' };
+  llmServer.setReply(JSON.stringify(goodPatch));
+  await distillSession(key, rows);
+  assert.equal(await readFile(personaFile(key, 'character.md'), 'utf8'), goodPatch.character, '钦定行齐全：character 正常落盘');
+  const stGood = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(stGood.distillMark, 1760000750, '钦定行齐全：水位正常推进');
   assert.equal(stGood.distillFails, 0, '成功后失败计数清零');
 });
 

@@ -30,7 +30,7 @@ export { extractLockedLines, patchKeepsLockedLines };
 // config.personaMaxBytes 替换——调用时读取而非模块加载时固化，保证测试注入生效。
 const DISTILL_SYSTEM_TEMPLATE = [
   '你是 QQ 机器人人设文件的维护者。规则：',
-  '① character.md 在现有基础上增量演化——只写说话风格、口头禅、梗、性格，不包含行为底线规则（简短回复、不刷屏、|| 分段等由系统层注入，写进会重复冲突）；核心设定（呆萌大肥鱼、真诚、吉祥物定位）不许推翻；',
+  '① character.md 在现有基础上增量演化——只写说话风格、口头禅、梗、性格，不包含行为底线规则（简短回复、不刷屏、|| 分段等由系统层注入，写进会重复冲突）；核心设定（呆萌大肥鱼、真诚、吉祥物定位）不许推翻；文中以 "- [" 开头的行是用户 /character 钦定的设定，必须逐行原样保留；',
   '② 值得记进 memory.md 的只有三类：用户的偏好（爱吃什么、喜欢什么）、身份事实（名字、职业、重要关系）、约定（说过要做什么）；闲聊情绪、临时话题、客套话不值得记，一律不写入；',
   '③ memory.md 为条目式——每条一行、以 "- " 开头；保留仍然有效的，删除过时错误的，合并重复；',
   '④ 每个文件不超过 {maxBytes} 字节；',
@@ -164,10 +164,12 @@ export async function distillSession(sessionKey, newMessages) {
       return;
     }
 
-    // 锁定条目校验（applyPersonaPatch 前）：用户 /remember 写入的行必须逐行原文保留；
-    // 缺任何一条即拒绝——与其他全失败同路径（水位不动 + 计失败退避）
-    if (!patchKeepsLockedLines(persona.memory, patch.memory)) {
-      logger.warn(`[distill] 会话 ${sessionKey} 补丁丢失锁定条目（/remember 行），拒绝（水位不动）`);
+    // 锁定条目校验（applyPersonaPatch 前）：/remember 写入 memory.md、/character 写入
+    // character.md 的钦定行（`- [` 开头）都必须逐行原文保留；任一文件缺行即拒绝——
+    // 与其他全失败同路径（水位不动 + 计失败退避）。character 侧：未用过 /character 时
+    // 锁定行为空、恒通过（存量行为不变）；种子/演化散文无 `- [` 行，不误伤
+    if (!patchKeepsLockedLines(persona.memory, patch.memory) || !patchKeepsLockedLines(persona.character, patch.character)) {
+      logger.warn(`[distill] 会话 ${sessionKey} 补丁丢失锁定条目（/remember 或 /character 行），拒绝（水位不动）`);
       await recordDistillFail(sessionKey);
       return;
     }

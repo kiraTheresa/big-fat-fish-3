@@ -104,6 +104,54 @@ test('超限环形淘汰：追加多条后总量不超限，最旧被删、最�
   assert.equal(hist.filter((r) => r.kind === 'memory-append').length, texts.length);
 });
 
+test('appendCharacter：钦定行追加种子尾部（空行分隔、种子原样保留）+ character-append 审计', async () => {
+  const key = 'g-char-append';
+  assert.equal(await personaStore.appendCharacter(key, '说话要傲娇一点'), true);
+  const char = await readFile(file(key, 'character.md'), 'utf8');
+  // 钦定行格式：- [YYYY-MM-DD HH:mm] 内容（无昵称前缀——性格是 Bot 自身属性非用户事实）
+  assert.match(char, /\n\n- \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] 说话要傲娇一点\n$/, '空行分隔 + 尾部钦定行');
+  assert.ok(char.startsWith('# 大肥鱼'), '种子标题保留');
+  assert.ok(char.includes('- 不会的就承认不会，不装懂'), '种子末行保留（段落空行不粘连）');
+  // getPersona 可读回（聊天注入与 /persona 查看的可见性）
+  const persona = await personaStore.getPersona(key);
+  assert.ok(persona.character.includes('说话要傲娇一点'), '读取方可见到钦定行');
+  const hist = await personaStore.readHistory(key, 10);
+  assert.equal(hist.length, 1);
+  assert.equal(hist[0].kind, 'character-append');
+  assert.equal(hist[0].summary, '说话要傲娇一点');
+  assert.ok(Number.isInteger(hist[0].time), '审计 time 为毫秒时间戳');
+});
+
+test('appendCharacter 连续追加：钦定行区块紧凑排列（不重复插空行）', async () => {
+  const key = 'g-char-cont';
+  // 种子本身 > 200 上限（追加第二条会触发环形淘汰删掉第一条），先 patch 成小底稿
+  await personaStore.applyPersonaPatch(key, { character: '# 小鱼' });
+  assert.equal(await personaStore.appendCharacter(key, '第一条性格'), true);
+  assert.equal(await personaStore.appendCharacter(key, '第二条性格'), true);
+  const lines = (await readFile(file(key, 'character.md'), 'utf8')).split('\n');
+  const locked = lines.filter((l) => l.startsWith('- ['));
+  assert.equal(locked.length, 2, '两条钦定行');
+  // 连续钦定行相邻无空行（尾部已是钦定行则直接续行）
+  assert.equal(lines.indexOf(locked[1]) - lines.indexOf(locked[0]), 1, '连续钦定行间无空行');
+});
+
+test('appendCharacter 超限环形淘汰：最旧钦定行被删、散文底稿永不删、最新钦定行保留', async () => {
+  const key = 'g-char-evict';
+  // 种子本身 ~460 字节 > 200 上限：先 patch 成小底稿，钦定行淘汰才能在可控数据下触发
+  await personaStore.applyPersonaPatch(key, { character: '# 小鱼\n\n爱睡觉。' });
+  for (const t of ['性格一', '性格二', '性格三', '性格四', '性格五', '性格六', '性格七']) {
+    assert.equal(await personaStore.appendCharacter(key, t), true);
+  }
+  const char = await readFile(file(key, 'character.md'), 'utf8');
+  assert.ok(char.includes('爱睡觉'), '散文底稿行永不淘汰（环形只删钦定行）');
+  assert.ok(!char.includes('性格一') && !char.includes('性格二'), '最旧钦定行被环形淘汰');
+  assert.ok(char.includes('性格七'), '最新钦定行保留');
+  assert.ok(Buffer.byteLength(char, 'utf8') <= 200, `淘汰后不超限（实际 ${Buffer.byteLength(char, 'utf8')} 字节）`);
+  // 审计 append-only，不随钦定行淘汰
+  const hist = await personaStore.readHistory(key, 100);
+  assert.equal(hist.filter((r) => r.kind === 'character-append').length, 7);
+});
+
 test('applyPersonaPatch 成功：整文件替换 + persona-patch 审计简述', async () => {
   const key = 'g-patch';
   await personaStore.getPersona(key); // 先落种子，验证 patch 是替换而非追加

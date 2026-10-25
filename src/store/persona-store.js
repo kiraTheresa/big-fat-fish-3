@@ -135,6 +135,53 @@ async function appendMemoryOne(sessionKey, speaker, text) {
   return true;
 }
 
+// ---- appendCharacter：/character 钦定性格追加 character.md 尾部，超限环形淘汰最旧钦定行 ----
+// appendMemory 的 character 对应物（补齐 character.md 缺失的即时显式写入入口）：用户
+// 原话即时落盘、零 LLM 零延迟，行格式同为 `- [YYYY-MM-DD HH:mm] ...`（无昵称前缀——
+// 性格是 Bot 自身属性而非用户事实，说话人无意义；该格式同时让 isLockedLine 判定
+// 天然覆盖 character，提炼器补丁的锁定校验零改动直接复用）。与 appendMemory 的两点
+// 差异：
+// ① 底稿是结构化 markdown（种子含标题/段落空行），不能 filter 掉空行再 join——空行
+//   是段落边界，删了会粘连；仅规范化尾部：清多余尾空行，非钦定行之后以一个空行
+//   分隔（尾部已是钦定行则直接续行，连续追加不重复插空行）；
+// ② 超限淘汰对象仅为旧钦定行（`- [` 开头且非最新行），种子与演化出的散文行永不删
+//   （性格底稿是结构文档，环形删散文会砍掉标题/段落）；淘汰光旧钦定行仍超限时与
+//   appendMemory 同语义：宁可暂时超限也写回（不丢最新钦定；后续靠提炼器预算反馈
+//   压缩散文自然回落）。
+export function appendCharacter(sessionKey, text) {
+  return runSerialized(() => appendCharacterOne(sessionKey, text));
+}
+
+async function appendCharacterOne(sessionKey, text) {
+  try {
+    const dir = sessionDir(sessionKey);
+    await mkdir(dir, { recursive: true });
+    const line = `- [${formatTimestamp(new Date())}] ${text}`;
+    // 底稿：会话从未访问过（无文件）则以种子为底，等效 getPersona 先落种子再追加
+    const existing = (await readIfExists(join(dir, 'character.md'))) ?? SEED_CHARACTER;
+    const lines = existing.split('\n');
+    while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+    if (lines.length === 0 || !lines[lines.length - 1].startsWith('- [')) lines.push('');
+    lines.push(line);
+    // 环形淘汰：超限从最旧钦定行删起（非最新行），散文行不动
+    while (memorySizeBytes(lines) > config.personaMaxBytes) {
+      const oldest = lines.findIndex((l, i) => i !== lines.length - 1 && l.startsWith('- ['));
+      if (oldest === -1) break; // 除最新行外已无可淘汰钦定行
+      lines.splice(oldest, 1);
+    }
+    await writeFile(join(dir, 'character.md'), lines.join('\n') + '\n');
+  } catch (err) {
+    logger.warn(`性格追加失败(${sessionKey}): ${err.message}`);
+    return false;
+  }
+  try {
+    await appendAudit(sessionKey, 'character-append', text.slice(0, 50));
+  } catch (err) {
+    logger.warn(`审计追加失败(${sessionKey}): ${err.message}`);
+  }
+  return true;
+}
+
 // ---- /remember 锁定条目判定（add-self-evolving-persona spec「/remember 锁定条目校验」）----
 // appendMemory（/remember 指令唯一落盘路径）写入行固定以 `- [YYYY-MM-DD HH:mm]` 开头，
 // 即用户显式钦定的事实。提炼是 LLM 重写，可能顺手「精简」掉这些行——用户亲手教的
