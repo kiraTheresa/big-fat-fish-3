@@ -117,6 +117,24 @@ export const config = {
   distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 60000),
   // LLM 用量 JSONL 落盘根目录
   usageDir: process.env.USAGE_DIR ?? 'data/usage',
+  // ---- 绘图（draw 触发器 / imagegen.js 唯一出口）----
+  // 上游可切换（OpenAI Images 协议 /v1/images/generations：老张中转 / 火山方舟 /
+  // 任意兼容源），换上游只改 base_url + key + model 三项，代码零改动。
+  // 域名注意（2026-10 实测）：老张默认主域名 api.laozhang.ai 国内直连不通，用 api2。
+  imageApiBaseUrl: process.env.IMAGE_API_BASE_URL ?? 'https://api2.laozhang.ai/v1',
+  // 绘图 API Key（留空 = draw 触发器不生效，同 deepseekApiKey 模式）
+  imageApiKey: process.env.IMAGE_API_KEY ?? '',
+  imageModel: process.env.IMAGE_MODEL ?? 'gpt-image-2.5-flare-vip',
+  // 出图尺寸（老张兼容 '2K' 简写与 '1024x1024' 全写，实测 2K 可用）
+  imageSize: process.env.IMAGE_SIZE ?? '2K',
+  // 绘图超时（ms）：实测 GPT Image 2.5 出图 20-70s，给足余量
+  imageTimeoutMs: num(process.env.IMAGE_TIMEOUT_MS, 120000),
+  // 绘图白名单（DRAW_WHITELIST_QQ 逗号分隔 → 字符串数组）：群聊私聊一律校验，
+  // 空 = 全拒（安全默认，同 adminQq 模式）；未命中静默忽略（防探测）
+  drawWhitelist: (process.env.DRAW_WHITELIST_QQ ?? '')
+    .split(',')
+    .map((qq) => qq.trim())
+    .filter((qq) => qq !== ''),
   // ---- 行为开关（config.json 层，字段说明见 config.example.json）----
   behavior: deepMerge(DEFAULT_BEHAVIOR, loadBehaviorConfig()),
 };
