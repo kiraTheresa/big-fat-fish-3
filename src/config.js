@@ -1,8 +1,77 @@
 // 配置：环境变量优先 + 默认值，全项目唯一配置来源
 // 默认值出处：napcat-protocol.md §2.4（断线 5s 重连、15s 调用超时）、bot-core-design.md §3（发送固定 1s 间隔）
+// 混合开关（upgrade-chat-pipeline spec）：连接/密钥/路径留 .env，行为开关进 config.json
+import { readFileSync } from 'node:fs';
+import { logger } from './utils/logger.js';
+
 function num(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+// 行为开关默认值（字段结构即对外契约，config.json 同名字段覆盖、缺省字段走默认）
+const DEFAULT_BEHAVIOR = {
+  trigger: {
+    // @命中：群聊 @bot 即触发（条件组合器既有条件，spec「条件全关」场景要求每个条件都有开关）
+    at: { enabled: true },
+    // 名字呼唤：命中 aliases 任一即触发
+    nameCall: { enabled: true, aliases: ['大肥鱼', '肥鱼'] },
+    // 引用回复：引用 bot 消息即触发
+    replyQuote: { enabled: true },
+  },
+  reply: {
+    // 随机延迟：模拟人的打字节奏
+    delay: { enabled: true, minMs: 2000, maxMs: 8000 },
+    // 分段连发：按 separator 拆为多条消息
+    split: { enabled: true, separator: '||' },
+    // 回复带引用：携带原消息引用
+    quote: { enabled: true },
+  },
+  context: {
+    // 上下文字节预算：人设+记忆+历史总量封顶，超出裁最旧历史
+    budgetBytes: 12000,
+  },
+};
+
+// 深合并：用户配置逐层覆盖默认值，未出现的字段保留默认；数组与原始值整体替换（不逐项合并）
+function deepMerge(defaults, overrides) {
+  const result = { ...defaults };
+  for (const [key, value] of Object.entries(overrides)) {
+    const base = defaults[key];
+    const bothPlainObject =
+      base !== null && typeof base === 'object' && !Array.isArray(base) &&
+      value !== null && typeof value === 'object' && !Array.isArray(value);
+    result[key] = bothPlainObject ? deepMerge(base, value) : value;
+  }
+  return result;
+}
+
+// 读取 config.json：读取失败只 WARN 不抛（与存储层纪律一致，spec 要求缺失/损坏回退默认继续启动）
+function loadBehaviorConfig() {
+  const path = process.env.CONFIG_PATH ?? './config.json';
+  let raw;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (err) {
+    // ENOENT 属正常场景（用户未创建 config.json），静默回退；其余读失败记 WARN
+    if (err.code !== 'ENOENT') {
+      logger.warn(`config.json 读取失败（${path}），行为开关回退默认：`, err.message);
+    }
+    return {};
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    logger.warn(`config.json 解析失败（${path}），行为开关回退默认：`, err.message);
+    return {};
+  }
+  // 合法 JSON 但顶层非对象（如数组/字符串/null）无法作为配置结构，视同损坏处理
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    logger.warn(`config.json 顶层应为对象（${path}），行为开关回退默认`);
+    return {};
+  }
+  return parsed;
 }
 
 export const config = {
@@ -48,4 +117,6 @@ export const config = {
   distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 60000),
   // LLM 用量 JSONL 落盘根目录
   usageDir: process.env.USAGE_DIR ?? 'data/usage',
+  // ---- 行为开关（config.json 层，字段说明见 config.example.json）----
+  behavior: deepMerge(DEFAULT_BEHAVIOR, loadBehaviorConfig()),
 };

@@ -17,15 +17,16 @@ import { applyPersonaPatch, getPersona } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
 import { appendUsage } from '../store/usage-store.js';
 
-// 提炼 system 模板（spec 设计决策：增量演化不推翻核心设定、memory 去粗取精、输出纯
-// JSON、各自上限内）。{maxBytes} 占位符在调用时以 config.personaMaxBytes 替换——调用
-// 时读取而非模块加载时固化，保证测试注入生效。
+// 提炼 system 模板（spec 设计决策：增量演化不推翻核心设定、分级标准去粗取精、
+// memory 条目式、输出纯 JSON、各自上限内）。{maxBytes} 占位符在调用时以
+// config.personaMaxBytes 替换——调用时读取而非模块加载时固化，保证测试注入生效。
 const DISTILL_SYSTEM_TEMPLATE = [
   '你是 QQ 机器人人设文件的维护者。规则：',
-  '① character.md 在现有基础上增量演化——说话习惯、口头禅、梗、态度可以生长，但核心设定（呆萌大肥鱼、真诚、吉祥物定位）不许推翻；',
-  '② memory.md 是事实记忆——保留仍然有效的，删除过时错误项，合并重复；',
-  '③ 每个文件不超过 {maxBytes} 字节；',
-  '④ 只输出 JSON，不要 markdown 围栏，格式 {"character": "完整文件内容", "memory": "完整文件内容"}',
+  '① character.md 在现有基础上增量演化——只写说话风格、口头禅、梗、性格，不包含行为底线规则（简短回复、不刷屏、|| 分段等由系统层注入，写进会重复冲突）；核心设定（呆萌大肥鱼、真诚、吉祥物定位）不许推翻；',
+  '② 值得记进 memory.md 的只有三类：用户的偏好（爱吃什么、喜欢什么）、身份事实（名字、职业、重要关系）、约定（说过要做什么）；闲聊情绪、临时话题、客套话不值得记，一律不写入；',
+  '③ memory.md 为条目式——每条一行、以 "- " 开头；保留仍然有效的，删除过时错误的，合并重复；',
+  '④ 每个文件不超过 {maxBytes} 字节；',
+  '⑤ 只输出 JSON，不要 markdown 围栏，格式 {"character": "完整文件内容", "memory": "完整文件内容"}',
 ].join('\n');
 
 // 待消化对话里 bot 行的统一昵称（入站行用 sender.nickname ?? user_id，同 chat.js 约定）
@@ -80,6 +81,21 @@ function parsePatch(content) {
   return { character: parsed.character, memory: parsed.memory };
 }
 
+// ---- /remember 锁定条目校验（spec「/remember 锁定条目校验」，纯函数供直测）----
+// appendMemory（/remember 指令唯一落盘路径）写入行固定以 `- [YYYY-MM-DD HH:mm]` 开头，
+// 即用户显式钦定的事实。提炼是 LLM 重写，可能顺手「精简」掉这些行——用户亲手教的
+// 记忆权重高于模型整理，故逐行原文校验，缺任何一条整体拒绝（宁可不改也不丢记忆）。
+export function extractLockedLines(memory) {
+  // `startsWith('- [')` 同时排除空行与普通 `- ` 条目（无时间戳方括号）
+  return memory.split('\n').filter((line) => line.startsWith('- ['));
+}
+
+// 补丁 memory 必须逐行原文包含现 memory 的全部锁定行；空锁定恒通过（不阻塞新会话
+// 首次提炼）。行级原文匹配：改写时间戳/说话人/内容或截断成子串都不算保留。
+export function patchKeepsLockedLines(currentMemory, patchMemory) {
+  return extractLockedLines(currentMemory).every((line) => patchMemory.includes(line));
+}
+
 // ---- 双条件判定（纯函数，供直测）：水位后有新增 且（批量达标 或 会话静默足够久）----
 // newMessages 已由调用方按 state.distillMark 水位筛出（state 仅为签名完整性保留）；
 // 量纲：消息 time 秒级，与毫秒 nowMs 比较需 ×1000。
@@ -101,6 +117,13 @@ export async function distillSession(sessionKey, newMessages) {
     const patch = parsePatch(content);
     if (patch === null) {
       logger.warn(`[distill] 会话 ${sessionKey} 提炼输出非合法 JSON 补丁，跳过（水位不动）`);
+      return;
+    }
+
+    // 锁定条目校验（applyPersonaPatch 前）：用户 /remember 写入的行必须逐行原文保留；
+    // 缺任何一条即整体拒绝——与超限被拒同一失败路径（水位不动，下轮扫描重试）
+    if (!patchKeepsLockedLines(persona.memory, patch.memory)) {
+      logger.warn(`[distill] 会话 ${sessionKey} 补丁丢失锁定条目（/remember 行），拒绝（水位不动）`);
       return;
     }
 

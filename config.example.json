@@ -1,0 +1,13 @@
+{
+  "trigger": {
+    "at": { "enabled": true },
+    "nameCall": { "enabled": true, "aliases": ["大肥鱼", "肥鱼"] },
+    "replyQuote": { "enabled": true }
+  },
+  "reply": {
+    "delay": { "enabled": true, "minMs": 2000, "maxMs": 8000 },
+    "split": { "enabled": true, "separator": "||" },
+    "quote": { "enabled": true }
+  },
+  "context": { "budgetBytes": 12000 }
+}

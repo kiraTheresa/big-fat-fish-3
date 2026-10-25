@@ -3,9 +3,11 @@
 // 统一走 callApi('send_msg')：群聊 message_type=group + group_id，私聊 message_type=private + user_id
 // （不使用 send_group_msg / send_private_msg 直调）。
 // 单条失败仅记 WARN 并继续下一条；本模块不暴露任何绕过队列的发送接口。
+// 发送确认成功后把出站 message_id 记入 bot-msg-ids（replyQuote 条件模块的数据源）。
 import { callApi } from '../connection/onebot.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { recordBotMessageId } from './bot-msg-ids.js';
 
 const queue = []; // 待发送参数（send_msg 的 params），先进先出
 let draining = false;
@@ -32,6 +34,9 @@ async function drain() {
       try {
         const data = await callApi('send_msg', params);
         logger.info(`发送确认: message_id=${data?.message_id}`);
+        // callApi resolve 即 retcode=0 路径：仅成功确认的出站 id 入集（replyQuote 的
+        // 「引用 bot 消息」判定依据）；失败重发会拿到新 id，各按各的确认入集
+        recordBotMessageId(data?.message_id);
       } catch (err) {
         logger.warn(`发送失败: ${err.message}`); // 单条失败不阻断队列
       }
