@@ -29,6 +29,8 @@ process.env.DEEPSEEK_BASE_URL = llmServer.url;
 process.env.CHAT_TIMEOUT_MS = '500';
 process.env.CHAT_CONTEXT_LINES = '20';
 process.env.CHAT_COOLDOWN_MS = '50';
+// CONFIG_PATH 指向不存在路径：预算断言默认 12000，不受本机 config.json 干扰
+process.env.CONFIG_PATH = join(DATA_DIR, 'absent.json');
 
 const { config } = await import('../src/config.js');
 const { fitHistoryToBudget } = await import('../src/triggers/chat-context.js');

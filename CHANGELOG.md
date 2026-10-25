@@ -3,6 +3,24 @@
 All notable changes to **Big Fat Fish** (大肥鱼) are documented here, from a user's perspective.
 Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new features), `fix` (bug fixes), `docs`, `chore`.
 
+## [0.10.0] - 2026-10-25
+
+### feat
+
+- **/version command** — check the fish's current version (`/version` → `本鱼版本：0.10.0`). The version source is CHANGELOG.md's top heading, kept in sync with git commit numbers; if unreadable, it safely reports `unknown`.
+
+### fix
+
+- **Persona evolution no longer gets stuck at the size cap** — previously, once a persona file approached the 4 KB limit, every distill patch got rejected and the distiller retried every minute, burning tokens in a loop. Now:
+  - The distiller sees each file's real byte budget and is explicitly told to compress rather than grow when above 90% of the cap.
+  - Oversized memory patches are auto-trimmed instead of rejected: oldest non-locked entries are dropped first, and `/remember` entries are never touched.
+  - An oversized character patch keeps the old character for now while memory still lands — the batch counts as consumed, and the next round retries character with budget feedback.
+  - Repeated distill failures (bad JSON, lost locked entries, everything rejected) now back off for 1 hour instead of retrying every 60 seconds.
+
+### refactor
+
+- Command system rebuilt as an extensible registry: each command is a self-contained module (`name` / `adminOnly` / `summary` / `handle`), `/help` is auto-generated from the registry and can no longer drift, and admin permission checks happen in one place. No behavior change to existing commands.
+
 ## [0.9.0] - 2026-10-25
 
 ### feat

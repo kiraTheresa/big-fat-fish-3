@@ -1,6 +1,10 @@
 // Task 3 验证（add-self-evolving-persona spec「人设存储」）：种子落盘、append 行格式
-// 与审计、超限环形淘汰、patch 成功/超限整体拒绝、reset、readHistory 截取、容错
-// （history.jsonl ENOENT、会话目录被普通文件占据时不抛仅 WARN）。
+// 与审计、超限环形淘汰、patch 成功/分文件超限判定与 memory 兜底裁剪、reset、
+// readHistory 截取、容错（history.jsonl ENOENT、会话目录被普通文件占据时不抛仅 WARN）。
+// 提炼器三件套改造适配：applyPersonaPatch 返回 { character, memory }（各文件是否
+// 落盘）——character 超限仅拒该文件、memory 超限从最旧非锁定行裁剪（锁定行永不删）、
+// 全锁定仍超限才拒绝；锁定行函数（isLockedLine/extractLockedLines/
+// patchKeepsLockedLines）自 distiller 搬家至此（分层单向 distiller → store）。
 // 模式（同 store.test.js）：先设 env → 动态 import（config 在 import 时求值 env）；
 // PERSONA_DIR 注入 tmp 临时目录，PERSONA_MAX_BYTES 调小到 200 让淘汰/拒绝在少量
 // 数据下即可触发；各用例独立 sessionKey 互不干扰，after 统一清理。
@@ -105,7 +109,8 @@ test('applyPersonaPatch 成功：整文件替换 + persona-patch 审计简述', 
   await personaStore.getPersona(key); // 先落种子，验证 patch 是替换而非追加
   const character = '# 新人设\n\n变机灵了一点。';
   const memory = '- [2026-10-25 21:30] 阿鱼: 记住了';
-  assert.equal(await personaStore.applyPersonaPatch(key, { character, memory }), true);
+  // 新返回值形状（提炼器三件套改造）：{ character, memory } 各文件是否落盘
+  assert.deepEqual(await personaStore.applyPersonaPatch(key, { character, memory }), { character: true, memory: true });
   assert.equal(await readFile(file(key, 'character.md'), 'utf8'), character, 'character.md 整文件替换');
   assert.equal(await readFile(file(key, 'memory.md'), 'utf8'), memory, 'memory.md 整文件替换');
   const hist = await personaStore.readHistory(key, 10);
@@ -117,35 +122,85 @@ test('applyPersonaPatch 成功：整文件替换 + persona-patch 审计简述', 
   );
 });
 
-test('applyPersonaPatch 超限整体拒绝：WARN、不落盘、返回 false、无审计', async () => {
-  const key = 'g-patch-reject';
-  await personaStore.getPersona(key); // 落种子作为「不变」基线
+test('applyPersonaPatch 分文件：character 超限仅拒该文件，memory 照常落盘（不再连坐）', async () => {
+  const key = 'g-patch-char-reject';
+  await personaStore.getPersona(key); // 落种子作为 character「不变」基线
   const beforeChar = await readFile(file(key, 'character.md'), 'utf8');
-  const beforeMem = await readFile(file(key, 'memory.md'), 'utf8');
-  const beforeHist = await personaStore.readHistory(key, 100);
+  const beforeHistCount = (await personaStore.readHistory(key, 100)).length;
 
   const logs = [];
   const originalLog = console.log;
   console.log = (...args) => logs.push(args.map(String).join(' '));
-  let ok;
+  let result;
   try {
-    // memory 超限（450 字节 > 200），character 本身不超限 → 验证「整体拒绝」连不超限字段也不落盘
-    ok = await personaStore.applyPersonaPatch(key, { character: '# 小改', memory: '喵'.repeat(150) });
+    // character 超限（~460 字节 > 200），memory 合规：旧「整体拒绝」会连坐 memory，
+    // 新策略分文件——memory 照常落盘（否则水位卡死 → 调度器重试烧钱死循环）
+    result = await personaStore.applyPersonaPatch(key, {
+      character: '# 小改\n' + '长'.repeat(150),
+      memory: '- [2026-10-25 21:30] 阿鱼: 记住了',
+    });
   } finally {
     console.log = originalLog;
   }
-  assert.equal(ok, false);
-  assert.ok(logs.some((l) => l.includes('WARN') && l.includes('超限')), `超限应 WARN：${logs.join(' | ')}`);
-  assert.equal(await readFile(file(key, 'character.md'), 'utf8'), beforeChar, '整体拒绝：character.md 不变');
-  assert.equal(await readFile(file(key, 'memory.md'), 'utf8'), beforeMem, '整体拒绝：memory.md 不变');
-  assert.equal((await personaStore.readHistory(key, 100)).length, beforeHist.length, '拒绝不产生审计');
+  assert.deepEqual(result, { character: false, memory: true }, '各文件独立判定：仅 character 被拒');
+  assert.ok(logs.some((l) => l.includes('WARN') && l.includes('character 超限拒绝')), `超限应 WARN：${logs.join(' | ')}`);
+  assert.equal(await readFile(file(key, 'character.md'), 'utf8'), beforeChar, 'character 超限：保持旧文件');
+  assert.equal(
+    await readFile(file(key, 'memory.md'), 'utf8'),
+    '- [2026-10-25 21:30] 阿鱼: 记住了',
+    'memory 不被连坐，正常落盘'
+  );
+  const hist = await personaStore.readHistory(key, 100);
+  assert.equal(hist.length, beforeHistCount + 1, 'memory 落盘产生审计');
+  const last = hist[hist.length - 1];
+  assert.equal(last.kind, 'persona-patch');
+  assert.ok(
+    last.summary.includes('更新 memory.md') && last.summary.includes('character 超限拒绝'),
+    `审计应如实反映实际落盘情况：${last.summary}`
+  );
+});
+
+test('applyPersonaPatch memory 超限：兜底裁剪删最旧非锁定行、锁定行全保留；全锁定极端拒绝', async () => {
+  const key = 'g-patch-mem-trim';
+  await personaStore.getPersona(key); // 落种子：memory.md 为空
+
+  // 补丁 memory：最旧非锁定行（头部）+ 锁定行 + 较新非锁定行，总量 > 200
+  const oldLine = '- ' + '旧'.repeat(60); // 182 字节（单行即接近上限）
+  const locked = '- [2026-10-25 21:30] 阿鱼: 锁定记忆';
+  const freshLine = '- 新条目';
+  const result = await personaStore.applyPersonaPatch(key, {
+    character: '# 小改',
+    memory: [oldLine, locked, freshLine].join('\n'),
+  });
+  assert.deepEqual(result, { character: true, memory: true }, '裁剪至合规后落盘：两文件都成功');
+  const mem = await readFile(file(key, 'memory.md'), 'utf8');
+  assert.ok(!mem.includes('旧'), '最旧非锁定行被裁剪');
+  assert.ok(mem.includes(locked), '锁定行（/remember 钦定）永不删');
+  assert.ok(mem.includes(freshLine), '较新非锁定行保留');
+  assert.ok(Buffer.byteLength(mem, 'utf8') <= 200, `裁剪后实际落盘不超限（实际 ${Buffer.byteLength(mem, 'utf8')} 字节）`);
+  const hist = await personaStore.readHistory(key, 100);
+  const last = hist[hist.length - 1];
+  assert.ok(last.summary.includes('裁剪 1 条'), `审计应记裁剪条数：${last.summary}`);
+
+  // 极端：删光非锁定行仍超限（锁定行自身超限）→ memory 拒绝落盘、character 不受影响
+  const beforeMem = await readFile(file(key, 'memory.md'), 'utf8');
+  const lockedOnly = Array.from(
+    { length: 6 },
+    (_, i) => `- [2026-10-25 21:${String(30 + i)}] 阿鱼: 锁定记忆${i}` // 6 行 ≈ 240 字节 > 200
+  ).join('\n');
+  assert.ok(Buffer.byteLength(lockedOnly, 'utf8') > 200, '前置：全锁定内容确实超限');
+  const result2 = await personaStore.applyPersonaPatch(key, { character: '# 再改', memory: lockedOnly });
+  assert.deepEqual(result2, { character: true, memory: false }, '全锁定仍超限：memory 拒绝、character 不连坐');
+  assert.equal(await readFile(file(key, 'memory.md'), 'utf8'), beforeMem, 'memory 保持旧文件');
+  assert.equal(await readFile(file(key, 'character.md'), 'utf8'), '# 再改', 'character 正常落盘');
 });
 
 test('resetPersona：恢复种子、清空记忆、审计 persona-reset', async () => {
   const key = 'g-reset';
   await personaStore.getPersona(key);
   await personaStore.appendMemory(key, '阿鱼', '临时代码记忆');
-  assert.equal(await personaStore.applyPersonaPatch(key, { character: '# 被改坏的人设' }), true);
+  // 只提供 character：新返回值形状下 memory 未提供即未落盘（false）
+  assert.deepEqual(await personaStore.applyPersonaPatch(key, { character: '# 被改坏的人设' }), { character: true, memory: false });
   assert.equal(await personaStore.resetPersona(key), true);
   assert.equal(await readFile(file(key, 'character.md'), 'utf8'), SEED, 'character.md 恢复种子');
   assert.equal(await readFile(file(key, 'memory.md'), 'utf8'), '', 'memory.md 清空');

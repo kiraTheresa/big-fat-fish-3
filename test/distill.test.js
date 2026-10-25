@@ -5,6 +5,11 @@
 // upgrade-chat-pipeline Task 12/13：模板含分级标准（值得记/不值得记）+ memory 条目式
 // 约束断言；锁定行提取/校验纯函数直测；补丁丢失 /remember 行整体拒绝（文件水位不动
 // + 下轮可重试）e2e。
+// 提炼器三件套改造：①预算反馈——buildMessages user 含「实际字节/上限」标注、>90%
+// 追加「务必净减」警示（直测）；②分文件落盘——character 超限单拒该文件、memory 超限
+// 兜底裁剪（删最旧非锁定行、锁定行永不删）、部分成功也推进水位；③失败退避——全失败
+// 计数（distillFails/distillFailAt 落 session-state），连续 2 次进 1 小时冷却、部分
+// 成功清零、到期恢复。锁定行函数已搬家 persona-store（distiller re-export 兼容）。
 // 模式（同 chat.test.js）：起 mock LLM → 设 env（必须 import config 之前）→ 动态
 // import；DATA_DIR/PERSONA_DIR/USAGE_DIR 注入同一 tmp 根（pid 防并行污染），after 统一
 // 清理；不依赖真实 OneBot/LLM。
@@ -41,8 +46,11 @@ process.env.CHAT_TIMEOUT_MS = '300'; // 防重入用例 setHang 后快速超时�
 process.env.DISTILL_INTERVAL_MS = '50'; // 调度冒烟：快周期触发
 
 const { config } = await import('../src/config.js');
-const { shouldDistill, distillSession, startDistiller, stopDistiller, extractLockedLines, patchKeepsLockedLines } = await import('../src/distill/distiller.js');
-const { getPersona } = await import('../src/store/persona-store.js');
+// 锁定行函数实现已搬家 persona-store（分层单向 distiller → store）；distiller re-export
+// 保旧路径。此处直接 import 新家（路径同步更新），distiller 命名空间留作同源断言。
+const distiller = await import('../src/distill/distiller.js');
+const { shouldDistill, distillSession, buildMessages, startDistiller, stopDistiller, DISTILL_BACKOFF_FAILS, DISTILL_BACKOFF_MS } = distiller;
+const { getPersona, extractLockedLines, patchKeepsLockedLines } = await import('../src/store/persona-store.js');
 
 after(async () => {
   stopDistiller(); // 保险：冒烟用例异常退出时也别把 interval 带出进程
@@ -94,6 +102,57 @@ test('shouldDistill 纯函数：批量达标 / 静默达标 / 双不满足 / 无
   assert.equal(shouldDistill(few, {}, lastMs + conf.distillSilenceMs, conf), true, '静默达标（now - 末条 ≥ silenceMs）：触发');
   assert.equal(shouldDistill(few, {}, lastMs + conf.distillSilenceMs - 1, conf), false, '静默差 1ms：不触发');
   assert.equal(shouldDistill(few, {}, lastMs + 1000, conf), false, '批量与静默双不满足：不触发');
+});
+
+// ---- 锁定行函数搬家兼容：distiller re-export 与 persona-store 实现同源 ----
+test('锁定行函数搬家兼容：distiller re-export 与 persona-store 同源', () => {
+  assert.equal(distiller.extractLockedLines, extractLockedLines, 'extractLockedLines 应同一实现');
+  assert.equal(distiller.patchKeepsLockedLines, patchKeepsLockedLines, 'patchKeepsLockedLines 应同一实现');
+});
+
+// ---- buildMessages 预算反馈直测（提炼三件套之一）----
+test('buildMessages 预算反馈：user 含「实际字节/上限」标注；> 90% 追加「务必净减」警示', () => {
+  const maxBytes = config.personaMaxBytes; // 本文件未注入 PERSONA_MAX_BYTES，默认 4096
+
+  // 远低于 90%：仅标注、无警示
+  const small = { character: '# 大肥鱼', memory: '- 少量记忆' };
+  const smallUser = buildMessages(small, [msg('g-budget', 1760000000, '话', { nickname: '甲' })])[1].content;
+  assert.ok(
+    smallUser.includes(`现有 character.md（${Buffer.byteLength(small.character, 'utf8')}/${maxBytes} 字节）：`),
+    'character 标注应含实际字节/上限'
+  );
+  assert.ok(
+    smallUser.includes(`现有 memory.md（${Buffer.byteLength(small.memory, 'utf8')}/${maxBytes} 字节）：`),
+    'memory 标注应含实际字节/上限'
+  );
+  assert.ok(!smallUser.includes('接近上限'), '未达 90%：不得出现压缩警示');
+
+  // character > 90%（memory 仍小）：仅 character 警示，且紧跟标注、位于文件内容之前
+  const bigChar = '# 大肥鱼\n\n' + '性格描述行。'.repeat(210); // ≈ 3793 字节：> 90% 且未超限
+  assert.ok(Buffer.byteLength(bigChar, 'utf8') > maxBytes * 0.9, '前置：确实 > 90% 上限');
+  assert.ok(Buffer.byteLength(bigChar, 'utf8') <= maxBytes, '前置：未超上限（接近满而非已爆）');
+  const bigUser = buildMessages({ character: bigChar, memory: '' }, [])[1].content;
+  const charTag = `现有 character.md（${Buffer.byteLength(bigChar, 'utf8')}/${maxBytes} 字节）：`;
+  const tagIdx = bigUser.indexOf(charTag);
+  const warnIdx = bigUser.indexOf('务必净减');
+  assert.ok(tagIdx !== -1 && warnIdx !== -1, '接近上限应出现压缩警示');
+  assert.ok(warnIdx > tagIdx, '警示应在标注之后');
+  assert.ok(warnIdx < bigUser.indexOf(bigChar), '警示应在文件内容之前（紧跟标注）');
+  assert.ok(bigUser.includes('不要新增'), '警示应讲清不要新增');
+  assert.ok(bigUser.indexOf(`现有 memory.md（0/${maxBytes} 字节）：`) > warnIdx, 'memory 段在 character 段之后');
+  assert.equal(bigUser.indexOf('务必净减', warnIdx + 1), -1, 'memory 未达 90%：不得重复警示');
+
+  // memory > 90%：memory 警示出现且紧跟其标注
+  const bigMem = '- [2026-10-25 10:00] 甲: ' + '记'.repeat(1300); // ≈ 3926 字节
+  assert.ok(
+    Buffer.byteLength(bigMem, 'utf8') > maxBytes * 0.9 && Buffer.byteLength(bigMem, 'utf8') <= maxBytes,
+    '前置：memory 接近上限'
+  );
+  const bigMemUser = buildMessages({ character: '# 小', memory: bigMem }, [])[1].content;
+  const memTagIdx = bigMemUser.indexOf(`现有 memory.md（${Buffer.byteLength(bigMem, 'utf8')}/${maxBytes} 字节）：`);
+  const memWarnIdx = bigMemUser.indexOf('务必净减');
+  assert.ok(memTagIdx !== -1 && memWarnIdx > memTagIdx, 'memory 接近上限：警示应紧跟标注');
+  assert.ok(memWarnIdx < bigMemUser.indexOf(bigMem), 'memory 警示应在文件内容之前');
 });
 
 // ---- 锁定行提取纯函数直测（Task 13）：`- [` 开头行即 /remember 锁定条目 ----
@@ -226,13 +285,23 @@ test('distillSession 全流程：patch 落盘 + 审计 + 水位推进 + usage �
   assert.ok(sys.content.includes('只输出 JSON'), 'system 应含只输出 JSON 约束');
   assert.equal(user.role, 'user');
   assert.ok(user.content.includes('# 大肥鱼'), 'user 应含现有 character 底稿（种子）');
+  // 预算反馈（提炼三件套之一）：user 含「实际字节/上限」标注；种子远低于 90% 无警示
+  assert.ok(
+    new RegExp(`现有 character\\.md（\\d+/${config.personaMaxBytes} 字节）：`).test(user.content),
+    'user 应含 character 实际字节/上限标注'
+  );
+  assert.ok(
+    new RegExp(`现有 memory\\.md（\\d+/${config.personaMaxBytes} 字节）：`).test(user.content),
+    'user 应含 memory 实际字节/上限标注'
+  );
+  assert.ok(!user.content.includes('接近上限'), '种子远低于 90%：无压缩警示');
   assert.ok(user.content.includes('[1760000100] 阿甲: 你们这群鱼真笨'), '入站行格式：[time] 昵称: 内容');
   assert.ok(user.content.includes('[1760000101] 大肥鱼: 咕噜不许这么说大家啦'), 'bot 行昵称标「大肥鱼」');
   assert.ok(user.content.includes('[1760000102] 阿乙: 今晚吃火锅吗'));
 });
 
 // ---- 失败路径一：LLM HTTP 500 ----
-test('失败路径一：LLM 失败 → persona 保持种子、水位不置、无 usage 行', async () => {
+test('失败路径一：LLM 失败 → persona 保持种子、水位不置、计失败退避、无 usage 行', async () => {
   const key = 'g-d200';
   const rows = [msg(key, 1760000200, '会失败的一次', { nickname: '阿丙' })];
   await writeMessages(key, rows);
@@ -246,12 +315,16 @@ test('失败路径一：LLM 失败 → persona 保持种子、水位不置、无
 
   const persona = await getPersona(key); // distill 内 getPersona 已落种子
   assert.ok(persona.character.startsWith('# 大肥鱼'), '失败后 character 保持种子');
-  await assert.rejects(() => readFile(stateFile(key)), enoent, '失败不得推进水位');
+  // 全失败：水位不动，但计失败退避（distillFails/distillFailAt 落 session-state）
+  const st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(st.distillMark, undefined, '失败不得推进水位');
+  assert.equal(st.distillFails, 1, '全失败应计退避 1 次');
+  assert.ok(Number.isFinite(st.distillFailAt), '应记录最近失败时刻');
   await assert.rejects(() => readFile(usageFile(key)), enoent, '失败不得记 usage');
 });
 
 // ---- 失败路径二：LLM 返回纯文本（非 JSON） ----
-test('失败路径二：LLM 返回非 JSON 纯文本 → 同样全不动', async () => {
+test('失败路径二：LLM 返回非 JSON 纯文本 → 文件不动、水位不置、计失败退避', async () => {
   const key = 'g-d300';
   const rows = [msg(key, 1760000300, '非 JSON 输出', { nickname: '阿丁' })];
   await writeMessages(key, rows);
@@ -261,39 +334,114 @@ test('失败路径二：LLM 返回非 JSON 纯文本 → 同样全不动', async
 
   const persona = await getPersona(key);
   assert.ok(persona.character.startsWith('# 大肥鱼'), '非 JSON 后 character 保持种子');
-  await assert.rejects(() => readFile(stateFile(key)), enoent, '非 JSON 不得推进水位');
-  await assert.rejects(() => readFile(usageFile(key)), enoent, '非 JSON 不得记 usage');
+  const st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(st.distillMark, undefined, '非 JSON 不得推进水位');
+  assert.equal(st.distillFails, 1, '非 JSON 全失败计退避 1 次');
+  await assert.rejects(() => readFile(usageFile(key)), enoent, '失败不得记 usage');
 });
 
-// ---- 失败路径三：补丁超 personaMaxBytes 被拒 ----
-test('失败路径三：character 超 personaMaxBytes → applyPersonaPatch 拒绝 → 不更新水位', async () => {
+// ---- 分文件落盘（提炼三件套之二）：character 超限不再连坐 memory、部分成功也推进水位 ----
+test('分文件落盘：character 超限 → character 保持旧文、memory 落盘、水位推进、审计如实', async () => {
   const key = 'g-d400';
   const rows = [msg(key, 1760000400, '超限的一次', { nickname: '阿戊' })];
   await writeMessages(key, rows);
 
   const savedMax = config.personaMaxBytes;
   config.personaMaxBytes = 200; // 临时调小（沿袭 chat.test.js 的 config 变更法），用毕恢复
-  const bigPatch = { character: '# 大肥鱼\n\n' + '很长的性格描述。'.repeat(50), memory: '' };
-  assert.ok(Buffer.byteLength(bigPatch.character, 'utf8') > 200, '前置：补丁确实超限');
+  const bigPatch = {
+    character: '# 大肥鱼\n\n' + '很长的性格描述。'.repeat(50), // 远超 200：character 拒绝
+    memory: '- [2026-10-25 11:00] 阿戊: 爱吃火锅', // 合规：照常落盘
+  };
+  assert.ok(Buffer.byteLength(bigPatch.character, 'utf8') > 200, '前置：character 补丁确实超限');
   llmServer.setReply(JSON.stringify(bigPatch));
   try {
     await distillSession(key, rows);
 
+    // character 保持种子（超限单文件拒绝，不再连坐 memory）
     const persona = await getPersona(key);
     assert.ok(
       persona.character.startsWith('# 大肥鱼') && !persona.character.includes('很长的性格描述'),
-      '超限补丁不得落盘（character 保持种子）'
+      '超限 character 不得落盘（保持种子）'
     );
-    await assert.rejects(() => readFile(stateFile(key)), enoent, '被拒不推进水位');
-    // 被拒不记 persona-patch 审计（applyPatchOne 拒绝路径不落任何文件——审计文件
-    // 本身不存在是更直接的证据，容忍 ENOENT）
-    let histLines = [];
-    try {
-      histLines = await readJsonl(personaFile(key, 'history.jsonl'));
-    } catch {
-      // 无审计文件：从未有过成功的 persona 写操作
-    }
-    assert.ok(!histLines.some((l) => JSON.parse(l).kind === 'persona-patch'), '被拒不记 persona-patch 审计');
+    // memory 照常落盘
+    assert.equal(
+      await readFile(personaFile(key, 'memory.md'), 'utf8'),
+      bigPatch.memory,
+      'memory 不受 character 超限连坐，正常落盘'
+    );
+
+    // 部分成功：水位照常推进（消息已消化——重试同批只会再烧一次 LLM）+ 失败计数清零
+    const st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+    assert.equal(st.distillMark, 1760000400, '部分成功也推进水位（防死循环关键语义）');
+    assert.equal(st.distillFails, 0, '部分成功清零失败计数');
+
+    // 审计如实反映实际落盘：更新 memory.md（character 超限拒绝）
+    const hist = (await readJsonl(personaFile(key, 'history.jsonl'))).map((l) => JSON.parse(l));
+    const patchRecs = hist.filter((r) => r.kind === 'persona-patch');
+    assert.equal(patchRecs.length, 1, '恰一条 persona-patch 审计');
+    assert.ok(patchRecs[0].summary.includes('更新 memory.md'), `审计应记 memory 落盘：${patchRecs[0].summary}`);
+    assert.ok(
+      patchRecs[0].summary.includes('character 超限拒绝'),
+      `审计应注明 character 拒绝原因：${patchRecs[0].summary}`
+    );
+
+    // 部分成功同样是真实 LLM 调用：usage 照记（fire-and-forget，等落盘）
+    await waitUntil(async () => {
+      try {
+        return (await readJsonl(usageFile(key))).length >= 1;
+      } catch {
+        return false;
+      }
+    });
+  } finally {
+    config.personaMaxBytes = savedMax;
+    llmServer.setReply('MOCK_LLM_REPLY');
+  }
+});
+
+// ---- memory 超限兜底裁剪（提炼三件套之二）：删最旧非锁定行、锁定行永不删 ----
+test('memory 超限兜底裁剪：删最旧非锁定行至合规、锁定行全部保留、水位推进、审计记裁剪', async () => {
+  const key = 'g-d850';
+  const rows = [msg(key, 1760000850, '裁剪测试消息', { nickname: '阿子' })];
+  await writeMessages(key, rows);
+
+  // 预置两条锁定行（直接写文件等价于 /remember 指令层已落盘）
+  const locked1 = '- [2026-10-25 10:00] 阿子: 周五要打球';
+  const locked2 = '- [2026-10-25 10:05] 阿子: 爱吃酸菜鱼';
+  await mkdir(join(PERSONA_DIR, key), { recursive: true });
+  await writeFile(personaFile(key, 'memory.md'), locked1 + '\n' + locked2 + '\n');
+
+  const savedMax = config.personaMaxBytes;
+  config.personaMaxBytes = 200;
+  // 补丁 memory：最旧非锁定行（头部，单行即接近上限）+ 两条锁定行 + 最新非锁定行
+  const oldLine = '- ' + '旧'.repeat(60); // 182 字节
+  const freshLine = '- 新条目';
+  const patchMemory = [oldLine, locked1, locked2, freshLine].join('\n');
+  assert.ok(Buffer.byteLength(patchMemory, 'utf8') > 200, '前置：补丁 memory 确实超限');
+  llmServer.setReply(JSON.stringify({ character: '# 大肥鱼\n\n裁剪用性格。', memory: patchMemory }));
+  try {
+    await distillSession(key, rows);
+
+    // 落盘内容 = 裁剪后：最旧非锁定行被删、锁定行全保留、总字节 ≤ 上限
+    const mem = await readFile(personaFile(key, 'memory.md'), 'utf8');
+    assert.ok(!mem.includes('旧'), '最旧非锁定行应被裁剪');
+    assert.ok(mem.includes(locked1) && mem.includes(locked2), '锁定行必须全部保留');
+    assert.ok(mem.includes(freshLine), '较新非锁定行保留');
+    assert.ok(
+      Buffer.byteLength(mem, 'utf8') <= 200,
+      `裁剪后实际落盘内容不超限（实际 ${Buffer.byteLength(mem, 'utf8')} 字节）`
+    );
+
+    // memory 落盘即至少部分成功：水位推进 + 失败计数不增
+    const st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+    assert.equal(st.distillMark, 1760000850, 'memory 落盘：水位推进');
+    assert.equal(st.distillFails, 0, '成功路径不累计失败');
+
+    // 审计如实记裁剪条数
+    const hist = (await readJsonl(personaFile(key, 'history.jsonl'))).map((l) => JSON.parse(l));
+    const patchRec = hist.find((r) => r.kind === 'persona-patch');
+    assert.ok(patchRec, '应有 persona-patch 审计');
+    assert.ok(patchRec.summary.includes('裁剪 1 条'), `审计应记裁剪条数：${patchRec.summary}`);
   } finally {
     config.personaMaxBytes = savedMax;
     llmServer.setReply('MOCK_LLM_REPLY');
@@ -317,14 +465,17 @@ test('锁定条目保护：补丁丢 /remember 行 → 文件/水位不动；保
   llmServer.setReply(JSON.stringify(badPatch));
   await distillSession(key, rows);
 
-  // 整体拒绝：applyPersonaPatch 未被调用——两份文件都不变、水位不置、无 persona-patch 审计
+  // 整体拒绝：applyPersonaPatch 未被调用——两份文件都不变、水位不置（等价回归：该
+  // 失败路径现在同样计失败退避）
   assert.equal(await readFile(personaFile(key, 'memory.md'), 'utf8'), locked + '\n', '锁定行被丢：memory.md 不得变');
   const afterBad = await getPersona(key);
   assert.ok(
     afterBad.character.startsWith('# 大肥鱼') && !afterBad.character.includes('整理后的性格'),
     '整体拒绝：character 保持种子'
   );
-  await assert.rejects(() => readFile(stateFile(key)), enoent, '整体拒绝：水位不动');
+  const stBad = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(stBad.distillMark, undefined, '整体拒绝：水位不动');
+  assert.equal(stBad.distillFails, 1, '锁定校验失败：计失败退避 1 次');
   let histLines = [];
   try {
     histLines = await readJsonl(personaFile(key, 'history.jsonl'));
@@ -334,15 +485,14 @@ test('锁定条目保护：补丁丢 /remember 行 → 文件/水位不动；保
   assert.ok(!histLines.some((l) => JSON.parse(l).kind === 'persona-patch'), '拒绝路径不记 persona-patch 审计');
 
   // 下轮可重试：换回逐行保留锁定行原文的补丁（可新增条目）→ 正常落盘 + 推进水位
+  // + 失败计数清零
   const goodPatch = { character: '# 大肥鱼\n\n保留锁定行的整理版。', memory: locked + '\n- 阿壬爱美食\n' };
   llmServer.setReply(JSON.stringify(goodPatch));
   await distillSession(key, rows);
   assert.equal(await readFile(personaFile(key, 'memory.md'), 'utf8'), goodPatch.memory, '锁定行齐全：memory 正常落盘');
-  assert.equal(
-    (JSON.parse(await readFile(stateFile(key), 'utf8'))).distillMark,
-    1760000700,
-    '锁定行齐全：水位正常推进'
-  );
+  const stGood = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(stGood.distillMark, 1760000700, '锁定行齐全：水位正常推进');
+  assert.equal(stGood.distillFails, 0, '成功后失败计数清零');
 });
 
 // ---- 防重入：同会话并发第二次调用直接跳过 ----
@@ -361,8 +511,82 @@ test('防重入：同会话提炼在途时第二次 distillSession 跳过（不�
     await delay(150);
     assert.equal(llmServer.requests.length, before + 1, '第二次调用不得再调 LLM');
     await first; // 等第一次超时失败落定（catch → WARN → finally 释放）
-    await assert.rejects(() => readFile(stateFile(key)), enoent, '挂起失败后水位不动');
+    const st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+    assert.equal(st.distillMark, undefined, '挂起失败后水位不动');
+    assert.equal(st.distillFails, 1, '异常路径同样计失败退避');
   } finally {
+    llmServer.setReply('MOCK_LLM_REPLY');
+  }
+});
+
+// ---- 失败退避（提炼三件套之三）：连续全失败进 1 小时冷却，期内不再真调 LLM ----
+test('失败退避：连续 2 次全失败 → 1 小时内不再调 LLM；到期恢复尝试并成功清零', async () => {
+  const key = 'g-d800';
+  const rows = [msg(key, 1760000800, '退避测试消息', { nickname: '阿癸' })];
+  await writeMessages(key, rows);
+
+  // 两次全失败（LLM 500）：计满退避门槛（DISTILL_BACKOFF_FAILS = 2）
+  llmServer.setFail();
+  await distillSession(key, rows);
+  await distillSession(key, rows);
+  let st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(st.distillFails, DISTILL_BACKOFF_FAILS, '两次全失败计满退避门槛');
+  assert.equal(st.distillMark, undefined, '全失败不推进水位');
+  assert.ok(Number.isFinite(st.distillFailAt), '记录最近失败时刻');
+
+  // 第三次：退避跳过——不再真调 LLM（烧钱死循环止血）、水位不动、不累计新失败
+  llmServer.setReply(JSON.stringify({ character: '# 大肥鱼\n\n退避后的版本。', memory: '' }));
+  const reqBefore = llmServer.requests.length;
+  await distillSession(key, rows);
+  assert.equal(llmServer.requests.length, reqBefore, '退避期内不得再调 LLM');
+  st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(st.distillFails, DISTILL_BACKOFF_FAILS, '退避跳过不累计失败');
+  assert.equal(st.distillMark, undefined, '退避跳过不推进水位');
+
+  // 退避到期（distillFailAt 拨回 1 小时前，模拟冷却结束）：恢复尝试 → 成功落盘 +
+  // 水位推进 + 计数清零
+  st.distillFailAt = Date.now() - DISTILL_BACKOFF_MS - 1000;
+  await writeFile(stateFile(key), JSON.stringify(st));
+  await distillSession(key, rows);
+  assert.equal(llmServer.requests.length, reqBefore + 1, '退避到期应恢复调用 LLM');
+  st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(st.distillMark, 1760000800, '恢复后成功推进水位');
+  assert.equal(st.distillFails, 0, '成功清零失败计数');
+});
+
+// ---- 失败计数清零语义：部分成功（有文件落盘）即清零，不因 character 被拒而重试同批 ----
+test('失败计数清零：先 1 次全失败，后部分成功 → 计数归零且水位推进', async () => {
+  const key = 'g-d900';
+  const rows = [msg(key, 1760000900, '清零测试', { nickname: '阿丑' })];
+  await writeMessages(key, rows);
+
+  // 前置：先制造 1 次全失败
+  llmServer.setFail();
+  await distillSession(key, rows);
+  let st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+  assert.equal(st.distillFails, 1, '前置：已计 1 次失败');
+
+  // 部分成功（character 超限被拒、memory 合规落盘）：计数清零——这批对话已消化，
+  // 不重试同批（character 未落盘的遗留靠下轮新对话 + 预算反馈修复）
+  const savedMax = config.personaMaxBytes;
+  config.personaMaxBytes = 200;
+  llmServer.setReply(JSON.stringify({
+    character: '# 大肥鱼\n\n' + '长'.repeat(150), // > 200：被拒
+    memory: '- 合规记忆', // 落盘
+  }));
+  try {
+    await distillSession(key, rows);
+    st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+    assert.equal(st.distillFails, 0, '部分成功应清零失败计数');
+    assert.equal(st.distillMark, 1760000900, '部分成功推进水位');
+
+    // 清零后再失败一次也只回到 1（< 2，未达退避门槛，下轮仍会正常尝试）
+    llmServer.setFail();
+    await distillSession(key, rows); // 直调 distillSession 不看水位，仍会真跑
+    st = JSON.parse(await readFile(stateFile(key), 'utf8'));
+    assert.equal(st.distillFails, 1, '清零后单次失败不累计到退避门槛');
+  } finally {
+    config.personaMaxBytes = savedMax;
     llmServer.setReply('MOCK_LLM_REPLY');
   }
 });

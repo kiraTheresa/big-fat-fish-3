@@ -54,6 +54,9 @@ process.env.USAGE_DIR = USAGE_DIR;
 process.env.DEEPSEEK_API_KEY = 'test-key';
 process.env.DEEPSEEK_BASE_URL = llmServer.url;
 process.env.CHAT_TIMEOUT_MS = '500';
+// CONFIG_PATH 指向不存在路径：行为开关跑全默认，不受本机 config.json 干扰
+//（曾因读到本地 replyQuote:false 的真实配置，导致引用回复端到端用例误挂）
+process.env.CONFIG_PATH = join(DATA_DIR, 'absent.json');
 process.env.CHAT_CONTEXT_LINES = '20';
 process.env.CHAT_COOLDOWN_MS = '600';
 

@@ -1,10 +1,13 @@
-// Task 6 验证（add-self-evolving-persona spec「指令触发器」）：command 触发器全指令
-// 回复、权限三态（私聊放行 / 群白名单内放行 / 群白名单外拒绝）、ADMIN_QQ 未配置全拒、
-// remember 落盘联动、未知指令指引、'/' 空内容静默、readMessagesSince 直测、
+// 指令触发器测试（add-self-evolving-persona spec「指令触发器」+ 注册表化重构）：
+// 注册表完整性（8 指令契约字段）、/help 由注册表自动生成（防手工列表漂移回归）、
+// 全指令回复等价、权限三态（私聊放行 / 群白名单内放行 / 群白名单外拒绝）、
+// ADMIN_QQ 未配置全拒、remember 落盘联动、未知指令指引、'/' 空内容静默、
+// /version 读 CHANGELOG（mock CHANGELOG_PATH）与缺失兜底、readMessagesSince 直测、
 // index.js 注册顺序静态断言。
 // 模式（同 persona-store.test.js）：先设 env → 动态 import（config 在 import 时求值 env），
 // DATA_DIR/PERSONA_DIR/USAGE_DIR 注入同一 tmp 根，after 统一清理；不依赖真实
 // OneBot/LLM——mock ctx 的 reply 只收集文本，sessionKey 与 dispatcher 同规则打标。
+// CHANGELOG_PATH 例外：version.js 每次调用现读 env，故测试内临时改、finally 恢复即可。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -20,7 +23,10 @@ process.env.PERSONA_DIR = PERSONA_DIR;
 process.env.USAGE_DIR = USAGE_DIR;
 process.env.ADMIN_QQ = '9001,9002'; // 群聊管理白名单（9003 故意不在名单内）
 
-const command = (await import('../src/triggers/command.js')).default;
+const commandModule = await import('../src/triggers/command.js');
+const command = commandModule.default;
+const { COMMANDS } = commandModule; // 注册表（/help 自动生成与完整性的断言对象）
+const { getVersion } = await import('../src/version.js');
 const { config } = await import('../src/config.js');
 const { appendUsage } = await import('../src/store/usage-store.js');
 const { applyPersonaPatch } = await import('../src/store/persona-store.js');
@@ -90,13 +96,35 @@ test("'/' 单独一个字符：match 按前缀规则命中，但指令词为空 
   assert.equal(replies.length, 0, '指令词为空：选择静默忽略（@bot 空指令不回未知指引，避免骚扰）');
 });
 
-test('/help：回复含全部指令与一句话说明，管理指令带权限标注', async () => {
+test('注册表完整性：7 个旧指令 + version 共 8 个，name 唯一、summary 非空、契约字段齐全', () => {
+  assert.equal(COMMANDS.length, 8, '7 旧 + 1 新（version）');
+  const names = COMMANDS.map((c) => c.name);
+  assert.equal(new Set(names).size, 8, 'name 不得重复（主流程按 name 精确匹配查表）');
+  // 旧 7 个一个不少 + 新增 version：防迁移时静默丢指令
+  for (const name of ['help', 'status', 'persona', 'memory', 'remember', 'reset', 'history', 'version']) {
+    assert.ok(names.includes(name), `注册表应含 /${name}`);
+  }
+  for (const cmd of COMMANDS) {
+    assert.equal(typeof cmd.adminOnly, 'boolean', `/${cmd.name} adminOnly 应为布尔（权限集中判定靠它）`);
+    assert.equal(typeof cmd.handle, 'function', `/${cmd.name} handle 应为函数`);
+    assert.ok(typeof cmd.summary === 'string' && cmd.summary.trim() !== '', `/${cmd.name} summary 非空（/help 自动生成靠它）`);
+  }
+});
+
+test('/help：由注册表自动生成，逐行与注册表一致（防手工列表漂移回归）', async () => {
   const replies = await run(privateEvent('/help', 7101));
   assert.equal(replies.length, 1);
-  for (const cmd of ['/help', '/status', '/persona', '/memory', '/remember', '/reset', '/history']) {
-    assert.ok(replies[0].includes(cmd), `指令列表应含 ${cmd}`);
+  const lines = replies[0].split('\n');
+  assert.equal(lines[0], '本鱼会的指令：', '沿用现有开头文案');
+  assert.equal(lines.length, COMMANDS.length + 1, '表头一行 + 每个注册表指令一行');
+  // 逐行比对注册表（顺序即注册表顺序）：自动生成后 /help 条目与注册表严格一致，
+  // 注册表增删指令而 /help 忘改时此处立刻报警（漂移回归）
+  for (let i = 0; i < COMMANDS.length; i++) {
+    const cmd = COMMANDS[i];
+    const expected = `/${cmd.name} - ${cmd.summary}${cmd.adminOnly ? '（管理员）' : ''}`;
+    assert.equal(lines[i + 1], expected, `/help 第 ${i + 1} 行应与注册表条目一致`);
   }
-  assert.ok(replies[0].includes('管理员'), '应标注哪些指令是管理指令');
+  assert.ok(replies[0].includes('管理员'), 'adminOnly 指令应有权限标注');
 });
 
 test('/persona：回复 character.md 全文（含种子标题「大肥鱼」）', async () => {
@@ -232,6 +260,64 @@ test('/history（管理）：空审计提示；有记录时每条一行（时间
   assert.ok(withRec[0].includes('memory-append'), '应含 kind');
   assert.ok(withRec[0].includes('审计样本'), '应含 summary');
   assert.match(withRec[0], /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]/, '每条含格式化时间');
+});
+
+test('/history 权限（adminOnly）：群白名单外拒绝回无权限提示（私聊放行见上）', async () => {
+  const denied = await run(groupEvent('/history', 2301, 9003, '路人乙'));
+  assert.equal(denied.length, 1);
+  assert.ok(denied[0].includes('管理员'), '群白名单外 /history 应拒绝');
+});
+
+test('/version：读 CHANGELOG 顶部版本；文件缺失显示 unknown（安静兜底）', async () => {
+  const saved = process.env.CHANGELOG_PATH;
+  try {
+    // 正常路径：mock CHANGELOG_PATH 指向临时 CHANGELOG（version.js 每次现读 env，改完即生效）
+    const changelog = join(ROOT, 'CHANGELOG.md');
+    await writeFile(changelog, [
+      '# Changelog',
+      '',
+      '## [9.9.9] - 2026-10-25',
+      '',
+      '### feat',
+      '',
+      '- 测试用条目',
+      '',
+      '## [0.1.0] - 2026-01-01',
+      '',
+    ].join('\n'), 'utf8');
+    process.env.CHANGELOG_PATH = changelog;
+    const replies = await run(privateEvent('/version', 7961));
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0], '本鱼版本：9.9.9', '取顶部第一个 [x.y.z] 标题');
+
+    // 文件缺失：getVersion 安静兜底返回 unknown，指令照常回复不抛不吵
+    process.env.CHANGELOG_PATH = join(ROOT, 'CHANGELOG-not-exists.md');
+    const missing = await run(privateEvent('/version', 7962));
+    assert.equal(missing.length, 1);
+    assert.equal(missing[0], '本鱼版本：unknown', '文件缺失兜底 unknown');
+  } finally {
+    // env 写回 undefined 会变成字符串 'undefined'，原值不存在时须 delete
+    if (saved === undefined) delete process.env.CHANGELOG_PATH;
+    else process.env.CHANGELOG_PATH = saved;
+  }
+});
+
+test('getVersion 直测：多版本标题取首个；行首锚定不误匹配正文版本号；无标题回 unknown', async () => {
+  const saved = process.env.CHANGELOG_PATH;
+  try {
+    const multi = join(ROOT, 'changelog-multi.md');
+    await writeFile(multi, '# Changelog\n\n## [1.2.3] - 2026-05-01\n\n正文里提到 [0.9.0] 不算标题\n\n## [0.9.0] - 2026-04-01\n', 'utf8');
+    process.env.CHANGELOG_PATH = multi;
+    assert.equal(await getVersion(), '1.2.3', '自上而下第一个版本标题即当前版本（CHANGELOG 由新到旧）');
+
+    const noVersion = join(ROOT, 'changelog-noversion.md');
+    await writeFile(noVersion, '# 没有版本标题的更新日志\n', 'utf8');
+    process.env.CHANGELOG_PATH = noVersion;
+    assert.equal(await getVersion(), 'unknown', '无匹配标题兜底');
+  } finally {
+    if (saved === undefined) delete process.env.CHANGELOG_PATH;
+    else process.env.CHANGELOG_PATH = saved;
+  }
 });
 
 test('未知指令：回复简短指引（提示 /help）', async () => {
