@@ -1,6 +1,7 @@
 # NapCat 协议清单（OneBot 11）
 
-> 版本：v1.0 · 2026-10-24
+> 版本：v1.1 · 2026-10-26
+> 本次仅对照代码更新项目配置约定、权限说明与 §4.6 使用记录；通用协议清单保留 2026-10-24 的资料快照，未重新核验上游全部接口。
 > 定位：Bot 核心与 NapCat 对接的唯一协议参考。传输层、事件、API 均以本清单为准；字段级权威定义见文末来源链接。
 > 本项目传输层结论：**采用并推荐「正向 WebSocket」**（详见第 2 节标注）。
 
@@ -115,9 +116,9 @@ NapCat 按 `heartInterval`（本项目 30000ms）周期推送 `meta_event.heartb
 
 OneBot 11 的「快速操作」（如消息事件回包直接带 `reply`）是 HTTP POST 模式专有；**WS 模式下需显式调用 `.handle_quick_operation` API**（见 4.5），或直接调用 `send_msg` 等发送接口——本项目采用后者（`ctx.reply()` → sender → `send_msg`）。
 
-### 2.4 本项目实际配置
+### 2.4 本项目配置约定
 
-`napcat/config/onebot11_3856329787.json` 中唯一启用的网络服务（正向 WS）：
+本项目使用正向 WS。以下是接入约定与原配置记录，不表示本次检查了正在运行的 NapCat 实例；实际值需与本地 `napcat/config/onebot11_<QQ号>.json` 和 `.env` 对齐：
 
 | 字段 | 值 | 说明 |
 |---|---|---|
@@ -127,7 +128,7 @@ OneBot 11 的「快速操作」（如消息事件回包直接带 `reply`）是 H
 | `messagePostFormat` | `array` | 事件消息以**消息段数组**上报（本项目约定，见 3.4） |
 | `reportSelfMessage` | `false` | 不上报 Bot 自身发出的消息 |
 | `heartInterval` | `30000` | 心跳周期 30s |
-| `token` | `e1c0…7183`（存于 `.env`） | 鉴权密钥，Bot 连接时以 Bearer 头携带 |
+| `token` | 与 `ONEBOT_ACCESS_TOKEN` 一致，文档不记录值 | Bot 配置非空时以 Bearer 头携带 |
 | `enableForcePushEvent` / `debug` | `true` / `false` | 强制事件推送开关 / raw 数据上报（调试用） |
 
 容器端口：`6099`（WebUI，扫码与网络配置）、`3001`（正向 WS）。Bot 侧连接代码见 [onebot.js](src/connection/onebot.js)（`callApi` 带 echo 匹配、15s 超时、断线 5s 重连）。
@@ -194,7 +195,7 @@ sender：`user_id`、`nickname`、`sex`、`age`。
 | `raw_message` | string | 原始消息内容 |
 | `sender` | object | 发送人信息 |
 
-sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`、`level`、`role`（`owner`/`admin`/`member`）、`title`。**权限判断用 `sender.role`**；字段为尽力提供，不保证全量存在。
+sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`、`level`、`role`（`owner`/`admin`/`member`）、`title`。字段为尽力提供，不保证全量存在。`role` 表示 QQ 群身份；本项目当前的管理权限使用 `ADMIN_QQ` 白名单，绘图使用 `DRAW_WHITELIST_QQ`，不直接依据 `sender.role` 授权。
 
 > 触发器契约提醒：本项目触发器以 `match(event)` 匹配后，回复通过 `ctx.reply()` 走 sender 收口（见架构文档第 4 节），不使用 WS 下不可用的「快速操作」回包。
 
@@ -314,7 +315,7 @@ sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`
 | `get_friend_list` | - | 数组：`user_id/nickname/remark` | 好友列表 |
 | `get_group_info` | `group_id`、`no_cache?` | `group_id/group_name/member_count/max_member_count` | 群信息 |
 | `get_group_list` | - | 同 `get_group_info` 数组 | 群列表（**定时推送选目标群时用**） |
-| `get_group_member_info` | `group_id`、`user_id`、`no_cache?` | 含 `nickname/card/role/level/join_time/last_sent_time` 等 | 群成员信息（**权限过滤时用 role**） |
+| `get_group_member_info` | `group_id`、`user_id`、`no_cache?` | 含 `nickname/card/role/level/join_time/last_sent_time` 等 | 群成员信息；当前核心未调用此 API 做权限判断 |
 | `get_group_member_list` | `group_id` | 同上数组 | 群成员列表 |
 | `get_group_honor_info` | `group_id`、`type`（talkative/performer/legend/strong_newbie/emotion/all） | 各荣誉列表 | 群荣誉 |
 | `get_record` | `file`、`out_format` | `file`（转换后路径） | 语音转换（需 ffmpeg） |
@@ -421,19 +422,22 @@ sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`
 
 | API | 状态 | 用途 |
 |---|---|---|
-| `send_group_msg` | **已使用**（ping → pong 触发器） | 群消息回复 |
-| `send_msg` / `send_private_msg` | 预留（sender 层建议统一收口到 send_msg） | 定时任务推送、私聊回复 |
-| `get_group_list` / `get_group_member_info` | 预留（scheduler 需要目标群校验、权限过滤） | 定时任务配置校验 |
-| `get_login_info` | 预留（启动自检） | 连接后确认登录号 |
+| `send_msg` | **已使用**，由 sender 统一调用 | ping、指令、聊天及绘图的群聊／私聊发送，支持文本与消息段数组 |
+| `get_group_msg_history` | **已使用**，由 chat 查询 | 识图开启且当前消息无图时，查询最近 20 条群消息，再筛同用户与时间窗内的图片 |
+| `send_group_msg` / `send_private_msg` | 当前未直接调用 | 发送统一使用 `send_msg` |
+| `get_group_list` / `get_group_member_info` | 规划候选，尚未接入 | 后续管理或推送配置可能使用，具体用途待业务确定 |
+| `get_login_info` | 尚未接入 | 可用于后续启动自检 |
+
+当前只处理 `message` 事件；协议支持某类事件或消息段，不代表 Bot 已有对应处理逻辑。无文本消息目前不会进入模型调用，`notice`、`request` 和 `meta_event` 被分发器忽略。
 
 ---
 
 ## 5. 鉴权与安全
 
-1. **token 必配**：公网部署务必启用 token（官方 WebUI 配置指南强警告）；本项目已配置，值存于 `.env`（已在 .gitignore），NapCat 侧存于 `onebot11_<QQ号>.json`；
+1. **token 配置**：沿用启用鉴权的接入约定；Bot 从 `.env` 的 `ONEBOT_ACCESS_TOKEN` 读取，NapCat 侧存于 `onebot11_<QQ号>.json`，两端需一致。本轮未读取运行中的密钥或确认部署状态；
 2. **传递方式**：WS 连接请求头 `Authorization: Bearer <token>`（现行实现），或连接 URL `?access_token=`；
 3. **失败行为**：鉴权失败连接直接断开，API 阶段不会执行（故 1401/1403 实际罕见）；
-4. **最小暴露面**：本项目 NapCat 仅开正向 WS（3001）与 WebUI（6099）；HTTP 系服务保持关闭，避免额外攻击面。
+4. **服务范围**：当前 `docker-compose.yml` 映射正向 WS（3001）与 WebUI（6099）；原接入约定关闭 HTTP 系服务，实际启用项以本地 NapCat 配置为准。
 
 ---
 
