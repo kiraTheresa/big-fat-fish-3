@@ -1,217 +1,175 @@
 # Bot 核心设计：分层、模块与消息流
 
-> 版本：v0.2 · 2026-10-24（新增：分发打标 sessionKey、消息存储设计）
-> 定位：讲清 Bot 核心的模块划分、分层职责与**一条消息的完整流通路径**。
-> 姊妹文档：[qq-chatbot-architecture.md](./qq-chatbot-architecture.md)（项目方向与边界），本文不重复。
+> 文档版本：v0.3 · 2026-10-26；实现基线：`c167cca`（`0.11.0`）。
+> 定位：描述当前模块职责、消息流和存储语义。项目目标与下一阶段范围见 [架构文档](qq-chatbot-architecture.md)。本文中的默认值以 [config.js](src/config.js) 为准。
 
----
-
-## 1. 总览：分层管道 + 横切组件
-
-核心思想一句话：**入站一串筛选，出站一个收口，中间才轮到业务**。
+## 1. 总览：消息管道与后台提炼
 
 ```mermaid
 flowchart TB
-    subgraph MAIN["主管道（消息数据流，单向）"]
-        C1["L1 连接层 connection/<br/>收帧 · 发帧 · 重连"]
-        D1["L2 分发层 dispatch/<br/>事件路由 · 筛选"]
-        T1["L3 处理层 triggers/<br/>触发器链（业务）"]
-        S1["L4 发送层 sender/<br/>队列 · 限流收口"]
-        C1 --> D1 --> T1 --> S1
-    end
-
-    SCH["scheduler/ 定时任务<br/>（预留，旁路）"] --> S1
-    CFG["config.js 配置"] -.-> C1
-    LOG["utils/logger.js 日志"] -.-> MAIN
-    STORE["data/ 持久化<br/>消息存储 + 任务落盘"] -.-> SCH
-
-    style MAIN fill:#f0fdf4,stroke:#86efac
-    style SCH fill:#fff7ed,stroke:#fdba74
+    C["L1 connection · WebSocket / API"] --> D["L2 dispatch · 筛选 / 会话打标"]
+    D --> T["L3 triggers · 业务处理"]
+    T --> S["L4 sender · 发送队列"]
+    S -->|"send_msg"| C
+    D -.-> STORE["store · 消息 / 人设 / 状态 / 用量"]
+    T -.-> STORE
+    T --> MODEL["llm.js / imagegen.js"]
+    DISTILL["distill · 后台提炼"] <--> STORE
+    DISTILL --> MODEL
+    JOB["主动 / 定时推送 · 规划"] -.-> S
 ```
 
-读图要点：
+主管道处理收到的消息；后台提炼器从存储读取对话并更新人设、记忆，不主动发消息。规划中的推送任务将复用发送层，当前尚未实现。
 
-- **主管道四层**：数据只能从上往下流，禁止跨层乱穿（L3 不 import L1，只通过 `ctx.reply()` 把消息交给 L4）；
-- **定时任务是旁路**：它没有"收到消息"这个起点，直接把生成好的消息插进发送层——这就是发送层必须是全项目唯一出口的原因；
-- **横切组件**（配置/日志/持久化）不属于任何一层，被所有层共享，用虚线表示。
+配置、日志和存储是共享组件。发消息统一经过 sender；当前识图查询近图时由 chat 直接调用连接层的历史 API，属于现有的辅助读取路径。
 
----
+## 2. 消息怎么流
 
-## 2. 消息怎么流（核心节）
+### 2.1 入站：解析、响应匹配与事件筛选
 
-### 2.1 入站：三层筛选
+1. 连接层解析 WebSocket 帧，无法解析的 JSON 直接忽略。
+2. 帧中 `echo` 能匹配待处理 API 调用时，按 `retcode` 完成或拒绝对应 Promise；其余带 `post_type` 的帧上抛给分发器。
+3. 分发器目前只接受 `post_type === 'message'`；`notice`、`request`、`meta_event` 不进入触发器。
+4. 群聊使用 `g-{group_id}`，私聊使用 `p-{user_id}` 作为 `sessionKey`；入站消息快照异步回存后进入触发器链。
 
-每一帧从 WS 到达后，要过三道门，任何一道不过就直接丢弃，到不了业务代码：
+`sessionKey` 是上下文、冷却、人设、状态与用量的索引。一个群共享一份会话，不按群内用户拆分记忆。
 
-```mermaid
-flowchart LR
-    A["WS 帧到达"] --> B{"筛选① 格式<br/>JSON 可解析？"}
-    B -- 否 --> X1["丢弃"]
-    B -- 是 --> C{"筛选② 类型<br/>有 echo？"}
-    C -- "是（API 响应）" --> R["echo 匹配 → 回调 Promise"]
-    C -- "否（事件）" --> D{"筛选③ post_type<br/>=== 'message'？"}
-    D -- "meta_event / notice / request" --> X2["忽略（预留）"]
-    D -- message --> E["构造 ctx → 触发器链"]
+### 2.2 触发与出站
 
-    style X1 fill:#fef2f2,stroke:#fca5a5
-    style X2 fill:#fef2f2,stroke:#fca5a5
-    style E fill:#f0fdf4,stroke:#86efac
-```
+注册顺序由 [index.js](src/index.js) 决定：
 
-| 筛选 | 在哪层 | 作用 |
+| 顺序 | 触发器 | 行为与门控 |
 |---|---|---|
-| ① JSON 可解析 | L1 | 挡掉坏帧/非 JSON 数据 |
-| ② 有 `echo` 字段 | L1 | 区分"API 响应"和"事件"——两者走同一条 WS，全靠 echo 区分 |
-| ③ `post_type === 'message'` | L2 | MVP 只处理消息事件；心跳/戳一戳/加群请求全部拦下 |
+| 1 | `ping` | `raw_message.trim()` 等于 `ping` 时回复 `pong`，不要求群聊 @ |
+| 2 | `draw` | 配置绘图 Key 后匹配 `/draw`；群聊须 @；群聊／私聊均校验绘图白名单 |
+| 3 | `command` | 匹配所有 `/` 前缀文本；群聊须 @ 后才执行或回应；按具体指令校验权限 |
+| 4 | `chat` | 配置聊天 Key 后，私聊进入处理；群聊由 @、名字、引用三个条件组合判定 |
 
-**筛选的意义**：业务代码（触发器）看到的事件都是"干净的、确定是聊天消息"的数据，不需要自己判断乱七八糟的情况。
+匹配成功后只执行该触发器，返回时不会继续尝试后面的触发器。因此群聊未 @ 的斜杠指令会被 command 静默接住，不落入 chat。命中一个触发器可以产生多条回复，例如聊天拆段、绘图的过渡提示与图片。
 
-### 2.2 生成与出站：命中即处理
+所有消息最终入 sender 队列，统一调用 `send_msg`，通过参数区分群聊与私聊。每次 API 调用结束后等待 `SEND_INTERVAL_MS`（默认 1000ms），再处理下一条；单条失败记 WARN 并继续，当前不自动重试。
 
-过了三道门的消息，在分发层还有一步**打标**：计算会话键并挂到 `ctx.sessionKey`（群聊 `g-{group_id}`、私聊 `p-{user_id}`）。同一个 sessionKey 的消息属于同一场对话——冷却计数、上下文记忆、消息存储都以它为索引，下游谁都不用自己拼。打完标的消息进入触发器链，匹配成功就生成回复，然后统一出站：
-
-```mermaid
-flowchart LR
-    E["ctx 进触发器链"] --> M{"按注册顺序逐个 match()<br/>命中即停"}
-    M -- "全部不中" --> X["静默丢弃（不是所有消息都要回）"]
-    M -- "命中某个触发器" --> H["handle(ctx)<br/>生成回复内容"]
-    H --> Q["入发送队列"]
-    Q -->|"每 1s 出队一条（防风控）"| API["callApi(action, params, echo)"]
-    API --> RET["NapCat 回 retcode=0<br/>echo 匹配 → resolve"]
-
-    style H fill:#f0fdf4,stroke:#86efac
-    style X fill:#fef2f2,stroke:#fca5a5
-```
-
-出站为什么收口到一个队列：**QQ 对发消息的频率有限制**，全项目不管几个模块要发消息，都排同一条队、按固定间隔出门，风控风险只在这一个点管理。
-
-### 2.3 完整生命周期：一条 ping 的旅行
-
-以群聊里发 `ping` 为例，从 QQ 到回复的全链路：
+### 2.3 一条聊天消息的完整路径
 
 ```mermaid
 sequenceDiagram
-    participant Q as QQ 服务器
-    participant N as NapCat(:3001)
-    participant C as L1 连接层
-    participant D as L2 分发层
-    participant T as L3 触发器链
-    participant S as L4 发送层
-
-    Note over N,C: WS 已建立 · Bearer token 鉴权通过
-    Q->>N: 群消息 "ping"（QQ NT 协议）
-    N->>C: 推送 message 事件（JSON，含 raw_message="ping"）
-    C->>C: 筛选①②：JSON ✓ · 无 echo ✓ → 上抛
-    C->>D: onEvent(事件)
-    D->>D: 筛选③ ✓ · 打标 sessionKey · 构造 ctx（含 reply()）
-    D->>T: 按注册顺序匹配
-    T->>T: ping 触发器 match 命中 → handle → ctx.reply("pong")
-    T->>S: reply 交给发送队列
-    S->>C: 出队（1s 间隔）→ callApi("send_group_msg", {...})
-    C->>N: { action, params, echo: "7" }
-    N->>Q: 发送群消息 "pong"
-    N-->>C: { retcode: 0, data: {message_id}, echo: "7" }
-    C-->>S: echo 匹配 → Promise resolve（发送确认）
+    participant N as NapCat
+    participant C as 连接与分发
+    participant T as chat
+    participant DB as store
+    participant L as 模型
+    participant S as sender
+    N->>C: message 事件
+    C->>DB: 异步追加入站快照
+    C->>T: match 命中后 handle(ctx)
+    T->>T: 提取文本、检查会话冷却
+    T->>DB: 读取人设、状态和近期消息
+    T->>T: 过滤 reset 水位、组装 system、裁剪历史
+    opt 开启识图
+        T->>C: 必要时查询群历史找近图
+        T->>S: 找到图片时将“在看”提示入队
+        T->>T: 有图时下载到内存，构造视觉输入
+    end
+    T->>L: 对话或视觉请求
+    L-->>T: 回复与可选 usage
+    T->>T: delay → split → quote
+    T->>DB: 异步回存一条完整 bot 回复
+    T->>S: 将加工后的每条消息入队
+    T->>DB: 有 usage 时异步记用量
+    S->>N: 经连接层 callApi(send_msg)
+    N-->>S: 经 echo 匹配得到发送结果
 ```
 
-三个容易忽略的细节：
-
-1. **`ctx.reply()` 不是立即发送**，只是入队——真正的发送由队列节奏决定；
-2. **API 调用是异步的**：发出去只是"提交"，收到 `retcode=0` 那条响应才算"确认"；
-3. **响应和事件走同一条 WS**：N-->>C 的那条响应靠 `echo: "7"` 找到对应的 Promise，这就是 echo 匹配机制。
-
----
+需要区分“入队”和“送达”：`ctx.reply()` 及 `sendGroup()`／`sendPrivate()` 不返回发送确认 Promise，`await ctx.reply()` 也不表示 NapCat 已确认。sender 在 `retcode=0` 后记录消息 ID，用于后续引用触发。
 
 ## 3. 分层职责速查
 
-| 层 | 目录 | 职责一句话 | 关键决策 | 禁止事项 |
-|---|---|---|---|---|
-| L1 连接 | `src/connection/` | 字节与协议：收帧、发帧、重连、echo 匹配 | 正向 WS + Bearer 鉴权 + 15s 调用超时 | 出现任何业务词汇 |
-| L2 分发 | `src/dispatch/` | 筛选 → 打标 → 派发 | MVP 只放行 message；打标 sessionKey 后进触发器 | 写业务 if-else |
-| L3 处理 | `src/triggers/` | 触发器链：一条消息触发什么回复 | 注册式、按序匹配、命中即停 | 触发器之间互相调用 |
-| L4 发送 | `src/sender/` | 出站收口：队列 + 限流 | 固定 1s 间隔 | 提供绕过队列的接口 |
-
----
-
-## 4. 处理层怎么组织（带过）
-
-触发器契约：`{ name, match(event) → boolean, handle(ctx) }`
-
-- **加功能 = 加文件 + index.js 一行注册**，分发器永不修改；
-- **按注册顺序匹配，命中即停**：一条消息只触发一个回复，避免刷屏；
-- MVP 的"类 Chat"行为完全够用：关键词/命令 → 固定或拼接回复（`ping → pong` 即首个实例）；
-- 将来接 LLM：LLM 调用塞进某个触发器的 `handle` 内部，架构不变（呼应架构文档第 9 节）。
-
----
-
-## 5. 通用组件（横切）
-
-| 组件 | 位置 | 状态 | 说明 |
-|---|---|---|---|
-| 配置 | `src/config.js` | ✅ | env 优先 + 默认值，全项目唯一配置来源 |
-| 日志 | `src/utils/logger.js` | ✅ | 统一格式 `[时间] LEVEL 消息` |
-| 发送队列 | `src/sender/sender.js` | ✅ | 1s 固定间隔，全项目唯一出站口 |
-| 持久化 | `data/` | 设计已定（§6） | 消息 JSONL 先行；定时任务落盘随后 |
-| 权限 | 未建 | 预留 | 管理员命令需要，一个 QQ 号白名单即可 |
-| 调度器 | `scheduler/` | 预留 | 旁路直插发送层，见第 1 节 |
-
----
-
-## 6. 消息存储设计
-
-### 6.1 背景：为什么必须自己存
-
-- OneBot 11 正向 WS **只推实时事件，不补发**：断线/重启期间的消息不会重推，连接前的历史更不会回放；
-- NapCat 不维护可靠的消息库：`get_group_msg_history` 等拉取 API 查的是 QQNT 本地缓存，掉线期间会缺，且不是为分析设计的形状；
-- 结论：**消息流过分发层时自己落一份**，这是唯一可靠的历史来源。
-
-### 6.2 设计决策
-
-| 决策点 | 结论 | 理由 |
+| 层 | 位置 | 当前职责 |
 |---|---|---|
-| 挂载点 | 分发层出口（打标后的 ctx 快照），不存原始帧 | 存"洗干净 + 带 sessionKey"的形状，业务与 LLM 直接可用 |
-| 存的范围 | 仅 message 事件 | 心跳/notice 对历史无价值，需要时再扩 |
-| 文件粒度 | 按会话分文件：`data/messages/{sessionKey}.jsonl` | sessionKey 即文件名；单会话重放/喂上下文只读一个文件 |
-| 格式 | JSONL 追加写（append-only） | 零依赖、可 grep、可重放；查询复杂了再迁 SQLite，届时写转换脚本 |
-| 定时任务 | `data/jobs.json` 单文件全量读写 | 任务量级小（几十条），改一条写一次；原子写（写临时文件 + rename）防半截文件 |
+| L1 连接 | `src/connection/onebot.js` | 正向 WS、可选 Bearer 头、事件上抛、echo 匹配；默认重连 5s、API 超时 15s |
+| L2 分发 | `src/dispatch/` | message 筛选、sessionKey、入站快照、构造 ctx、按注册表派发与异常日志 |
+| L3 处理 | `src/triggers/` | 指令、聊天、绘图；群聊条件组合、上下文与回复加工 |
+| L4 发送 | `src/sender/` | 全局 FIFO 队列、默认 1s 间隔；记录最近 1000 个发送成功的机器人消息 ID |
 
-**最终选型（已拍板）**：消息与任务均先用 JSON 文件，出现跨会话查询/统计需求时再迁移 SQLite（嵌入式，非服务器型）。
+连接层不含业务，分发器不按具体业务名称写分支，触发器不互相调用。所有出站消息都必须经过 sender。限流控制发送节奏，不保证平台一定接受消息。
 
-存储条目 = ctx 快照，一条一行：
+## 4. 处理层与扩展点
 
-```json
-{ "sessionKey": "g-741883823", "time": 1760000000, "message_id": -114514,
-  "message_type": "group", "group_id": 741883823, "user_id": 2434546640,
-  "raw_message": "ping", "sender": { "nickname": "天子", "card": "", "role": "member" } }
-```
+触发器契约：`{ name, match(event) → boolean, handle(ctx) }`。新增同类消息业务通常是新增文件并在入口注册；新增事件类型还需要调整分发器的放行范围与 ctx 契约。
 
-### 6.3 两条纪律（比位置更重要）
+### 4.1 聊天
 
-1. **旁听者模式**：dispatcher 派发前把 ctx 快照丢给存储钩子即返回，落盘失败/变慢不影响主管道与回复（fire-and-forget）；
-2. **出站回复不回存**：MVP 只记录入站消息；将来 LLM 需要完整对话上下文时，再把 `reply()` 的内容一并落盘。
+- `chat-conditions.js`：群聊 @、名字呼唤、引用机器人消息，任一启用条件命中即可。引用 ID 仅保存在进程内，重启后清空。
+- `chat.js`：无文本时返回；按会话冷却（默认 5s），读取近期消息（默认 20 条），过滤当前消息和 `/reset` 水位之前的历史，再调用模型。
+- `chat-system.js`：人设、记忆、群聊／私聊规则组成固定前缀；当前时间、场景与静默时长放在尾部。
+- `chat-context.js`：用默认 12000 字节预算扣除 system 后保留最近连续历史；它只裁剪历史，不截断 system，也不把当前输入和图片字节计入，因此不是整个请求的硬上限。
+- `chat-reply-chain.js`：默认延迟 2–8s，按换行／配置分隔符拆段，群聊首条挂引用。存储保留一次模型输出全文，发送可以拆成多条。
 
-```mermaid
-flowchart LR
-    D["分发层<br/>筛选+打标完成"] --> ST["存储钩子<br/>fire-and-forget"]
-    D --> T["触发器链"]
-    ST --> F["data/messages/{sessionKey}.jsonl<br/>追加写"]
+识图在完成文本与冷却检查后执行：优先当前消息第一张可用图，否则从群聊最近 20 条消息找同用户、默认 120s 时间窗内的近图。只取一张，私聊不查历史。下载失败或视觉调用失败回退纯文本；图片本体只在内存中使用，不写入消息库。
 
-    style ST fill:#fff7ed,stroke:#fdba74
-    style F fill:#f0fdf4,stroke:#86efac
-```
+### 4.2 指令与绘图
 
----
+`command.js` 的 `COMMANDS` 注册表包含名称、权限、说明和处理函数，`/help` 从该表生成。当前普通指令包括 help、status、persona 查看、memory、remember、character、version；群聊的 reset、history、persona reset 需 `ADMIN_QQ` 白名单，私聊放行。
 
-## 7. MVP 范围与现状
+`/remember` 和 `/character` 不调用模型，直接写入当前会话的记忆／人设。`/reset` 仅重置聊天历史可见水位；`/persona reset` 恢复种子人设并清空记忆，两者作用不同。
 
-| 项 | 状态 |
-|---|---|
-| L1 连接层（鉴权/重连/echo） | ✅ 已实现 |
-| L2 分发层（message 筛选 + ctx） | ✅ 已实现 |
-| L3 触发器链 + ping | ✅ 已实现（闭环验证进行中） |
-| L4 发送层（队列限流） | ✅ 已实现 |
-| 心跳监控 / 事件去重 | ⏸ 遇到问题再补（保险丝项） |
-| sessionKey 打标 + 消息存储 | ⏭ 已定设计（§6），待实现 |
-| 调度器 / 权限 | 下一期 |
+draw 是独立触发器，排在 command 前，不在 `COMMANDS` 表内，因此当前 `/help` 不自动列出 `/draw`。绘图 Key 与 `DRAW_WHITELIST_QQ` 分别控制启用与使用权限；结果经 sender 发送，历史仅保存 `[图片] prompt` 占位文本。
 
-MVP 验收标准就一条：**群里发 `ping`，机器人回 `pong`，日志里能看到完整流通路径**。
+### 4.3 后台提炼
+
+配置聊天 Key 时启动提炼器，默认每 60s 扫描一次会话；有未处理消息且静默达到 10 分钟或新增达到 50 条时调用模型。每轮每会话取水位后最近最多 100 条记录。
+
+模型返回完整 character／memory 文件内容，经形状校验、锁定条目校验和容量处理后写入；至少一个文件写成功便推进 `distillMark`。连续两次全失败后退避一小时。同一会话提炼有防重入保护。
+
+“离线提炼”表示脱离实时回复主流程，仍会调用远程模型并消耗用量。扫描范围是消息文件中的会话，不仅是曾经触发 chat 的会话。
+
+## 5. 通用组件
+
+| 组件 | 位置 | 说明 |
+|---|---|---|
+| 配置 | `src/config.js` | 环境变量与默认值；启动时读取并合并 `config.json`，没有热加载 |
+| 日志 | `src/utils/logger.js` | 统一 INFO／WARN／ERROR 输出 |
+| 模型请求 | `src/llm.js`、`src/imagegen.js` | 对话／视觉与绘图的 HTTP 请求入口，超时与异常由调用方处理 |
+| 消息存储 | `src/store/message-store.js` | 按会话 JSONL 追加，读历史时全读文件再筛选 |
+| 人设存储 | `src/store/persona-store.js` | 种子、显式教学、模型补丁、重置与审计 |
+| 会话状态 | `src/store/session-state.js` | reset／distill 水位与提炼失败状态 |
+| 用量存储 | `src/store/usage-store.js` | 部分成功聊天／提炼路径的 usage，按会话汇总；未覆盖绘图等全部调用 |
+| 版本展示 | `src/version.js` | 读取 CHANGELOG 第一条版本标题；不读取 package.json |
+
+## 6. 存储设计与语义
+
+### 6.1 保存范围
+
+Bot 自行保存经过分发器的实时消息和准备发送的回复，用于后续上下文与提炼。目前没有断线历史补录流程；近图查询也不会把整段 NapCat 历史补入消息库。
+
+### 6.2 文件形状
+
+默认路径如下，`DATA_DIR`、`PERSONA_DIR`、`USAGE_DIR` 可以分别覆盖：
+
+| 内容 | 默认位置 | 写入方式 |
+|---|---|---|
+| 消息 | `data/messages/{sessionKey}.jsonl` | 入站快照与 `bot: true` 出站行追加 |
+| 会话状态 | `data/session-state/{sessionKey}.json` | 读、合并、整文件写回 |
+| 人设／记忆 | `data/personas/{sessionKey}/character.md`、`memory.md` | 显式追加、提炼替换、指令重置 |
+| 人设审计 | `data/personas/{sessionKey}/history.jsonl` | 变动记录追加 |
+| 用量 | `data/usage/{sessionKey}.jsonl` | 返回的 usage 追加 |
+
+入站保存文本、时间、消息 ID、发送者等快照，不保存完整消息段数组。出站 bot 行没有发送后的消息 ID。消息时间、`resetAt`、`distillMark` 使用秒；用量与审计时间使用毫秒。
+
+当前没有任务文件或 `data/jobs.json`。任务持久化方案随主动／定时功能业务一起确定。
+
+### 6.3 写入与失败语义
+
+1. 入站消息、出站回存和用量使用异步追加，失败记 WARN；各存储模块通过自己的 Promise 链串行写入，减少并发覆盖和错序。
+2. 出站在 API 确认前回存。消息库记录“准备回复的内容”，不能当作送达账本；发送失败后没有对应的状态回写。
+3. 状态与人设目前直接整文件写回，没有临时文件 rename 或跨文件事务；串行化不等于异常退出时的原子落盘。
+4. 显式教学追加超限时会淘汰较旧的教学行，并保留最新行，因此 4096 字节不是所有写入路径的硬上限。模型补丁中 character 超限拒绝该文件；memory 超限先裁非锁定行，仍超限则拒绝。
+5. 提炼校验要求保留本轮读取到的 `/remember` 与 `/character` 锁定条目；核心性格的延续由提示词要求。这里不承诺所有并发场景下的冲突保护或模型对核心性格的绝对遵从。
+
+## 7. 当前实现与验证边界
+
+消息接入、分发、统一发送、AI 对话、多模态、指令权限、消息存储、人设提炼与基础用量记录均已有实现。通用主动／定时推送、更多事件类型、管理 API／面板与完整用量管理尚未实现。
+
+2026-10-26 在代码基线 `c167cca` 上运行模拟测试：232 项，231 通过、1 失败。失败来自 `test/persona-store.test.js` 引用了未随仓库交付的 `.trae/specs/add-self-evolving-persona/spec.md`；本轮仅记录，未修复测试。
+
+该结果验证本地模拟协议与代码行为，不等价于真实 QQ／模型或长期运行验收。发送队列持久化、心跳存活检测、事件去重和停机排空尚未实现；是否补齐按运行中出现的问题与阶段验收需要决定。

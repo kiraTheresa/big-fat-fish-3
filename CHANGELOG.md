@@ -3,11 +3,31 @@
 All notable changes to **Big Fat Fish** (大肥鱼) are documented here, from a user's perspective.
 Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new features), `fix` (bug fixes), `docs`, `chore`.
 
-## [0.9.4] - 2026-10-25
+Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
+
+## [0.11.0] - 2026-10-25
+
+### feat
+
+- **Teach the fish a personality trait** — `/character <text>` appends a speaking style or personality instruction to the current conversation's character file without a model call. Like `/remember`, it is available to ordinary users; group commands still require @. The distiller now checks that both character instructions and explicit memories from its input are preserved. Explicit teaching retains the newest entry and may evict older taught entries when space runs out.
+
+## [0.10.2] - 2026-10-25
+
+### feat
+
+- **Image understanding in chat** — a triggered message with text can include one image. In groups, a text-only follow-up can also use a recent image from the same sender within the configured window (120 seconds by default, searched in the last 20 messages). The fish sends a short acknowledgement before downloading the image into memory and calling the vision model. Download or vision failures fall back to text chat. Image-only messages and private-chat history lookup are not supported yet; set `DEEPSEEK_VISION_MODEL` to an empty value to disable vision.
+
+## [0.10.1] - 2026-10-25
 
 ### feat
 
 - **Group commands now need @ first** — in group chats, commands only take effect when the message @-mentions the fish (e.g. `@大肥鱼 /help`); without @, the fish stays quiet no matter what the message starts with. This ends three kinds of noise: replies to casual messages that merely start with `/` ("unknown command"), permission errors when non-admins poke admin commands, and — in groups with several bots — every prefix-matching bot answering the same bare command at once. Private chats are unchanged (`/help` works directly); `/draw` follows the same rule.
+
+## [0.10.0] - 2026-10-25
+
+### feat
+
+- **Text-to-image generation** — `/draw <prompt>` acknowledges the request, calls a configurable image generation endpoint, and sends the resulting image through the shared queue. Both group and private chats require the sender to be in `DRAW_WHITELIST_QQ`; an empty list denies all users. The feature is disabled without `IMAGE_API_KEY`. Conversation history keeps a text placeholder for the generated image; the image itself is not saved by the Bot.
 
 ## [0.9.3] - 2026-10-25
 
@@ -48,10 +68,10 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 - **Quoted replies** — in group chats, the fish's first message quotes the message that triggered it, so multi-person conversations stay easy to follow. (Off in private chats.)
 - **Scene awareness** — the fish now knows the current time, whether it is in a group or a private chat, and how long the conversation has been silent (from "just now" up to "N days ago"), and adapts its tone accordingly.
 - **Scene-based behavior rules** — more restrained and never spammy in groups; more open to chatting at length in private chats.
-- **Locked memories** — anything taught via `/remember` is now locked: the auto-distiller can never drop or rewrite it. A patch that loses a locked entry is rejected and retried.
+- **Locked memories** — `/remember` entries in the distiller's input are checked against its output. A patch that fails to retain those entries is rejected; this protects the input snapshot, rather than providing a transaction against concurrent edits.
 - **Picky distiller** — the offline distiller now only keeps what matters (user preferences, identity facts, commitments) and ignores small talk, moods and pleasantries. Memories are written one entry per line.
-- **Context budget** — persona + memory + history are capped at 12,000 bytes (configurable); when over budget, the oldest history is trimmed first, always keeping the most recent context.
-- **Behavior switches without code** — a new `config.json` controls all behavior (trigger conditions, reply pacing, context budget). Missing or broken file safely falls back to defaults. See `config.example.json`.
+- **Context budget** — a configurable 12,000-byte budget reserves space for the system prompt and keeps the most recent continuous history that fits. It trims history only: the system prompt, current input and image payload are not truncated, so this is not a hard limit on the entire request.
+- **Behavior switches without code** — a new `config.json` controls trigger conditions, reply pacing and history budget. A missing, unreadable or invalid JSON file falls back to defaults; nested field validation is not comprehensive. Changes require a Bot restart. See `config.example.json`.
 
 ### docs
 
@@ -61,11 +81,11 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 ### feat
 
-- **Self-evolving persona** — the fish maintains a per-conversation character (`character.md`) and fact memory (`memory.md`), incrementally evolved by an offline distiller triggered after 10 minutes of silence or 50 new messages. Core identity ("silly big fat fish, sincere, mascot") can never be overwritten.
+- **Self-evolving persona** — the fish maintains a per-conversation character (`character.md`) and fact memory (`memory.md`), incrementally evolved by a background distiller triggered after 10 minutes of silence or 50 new messages. Its prompt instructs the model to preserve the core identity ("silly big fat fish, sincere, mascot"); this is not a programmatic guarantee. Background distillation still calls the remote model.
 - **Command system** — `/help`, `/status`, `/persona`, `/persona reset`, `/memory`, `/remember`, `/reset`, `/history`. Admin-only commands (in groups) are restricted to the `ADMIN_QQ` whitelist.
 - **/remember** — teach the fish a fact instantly, in your own words, at zero LLM cost.
 - **/reset** — admin clears the conversation context and starts fresh (history files are kept, only the visible window resets).
-- **Usage tracking** — every LLM call's token usage (including cache hits) is recorded and summarized via `/status`.
+- **Usage tracking** — returned token usage (including cache hits) is recorded for successful chat and applied distillation paths, then summarized via `/status`. Failed or rejected distillation, retries and image generation are not fully accounted for; the summary is not a complete billing record.
 
 ### fix
 
