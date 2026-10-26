@@ -3,7 +3,7 @@
 // 新增指令 = 往 COMMANDS 数组加一项，主流程与 /help 列表自动跟上。以此消除三个坏味道：
 // ① /help 手工列表（注册表增删后易漂移）→ 自动生成；② isAdmin 在多个 handler 里
 // 重复 → 集中到主流程一处判定；③ switch 随指令数线性增长 → 查表分发。
-// 权限矩阵：私聊全放行；群聊 adminOnly 指令需 user_id ∈ config.adminQq 白名单，
+// 权限矩阵：私聊全放行；群聊 adminOnly 指令由统一权限服务判断，
 // 未配置 ADMIN_QQ（空数组）时群聊管理指令一律拒绝（安全默认，includes 恒 false）。
 // 唯一例外：/persona 对所有人开放查看，但其 reset 子操作是管理指令——该模块
 // adminOnly: false，reset 分支在 handle 内部自行判管理员（保留原语义与文案）。
@@ -14,7 +14,6 @@
 // 注册顺序 ping → command → chat（index.js）：命中即停，指令消息不会落入 chat 调 LLM。
 // 回复只经 ctx.reply() 交给发送层；所有存储操作走各 store 的既有串行化与容错；
 // handler 异常不在本模块捕获——dispatcher 对 trigger.handle 已有统一 try/catch 记 ERROR。
-import { config } from '../config.js';
 import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
 import { logger } from '../utils/logger.js';
@@ -23,6 +22,7 @@ import { readState, updateState } from '../store/session-state.js';
 import { readUsageStats } from '../store/usage-store.js';
 import { readMessagesSince } from '../store/message-store.js';
 import { getVersion } from '../version.js';
+import { canManageSession } from '../platform/permissions.js';
 
 // /persona /memory 展示上限（字符）：超长截断保留尾部并注明——人设经离线提炼演化后
 // 变长，最新的设定/记忆追加在文件尾部，展示尾部信息量最大
@@ -31,12 +31,11 @@ const MAX_SHOW_CHARS = 1200;
 const NO_PERMISSION_REPLY = '这条指令只有管理员可以用哦';
 const UNKNOWN_REPLY = '本鱼不认识这个指令哦，发 /help 看看本鱼都会什么';
 
-// 管理权限判断（内部函数）：私聊全放行；群聊要求发送者 QQ 在 adminQq 白名单内。
+// 管理权限判断（内部函数）：私聊全放行；群聊要求统一权限服务中的管理员角色。
 // 只有两处调用：主流程的 adminOnly 集中判定、/persona reset 分支的内部判定
 // （后者是该子操作的管理属性所致，属注册表契约外的唯一例外）。
 function isAdmin(event) {
-  if (event.message_type === 'private') return true;
-  return config.adminQq.includes(String(event.user_id));
+  return canManageSession(event);
 }
 
 // 超长文本截断保留尾部并注明（label 用于注明被截的是人设还是记忆）

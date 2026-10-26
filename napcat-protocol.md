@@ -195,7 +195,7 @@ sender：`user_id`、`nickname`、`sex`、`age`。
 | `raw_message` | string | 原始消息内容 |
 | `sender` | object | 发送人信息 |
 
-sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`、`level`、`role`（`owner`/`admin`/`member`）、`title`。字段为尽力提供，不保证全量存在。`role` 表示 QQ 群身份；本项目当前的管理权限使用 `ADMIN_QQ` 白名单，绘图使用 `DRAW_WHITELIST_QQ`，不直接依据 `sender.role` 授权。
+sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`、`level`、`role`（`owner`/`admin`/`member`）、`title`。字段为尽力提供，不保证全量存在。`role` 表示 QQ 群身份；本项目当前的管理权限使用 `ADMIN_QQ` 白名单，绘图向所有用户开放，不直接依据 `sender.role` 授权。
 
 > 触发器契约提醒：本项目触发器以 `match(event)` 匹配后，回复通过 `ctx.reply()` 走 sender 收口（见架构文档第 4 节），不使用 WS 下不可用的「快速操作」回包。
 

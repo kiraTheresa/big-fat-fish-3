@@ -19,7 +19,7 @@ services:
       - ./napcat/config:/app/napcat/config  # NapCat 配置持久化
       - ./scripts:/app/fish:ro             # 启动前固定 machine-id、初始化正向 WS
 
-  # bot-core：与 napcat 同编排，容器网络内以服务名互连；纯出站客户端，不暴露端口
+  # bot-core：与 napcat 同编排，容器网络内以服务名互连；管理网站仅映射到宿主回环地址
   bot:
     build: .
     container_name: big-fat-fish
@@ -32,6 +32,9 @@ services:
       ONEBOT_WS_URL: ws://napcat:3001
       # 时区：日志与记忆条目时间戳取本地时区（镜像内已装 tzdata）
       TZ: Asia/Shanghai
+      ADMIN_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-3210}:${ADMIN_PORT:-3210}"
     env_file:
       - .env            # 其余配置（token / LLM key / 管理白名单等）与宿主机同源
     volumes:

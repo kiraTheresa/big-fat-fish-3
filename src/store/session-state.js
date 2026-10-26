@@ -4,9 +4,10 @@
 // 纪律（同 message-store）：update 走「读-合-写」且经 writeChain 串行化，防并发更新
 // 以过期底稿互相覆盖丢键；任何失败仅记 WARN、绝不向上抛（调用方拿 {} / false 兜底）。
 // dataDir 在调用时读取（而非模块加载时求值），保证测试 env 注入生效。
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../config.js';
+import { atomicWriteJson } from '../platform/persistence.js';
 import { logger } from '../utils/logger.js';
 
 // 读-合-写串行化：指令触发器（/reset 置 resetAt）与 distiller（推进 distillMark）
@@ -24,7 +25,7 @@ async function updateOne(sessionKey, patch) {
     const current = await readState(sessionKey); // 文件不存在/损坏均已兜底 {}
     const dir = join(config.dataDir, 'session-state');
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${sessionKey}.json`), JSON.stringify({ ...current, ...patch }));
+    await atomicWriteJson(join(dir, `${sessionKey}.json`), { ...current, ...patch });
     return true;
   } catch (err) {
     logger.warn(`会话状态写入失败(${sessionKey}): ${err.message}`);

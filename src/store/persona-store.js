@@ -6,9 +6,10 @@
 // 「读-淘汰-写回」，防并发以过期底稿互相覆盖；任何失败仅记 WARN、绝不向上抛
 // （调用方拿兜底值 / false）。personaDir / personaMaxBytes 在调用时读取（而非模块
 // 加载时求值），保证测试 env 注入生效。
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../config.js';
+import { atomicWriteFile, appendJsonl } from '../platform/persistence.js';
 import { logger } from '../utils/logger.js';
 
 // 种子人设全文（spec.md 附录，一字不差；引号是半角直引号，勿「顺手」改成全角）
@@ -67,10 +68,7 @@ async function readIfExists(file) {
 // 审计追加一行 { time, kind, summary }（JSONL，append-only 不淘汰）。仅由主写入已
 // 成功的路径调用；失败只 WARN，不影响主操作的成功语义。
 async function appendAudit(sessionKey, kind, summary) {
-  await appendFile(
-    join(sessionDir(sessionKey), 'history.jsonl'),
-    JSON.stringify({ time: Date.now(), kind, summary }) + '\n'
-  );
+  await appendJsonl(join(sessionDir(sessionKey), 'history.jsonl'), { time: Date.now(), kind, summary });
 }
 
 // 记忆条目落盘后的总字节数（行间 \n + 末尾 \n，与写回格式一致）
@@ -90,8 +88,8 @@ async function getPersonaOne(sessionKey) {
     const character = await readIfExists(join(dir, 'character.md'));
     const memory = await readIfExists(join(dir, 'memory.md'));
     // 种子写入不检查大小上限：种子本身即受信任的基线内容
-    if (character === null) await writeFile(join(dir, 'character.md'), SEED_CHARACTER);
-    if (memory === null) await writeFile(join(dir, 'memory.md'), '');
+    if (character === null) await atomicWriteFile(join(dir, 'character.md'), SEED_CHARACTER);
+    if (memory === null) await atomicWriteFile(join(dir, 'memory.md'), '');
     return {
       character: character ?? SEED_CHARACTER,
       memory: memory ?? '',
@@ -122,7 +120,7 @@ async function appendMemoryOne(sessionKey, speaker, text) {
       if (oldest === -1) break; // 除最新行外已无可淘汰条目
       entries.splice(oldest, 1);
     }
-    await writeFile(join(dir, 'memory.md'), entries.join('\n') + '\n');
+    await atomicWriteFile(join(dir, 'memory.md'), entries.join('\n') + '\n');
   } catch (err) {
     logger.warn(`记忆追加失败(${sessionKey}): ${err.message}`);
     return false;
@@ -169,7 +167,7 @@ async function appendCharacterOne(sessionKey, text) {
       if (oldest === -1) break; // 除最新行外已无可淘汰钦定行
       lines.splice(oldest, 1);
     }
-    await writeFile(join(dir, 'character.md'), lines.join('\n') + '\n');
+    await atomicWriteFile(join(dir, 'character.md'), lines.join('\n') + '\n');
   } catch (err) {
     logger.warn(`性格追加失败(${sessionKey}): ${err.message}`);
     return false;
@@ -274,7 +272,7 @@ async function applyPatchOne(sessionKey, patch) {
     const dir = sessionDir(sessionKey);
     await mkdir(dir, { recursive: true });
     for (const [name, content] of writes) {
-      await writeFile(join(dir, name), content);
+      await atomicWriteFile(join(dir, name), content);
       result[name === 'character.md' ? 'character' : 'memory'] = true;
     }
   } catch (err) {
@@ -304,8 +302,8 @@ async function resetPersonaOne(sessionKey) {
   try {
     const dir = sessionDir(sessionKey);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'character.md'), SEED_CHARACTER);
-    await writeFile(join(dir, 'memory.md'), '');
+    await atomicWriteFile(join(dir, 'character.md'), SEED_CHARACTER);
+    await atomicWriteFile(join(dir, 'memory.md'), '');
   } catch (err) {
     logger.warn(`人设重置失败(${sessionKey}): ${err.message}`);
     return false;

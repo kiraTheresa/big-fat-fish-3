@@ -4,7 +4,7 @@
 // { character, memory }，applyPersonaPatch 分文件落盘（character 超限单拒该文件、
 // memory 超限程序化裁剪），至少一文件落盘即推进 distillMark 水位（消息已消化，
 // 重试同批只会再烧一次 LLM——这是掐断「超限拒绝→60s 重试→再超限」死循环的关键：
-// 水位推进优先于完美主义）+ 旁路记 usage（kind: 'distill'，fire-and-forget）。
+// 水位推进优先于完美主义）。用量在 gateway 逐次记账，与补丁是否采纳无关。
 // 全失败（LLM 异常/非 JSON/锁定校验失败/零文件落盘）仅 WARN 跳过、水位不动并计
 // 失败；连续 ≥ 2 次全失败进入 1 小时退避（期内不再真调 LLM，到期自动恢复）。
 // 提炼中的会话进程内防重入（runningSet）。量纲约定：消息 JSONL 的 time 是秒级，与
@@ -18,7 +18,6 @@ import { chatCompletion } from '../llm.js';
 import { readMessagesSince } from '../store/message-store.js';
 import { applyPersonaPatch, getPersona, extractLockedLines, patchKeepsLockedLines } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
-import { appendUsage } from '../store/usage-store.js';
 
 // 锁定行判定/校验已搬家 persona-store（store 层，供 applyPersonaPatch 的 memory 兜底
 // 裁剪复用同一谓词；依赖单向 distiller → store）。此处 re-export 保持 distiller 旧
@@ -155,7 +154,7 @@ export async function distillSession(sessionKey, newMessages) {
 
     // 现有人设（首访自动落种子）：本次演化的底稿
     const persona = await getPersona(sessionKey);
-    const { content, usage } = await chatCompletion(buildMessages(persona, newMessages));
+    const { content } = await chatCompletion(buildMessages(persona, newMessages), { kind: 'distill', sessionKey });
 
     const patch = parsePatch(content);
     if (patch === null) {
@@ -196,20 +195,6 @@ export async function distillSession(sessionKey, newMessages) {
     const maxTime = newMessages.reduce((max, rec) => Math.max(max, rec.time ?? 0), 0);
     await updateState(sessionKey, { distillMark: maxTime, distillFails: 0 });
 
-    // 用量旁路观测（spec「用量观测」）：fire-and-forget 不 await（appendUsage 内部全
-    // 捕获、失败仅 WARN）；响应缺 usage 字段（null）不记账。部分成功同样是真实调用，
-    // 照记。
-    if (usage !== null) {
-      appendUsage(sessionKey, {
-        time: Date.now(),
-        kind: 'distill',
-        model: config.deepseekModel,
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: usage.total_tokens,
-        prompt_cache_hit_tokens: usage.prompt_cache_hit_tokens,
-      });
-    }
   } catch (err) {
     // 任何异常（LLM 超时/网络等）：水位与文件不动，下轮扫描重试（受退避保护）
     logger.warn(`[distill] 会话 ${sessionKey} 提炼失败: ${err.message}`);

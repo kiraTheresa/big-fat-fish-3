@@ -2,10 +2,15 @@
 // HTTP 500 reject、形状异常（data 空数组）reject，以及请求形状（Bearer key、model、
 // prompt、size 原样上送）。
 // 模式（同 llm.test.js）：起 mock 图片 API → 设 env（必须 import config 之前）→ 动态 import。
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startImageServer, IMG_BYTES } from './image-server.js';
 
+const usageRoot = await mkdtemp(join(tmpdir(), 'fish-gateway-test-'));
+process.env.USAGE_DIR = usageRoot;
 const imageServer = await startImageServer();
 process.env.IMAGE_API_KEY = 'test-image-key';
 process.env.IMAGE_API_BASE_URL = imageServer.url;
@@ -16,6 +21,7 @@ process.env.IMAGE_TIMEOUT_MS = '2000';
 const { generateImage } = await import('../src/imagegen.js');
 
 after(async () => {
+  await rm(usageRoot, { recursive: true, force: true });
   await imageServer.close();
 });
 
@@ -45,6 +51,21 @@ test('HTTP 500：reject 且错误信息含状态码（调用方兜底的依据�
   imageServer.setFail();
   try {
     await assert.rejects(() => generateImage('会失败'), (err) => err.message.includes('HTTP 500'));
+  } finally {
+    imageServer.setB64();
+  }
+});
+
+test('HTTP 400：保留上游参数错误原因，隐藏 Key 并压成单行', async () => {
+  imageServer.setFail(400, { message: 'Unsupported size 2K\nkey=test-image-key Bearer secret-token' });
+  try {
+    await assert.rejects(() => generateImage('猫'), (err) => {
+      assert.match(err.message, /HTTP 400: Unsupported size 2K/);
+      assert.ok(!err.message.includes('test-image-key'));
+      assert.ok(!err.message.includes('secret-token'));
+      assert.ok(!err.message.includes('\n'));
+      return true;
+    });
   } finally {
     imageServer.setB64();
   }

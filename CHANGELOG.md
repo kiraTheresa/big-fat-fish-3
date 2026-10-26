@@ -5,6 +5,21 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [Unreleased]
+
+### feat
+
+- Receive and persist all OneBot 11 standard event families and message segments, including CQ strings and unknown extensions. Newly supported types are receipt-only.
+- Local management console with a liquid-glass interface: runtime health, event inbox, validated live configuration, QQ roles, durable jobs, structured logs and model usage. Admin APIs require a separate token.
+- Shared atomic persistence, single-process data-directory guard, recoverable interval/once jobs and daily observation retention.
+- Count chat, vision, drawing and distillation API attempts, including failures and unknown usage; enforce feature switches and daily request limits, with a reported-token threshold.
+
+### fix
+
+- Remove the drawing QQ whitelist; drawing is public by default while group @ addressing remains required.
+- Preserve sanitized provider error details for failed image/chat requests. The earlier real image HTTP 400 still needs a provider response to diagnose.
+- Remove a test dependency on an ignored local IDE spec; repository tests now carry their own seed assertions.
+
 ## [0.11.0] - 2026-10-25
 
 ### feat

@@ -3,13 +3,10 @@
 // draw 必须排在它前面——否则 /draw 永远收到「本鱼不认识这个指令」；命中即停保证
 // /draw 不会误入 chat 白白调一次 LLM。
 // 群聊 @ 门控（同 command 的指令寻址制）：群聊 /draw 须 @ 本鱼，裸发一律静默（与
-// 白名单未命中的静默同风格——不回引导、不暴露功能存在）；私聊免 @。match 仍宽吞
-// /^\/draw(\s|$)/，@ 判定在 handle 开头（未 @ 的 '/draw' 也不落入 chat 白调 LLM）。
-// 防滥用（白名单制）：DRAW_WHITELIST_QQ 白名单，群聊私聊一律校验（画图是真实成本，
-// 私聊也要防刷）；空名单全拒（安全默认）；未命中静默忽略——不回任何话，不暴露
-// 功能存在，防探测。名单内用户空 prompt 时回用法提示（对可信用户保持友好）。
-// handle 主链：白名单校验 → 空 prompt 用法提示 → 先回「在画了」（出图实测 20-70s，
-// 先给个回应垫住体验）→ generateImage → 图片段出站 + 占位回存 → 失败兜底文案。
+// 指令寻址规则一致）；私聊免 @。match 仍宽吞 /^\/draw(\s|$)/，@ 判定在 handle
+// 开头（未 @ 的 '/draw' 也不落入 chat 白调 LLM）。绘图向所有用户开放。
+// handle 主链：空 prompt 用法提示 → 先回「在画了」→ generateImage → 图片段出站
+// + 占位回存 → 失败兜底文案。
 // 出站不经 ctx.reply（它只发文本）：与 chat 的 persistAndSend 同模式直接用 sender +
 // appendMessage。OneBot message 数组段原生支持 {type:'image'}，base64:// 前缀直接
 // 透传 NapCat——bot 侧零下载零落盘（b64_json 由 imagegen 直接给出）。
@@ -42,16 +39,9 @@ export default {
   async handle(ctx) {
     const { event, sessionKey } = ctx;
 
-    // 群聊 @ 门控（同 command）：未 @ 本鱼 → 静默。白名单内也不例外——寻址未明确
-    // 不动笔画图，与白名单未命中的静默合流为同一种「装没听见」
+    // 群聊未 @ 本鱼时静默；私聊直接使用。
     if (event.message_type === 'group' && !matchAt(event)) {
       logger.info(`[draw] ${sessionKey} 群聊 /draw 未 @ 本鱼，静默忽略`);
-      return;
-    }
-
-    // 白名单：群聊私聊一律校验（画图是真实成本，私聊同样防刷）；未命中静默（防探测）
-    if (!config.drawWhitelist.includes(String(event.user_id))) {
-      logger.info(`[draw] ${sessionKey} 用户 ${event.user_id} 不在绘图白名单，静默忽略`);
       return;
     }
 
@@ -66,7 +56,7 @@ export default {
     await ctx.reply(`收到～本鱼在画「${summary}」啦，稍等哦`);
 
     try {
-      const { b64 } = await generateImage(prompt);
+      const { b64 } = await generateImage(prompt, { sessionKey });
 
       // 占位回存：图不进上下文，占位文本让后续追问可接上（行形状与 dispatcher 的
       // ctx.reply bot 行一致：秒级 time、bot:true、无 message_id）
@@ -87,7 +77,7 @@ export default {
       else sendPrivate(event.user_id, segments);
     } catch (err) {
       logger.warn(`[draw] 生成失败（${sessionKey}）: ${err.message}`);
-      await ctx.reply(DRAW_FAIL_REPLY);
+      await ctx.reply(err.name === 'UsageLimitError' ? `本鱼暂时不能画图：${err.message}。` : DRAW_FAIL_REPLY);
     }
   },
 };

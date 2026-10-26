@@ -3,10 +3,15 @@
 // add-self-evolving-persona Task 5 增补：返回值 { content, usage }——usage 透传、
 // 容忍缺字段、响应整体缺 usage → null。
 // 模式：起 mock LLM → 设 env（必须在 import config 之前）→ 动态 import src/llm.js。
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startLlmServer } from './llm-server.js';
 
+const usageRoot = await mkdtemp(join(tmpdir(), 'fish-gateway-test-'));
+process.env.USAGE_DIR = usageRoot;
 const llm = await startLlmServer();
 process.env.DEEPSEEK_API_KEY = 'test-key';
 process.env.DEEPSEEK_BASE_URL = llm.url;
@@ -15,6 +20,7 @@ process.env.CHAT_TIMEOUT_MS = '1000'; // 成功用例本地往返 <50ms；超时
 const { chatCompletion } = await import('../src/llm.js');
 
 after(async () => {
+  await rm(usageRoot, { recursive: true, force: true });
   await llm.close();
 });
 

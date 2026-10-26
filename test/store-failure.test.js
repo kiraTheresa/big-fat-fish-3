@@ -90,7 +90,7 @@ test('存储故障隔离：mkdir 失败仅记 WARN，触发器仍执行、回复
     assert.equal(frame.params.group_id, 123);
 
     // fire-and-forget 的写失败是异步到达的：轮询等待 WARN 出现
-    await waitUntil(() => logs.some((line) => line.includes('WARN')));
+    await waitUntil(() => logs.some((line) => line.includes('WARN') && line.includes('消息存储失败')));
   } finally {
     console.log = originalLog;
   }

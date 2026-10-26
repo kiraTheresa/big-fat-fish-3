@@ -58,11 +58,8 @@ test('种子生成：首次 getPersona 落盘并返回种子，二次调用不�
   assert.deepEqual(second, { character: SEED, memory: '' });
   assert.equal(await readFile(file(key, 'character.md'), 'utf8'), SEED, '二次调用文件内容不变');
 
-  // 一字不差核对：落盘种子与 spec 附录围栏内容逐字节相等
-  const specText = await readFile(new URL('../.trae/specs/add-self-evolving-persona/spec.md', import.meta.url), 'utf8');
-  const fence = specText.match(/```markdown\n([\s\S]*?)\n```/);
-  assert.ok(fence, 'spec 附录种子围栏应存在');
-  assert.equal(first.character, fence[1], '种子应与 spec 附录一字不差');
+  // 上面的独立 SEED 常量就是可随仓库交付的断言依据，不依赖被忽略的 IDE 文件。
+
 });
 
 test('appendMemory：行格式 `- [YYYY-MM-DD HH:mm] 昵称: 内容`，追加 memory-append 审计', async () => {

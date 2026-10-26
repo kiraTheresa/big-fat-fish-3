@@ -148,3 +148,59 @@ test('坏帧：非 JSON 输入丢弃，不崩溃、不上抛事件；合法事�
 
   onebot.onEvent(null); // 还原，避免影响后续用例
 });
+
+test('all event families pass upstream and heartbeat updates a read-only connection snapshot', { timeout: 10000 }, async () => {
+  const events = [];
+  onebot.onEvent((event) => events.push(event));
+  await restartConnection();
+  const base = onebot.getConnectionStatus().eventsReceived;
+  const frames = [
+    { post_type: 'notice', notice_type: 'group_increase', group_id: 123 },
+    { post_type: 'request', request_type: 'friend', flag: 'pending-only' },
+    { post_type: 'message_sent', message_type: 'private', message: 'echo', user_id: 456 },
+    { post_type: 'meta_event', meta_event_type: 'heartbeat', interval: 5000, status: { online: true, good: true } },
+  ];
+  for (const frame of frames) server.injectEvent(frame);
+  await waitUntil(() => events.length === frames.length);
+  assert.deepEqual(events, frames);
+  const status = onebot.getConnectionStatus();
+  assert.equal(status.connected, true);
+  assert.equal(status.eventsReceived, base + frames.length);
+  assert.equal(status.heartbeatIntervalMs, 5000);
+  assert.ok(status.lastEventAt >= status.connectedAt);
+  assert.ok(status.lastHeartbeatAt >= status.connectedAt);
+  assert.deepEqual(status.heartbeatStatus, { online: true, good: true });
+  status.heartbeatStatus.online = false;
+  assert.equal(onebot.getConnectionStatus().heartbeatStatus.online, true);
+  onebot.onEvent(null);
+});
+
+test('async handler rejection is caught and does not prevent next event delivery', { timeout: 10000 }, async () => {
+  await restartConnection();
+  const before = onebot.getConnectionStatus().handlerErrors;
+  let delivered = 0;
+  onebot.onEvent(async () => {
+    delivered++;
+    if (delivered === 1) throw new Error('async handler rejected');
+  });
+  server.injectEvent({ post_type: 'notice', notice_type: 'friend_add' });
+  await waitUntil(() => onebot.getConnectionStatus().handlerErrors === before + 1);
+  server.injectEvent({ post_type: 'notice', notice_type: 'friend_add' });
+  await waitUntil(() => delivered === 2);
+  assert.equal(onebot.getConnectionStatus().connected, true);
+  onebot.onEvent(null);
+});
+
+test('JSON primitives and array frames are dropped, stop status is disconnected', { timeout: 10000 }, async () => {
+  await restartConnection();
+  let delivered = 0;
+  onebot.onEvent(() => { delivered++; });
+  const before = onebot.getConnectionStatus().malformedFrames;
+  for (const frame of ['null', '[]', '42', '"hello"']) server.sendRaw(frame);
+  await waitUntil(() => onebot.getConnectionStatus().malformedFrames === before + 4);
+  assert.equal(delivered, 0);
+  onebot.stopConnection();
+  assert.equal(onebot.getConnectionStatus().connected, false);
+  assert.equal(onebot.getConnectionStatus().stopped, true);
+  onebot.onEvent(null);
+});

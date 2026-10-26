@@ -303,7 +303,7 @@ test('distillSession 全流程：patch 落盘 + 审计 + 水位推进 + usage �
 });
 
 // ---- 失败路径一：LLM HTTP 500 ----
-test('失败路径一：LLM 失败 → persona 保持种子、水位不置、计失败退避、无 usage 行', async () => {
+test('失败路径一：LLM 失败 → persona 保持种子、水位不置、计失败退避、记录失败调用', async () => {
   const key = 'g-d200';
   const rows = [msg(key, 1760000200, '会失败的一次', { nickname: '阿丙' })];
   await writeMessages(key, rows);
@@ -322,7 +322,10 @@ test('失败路径一：LLM 失败 → persona 保持种子、水位不置、计
   assert.equal(st.distillMark, undefined, '失败不得推进水位');
   assert.equal(st.distillFails, 1, '全失败应计退避 1 次');
   assert.ok(Number.isFinite(st.distillFailAt), '应记录最近失败时刻');
-  await assert.rejects(() => readFile(usageFile(key)), enoent, '失败不得记 usage');
+  const usageRecords = (await readFile(usageFile(key), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(usageRecords.length, 1, '真实 API 尝试始终记录，避免失败调用漏账');
+  assert.equal(usageRecords[0].kind, 'distill');
+  assert.equal(usageRecords[0].status, 'failure');
 });
 
 // ---- 失败路径二：LLM 返回纯文本（非 JSON） ----
@@ -339,7 +342,9 @@ test('失败路径二：LLM 返回非 JSON 纯文本 → 文件不动、水位�
   const st = JSON.parse(await readFile(stateFile(key), 'utf8'));
   assert.equal(st.distillMark, undefined, '非 JSON 不得推进水位');
   assert.equal(st.distillFails, 1, '非 JSON 全失败计退避 1 次');
-  await assert.rejects(() => readFile(usageFile(key)), enoent, '失败不得记 usage');
+  const usageRecords = (await readFile(usageFile(key), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(usageRecords.length, 1);
+  assert.equal(usageRecords[0].status, 'success', 'API 成功产生 token，与下游是否接受补丁分开记录');
 });
 
 // ---- 分文件落盘（提炼三件套之二）：character 超限不再连坐 memory、部分成功也推进水位 ----
