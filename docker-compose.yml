@@ -2,7 +2,9 @@ services:
   napcat:
     image: mlikiowa/napcat-docker:latest
     container_name: napcat
+    hostname: ${NAPCAT_HOSTNAME:-fish-qq}
     restart: always
+    entrypoint: ["bash", "/app/fish/napcat-entrypoint.sh"]
     ports:
       - "6099:6099"   # WebUI：扫码登录 / 配置网络（必须保留，登录入口）
       - "3001:3001"   # OneBot 11 正向 WebSocket：容器网络内 bot 走 ws://napcat:3001，
@@ -10,10 +12,12 @@ services:
     environment:
       NAPCAT_UID: "1000"
       NAPCAT_GID: "1000"
-      # ACCOUNT: "123456"   # QQ 号：首次扫码登录后可打开，实现重启自动登录
+      ACCOUNT: ${NAPCAT_ACCOUNT:-} # 首次扫码后，使用已保存的账号快速登录
+      ONEBOT_ACCESS_TOKEN: ${ONEBOT_ACCESS_TOKEN:?请在 .env 设置 ONEBOT_ACCESS_TOKEN}
     volumes:
-      - ./napcat/QQ:/app/.config/QQ         # QQ 登录态持久化（重启免扫码）
+      - ./napcat/QQ:/app/.config/QQ         # QQ 登录数据；会话有效时可快速登录
       - ./napcat/config:/app/napcat/config  # NapCat 配置持久化
+      - ./scripts:/app/fish:ro             # 启动前固定 machine-id、初始化正向 WS
 
   # bot-core：与 napcat 同编排，容器网络内以服务名互连；纯出站客户端，不暴露端口
   bot:

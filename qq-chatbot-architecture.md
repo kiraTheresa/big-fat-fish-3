@@ -106,11 +106,11 @@ big-fat-fish-3/
 
 ## 7. 部署形态
 
-当前 Compose 只包含 NapCat，映射 `3001`（OneBot WS）和 `6099`（WebUI）。Bot 在宿主机从项目根目录通过 `npm start` 启动，开发时使用 `npm run dev`；`npm test` 运行本地模拟测试。
+当前 Compose 包含 NapCat 和 Bot，NapCat 映射 `3001`（OneBot WS）和 `6099`（WebUI）。可用 `docker compose up -d --build` 启动两者；也可只启动 NapCat，再在宿主机从项目根目录通过 `npm start` 启动 Bot，开发时使用 `npm run dev`。两种 Bot 运行方式二选一；`npm test` 运行本地模拟测试。
 
-NapCat 登录态与配置由 `napcat/` 挂卷保存；Bot 默认将数据写到本地 `data/`。`DATA_DIR`、`PERSONA_DIR` 和 `USAGE_DIR` 是独立配置，迁移数据时需一起核对。
+NapCat 登录态与配置由 `napcat/` 挂卷保存，启动时固定本地设备标识、选择账号快速登录并自动同步 WS 配置，详见 [NapCat 部署说明](napcat-deployment.md)。QQ 要求手机验证时仍需人工授权。Bot 默认将数据写到本地 `data/`。`DATA_DIR`、`PERSONA_DIR` 和 `USAGE_DIR` 是独立配置，迁移数据时需一起核对。
 
-Bot 容器化与管理服务仍属后续部署工作。当前没有管理 API、面板容器、通用定时任务服务或持久化发送队列。
+当前没有管理 API、面板容器、通用定时任务服务或持久化发送队列。
 
 ## 8. 技术栈
 
