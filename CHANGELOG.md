@@ -16,6 +16,8 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ### fix
 
+- Recover the runtime lock across host/container switches using a renewable shared-filesystem lease; active instances stay exclusive, while crashed owners expire after 30 seconds regardless of hostname or PID reuse.
+
 - Remove the drawing QQ whitelist; drawing is public by default while group @ addressing remains required.
 - Preserve sanitized provider error details for failed image/chat requests. The earlier real image HTTP 400 still needs a provider response to diagnose.
 - Remove a test dependency on an ignored local IDE spec; repository tests now carry their own seed assertions.

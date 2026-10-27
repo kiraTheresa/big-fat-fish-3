@@ -87,7 +87,7 @@ test('legacy empty/newline split separators remain valid live settings', async (
 
 test('concurrent runtime acquisition allows exactly one writer; release permits a new owner', async () => {
   const folder = join(dir, 'live-lock');
-  const attempts = await Promise.allSettled(Array.from({ length: 5 }, () => acquireRuntimeLock(folder)));
+  const attempts = await Promise.allSettled(Array.from({ length: 5 }, () => acquireRuntimeLock(folder, { retries: 0 })));
   const acquired = attempts.filter((result) => result.status === 'fulfilled');
   assert.equal(acquired.length, 1);
   assert.equal(attempts.filter((result) => result.status === 'rejected').length, 4);
@@ -95,7 +95,7 @@ test('concurrent runtime acquisition allows exactly one writer; release permits 
   assert.equal(identity.pid, process.pid);
   await acquired[0].value();
   await assert.rejects(access(join(folder, '.runtime-lock.json')), { code: 'ENOENT' });
-  const release = await acquireRuntimeLock(folder);
+  const release = await acquireRuntimeLock(folder, { retries: 0 });
   // Calling an older owner's release after replacement must leave the new owner intact.
   await acquired[0].value();
   await access(join(folder, '.runtime-lock.json'));
@@ -107,7 +107,7 @@ test('simultaneous stale-lock recovery cannot produce two writers', async () => 
   const child = spawn(process.execPath, ['-e', '']);
   await once(child, 'exit');
   await writeFile(join(folder, '.runtime-lock.json'), JSON.stringify({ pid: child.pid, hostname: hostname(), nonce: 'dead-owner' }));
-  const attempts = await Promise.allSettled(Array.from({ length: 5 }, () => acquireRuntimeLock(folder)));
+  const attempts = await Promise.allSettled(Array.from({ length: 5 }, () => acquireRuntimeLock(folder, { retries: 0 })));
   const acquired = attempts.filter((result) => result.status === 'fulfilled');
   assert.equal(acquired.length, 1);
   const identity = JSON.parse(await readFile(join(folder, '.runtime-lock.json'), 'utf8'));
@@ -121,7 +121,7 @@ test('abandoned reclaim gate fails closed without deleting it or the ownership e
   await writeFile(join(folder, '.runtime-lock.gate'), 'abandoned');
   const marker = JSON.stringify({ pid: 123, hostname: 'another-host', nonce: 'keep' });
   await writeFile(join(folder, '.runtime-lock.json'), marker);
-  await assert.rejects(acquireRuntimeLock(folder), /runtime-lock.gate/);
+  await assert.rejects(acquireRuntimeLock(folder, { retries: 0 }), /runtime-lock.gate/);
   assert.equal(await readFile(join(folder, '.runtime-lock.gate'), 'utf8'), 'abandoned');
   assert.equal(await readFile(join(folder, '.runtime-lock.json'), 'utf8'), marker);
 });

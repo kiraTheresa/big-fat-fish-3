@@ -1,5 +1,5 @@
 # bot-core 生产镜像：Node 22 alpine（--env-file-if-exists 需 22.9+，见 package.json start 脚本）
-# 零构建步骤（纯 JS ESM、唯一生产依赖 ws）：COPY 白名单只带运行必需物，
+# 零构建步骤（纯 JS ESM，依赖 ws 与 proper-lockfile）：COPY 白名单只带运行必需物，
 # test / data / napcat / .env / .trae 一概不进镜像（.dockerignore 双保险）。
 # 时区：不装系统 tzdata——Node 22 内置 full-ICU，TZ 环境变量（compose 注入
 # Asia/Shanghai）由 V8/ICU 直接解析，日志与记忆条目时间戳即为本地时区
