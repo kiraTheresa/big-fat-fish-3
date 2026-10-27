@@ -42,12 +42,12 @@ process.env.RECONNECT_DELAY_MS = '200';
 process.env.API_TIMEOUT_MS = '2000';
 process.env.DATA_DIR = DATA_DIR;
 
-await import('../src/index.js'); // 装配：register(ping) + onEvent(dispatch) + startConnection()
+const runtime = await import('../src/index.js'); // 装配：register(ping) + onEvent(dispatch) + startConnection()
 const onebot = await import('../src/connection/onebot.js'); // 同一模块实例，仅用于收口清理
 
 after(async () => {
   await delay(SEND_INTERVAL_MS * 3); // 等发送队列的间隔定时器自然落定
-  onebot.stopConnection();
+  await runtime.shutdown();
   await server.close();
   console.log = originalLog;
   await rm(DATA_DIR, { recursive: true, force: true });

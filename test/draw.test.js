@@ -1,9 +1,8 @@
 // draw 触发器全链路验证（draw 接入）：mock OneBot + mock 图片 API 双服务器端到端。
 // 覆盖：注册顺序静态断言（draw 必须排在 command 前，否则 /draw 被 '/' match 吃掉）、
 // match 边界（'/draw 独词/带参' 命中（含未 @——match 不判寻址）、'/drawxxx' 不命中、
-// 非指令不命中）、群聊 @ 门控（白名单内裸发也静默零出站零请求）、白名单外 @ 也
-// 静默（零出站零 API 请求，防探测）、空 prompt 用法提示、群/私成功流（先回「在画了」
-// → 图片段 base64:// 出站 → 占位 bot 行落盘 JSONL → prompt 原样上送 API）、
+// 非指令不命中）、群聊 @ 门控、未配置白名单时不同用户均可绘图、空 prompt 用法提示、
+// 群/私成功流（先回「在画了」→ 图片段出站 → 占位 bot 行落盘 JSONL）、
 // 生成失败兜底文案、'/drawxxx' 落 command 走「不认识」（反向证明 draw 边界正确）。
 // 装配（同 chat.test.js 模式）：双 mock → env → 动态 import → 手动按 index.js 顺序注册
 // ping → draw → command → chat（DEEPSEEK_API_KEY 留空：chat 恒不触发，无需 LLM mock）。
@@ -17,8 +16,8 @@ import { startImageServer, IMG_BYTES } from './image-server.js';
 const TOKEN = 'draw-test-token';
 const DATA_DIR = `tmp/test-draw-${process.pid}`;
 const SELF_ID = 10000;
-const WHITELIST_QQ = 9001; // 白名单内
-const OUTSIDER_QQ = 9002; // 白名单外
+const USER_QQ = 9001; // 用户一
+const OTHER_USER_QQ = 9002; // 用户二
 const GROUP_ID = 888;
 const SEND_INTERVAL_MS = 50;
 
@@ -42,7 +41,7 @@ process.env.SEND_INTERVAL_MS = String(SEND_INTERVAL_MS);
 process.env.RECONNECT_DELAY_MS = '100';
 process.env.API_TIMEOUT_MS = '2000';
 process.env.DATA_DIR = DATA_DIR;
-process.env.DRAW_WHITELIST_QQ = String(WHITELIST_QQ);
+delete process.env.DRAW_WHITELIST_QQ; // 未配置名单也应向所有用户开放
 process.env.IMAGE_API_KEY = 'test-image-key';
 process.env.IMAGE_API_BASE_URL = imageServer.url;
 process.env.IMAGE_TIMEOUT_MS = '2000';
@@ -143,44 +142,30 @@ function onlyNew(mark, pred) {
 }
 
 test('match 边界：/draw 独词与带参命中（含未 @——match 不判寻址）；/drawxxx、/help、普通消息不命中', () => {
-  assert.equal(draw.match(groupDrawEvent('/draw 一只猫', WHITELIST_QQ)), true);
-  assert.equal(draw.match(groupDrawEvent('/draw', WHITELIST_QQ)), true);
-  assert.equal(draw.match(groupDrawEvent('/drawxxx', WHITELIST_QQ)), false); // 正则边界：防误触
-  assert.equal(draw.match(groupDrawEvent('/help', WHITELIST_QQ)), false);
-  assert.equal(draw.match(groupDrawEvent('你好呀', WHITELIST_QQ)), false);
+  assert.equal(draw.match(groupDrawEvent('/draw 一只猫', USER_QQ)), true);
+  assert.equal(draw.match(groupDrawEvent('/draw', USER_QQ)), true);
+  assert.equal(draw.match(groupDrawEvent('/drawxxx', USER_QQ)), false); // 正则边界：防误触
+  assert.equal(draw.match(groupDrawEvent('/help', USER_QQ)), false);
+  assert.equal(draw.match(groupDrawEvent('你好呀', USER_QQ)), false);
 });
 
-test('白名单外（群聊，@ 本鱼）：静默——零出站帧、零图片 API 请求（防探测）', async () => {
-  onebotServer.injectEvent(groupDrawEvent('/draw 一只猫', OUTSIDER_QQ, true));
+test('群聊 @ 门控：裸发 /draw 未 @ —— 静默，零出站帧、零图片 API 请求', async () => {
+  onebotServer.injectEvent(groupDrawEvent('/draw 一只猫', USER_QQ)); // 未 @ 时不动笔
   await delay(300); // 静默语义：给足时间也不该有任何出站
   assert.equal(onebotServer.frames.filter(isSendMsg).length, 0);
   assert.equal(imageServer.requests.length, 0);
 });
 
-test('白名单外（私聊同样校验）：静默', async () => {
-  onebotServer.injectEvent(privateDrawEvent('/draw 一只猫', OUTSIDER_QQ));
-  await delay(300);
-  assert.equal(onebotServer.frames.filter(isSendMsg).length, 0);
-  assert.equal(imageServer.requests.length, 0);
-});
-
-test('群聊 @ 门控（白名单内）：裸发 /draw 未 @ —— 静默，零出站帧、零图片 API 请求', async () => {
-  onebotServer.injectEvent(groupDrawEvent('/draw 一只猫', WHITELIST_QQ)); // 未 @：白名单内也不动笔
-  await delay(300); // 静默语义：给足时间也不该有任何出站
-  assert.equal(onebotServer.frames.filter(isSendMsg).length, 0);
-  assert.equal(imageServer.requests.length, 0);
-});
-
-test('空 prompt（白名单内）：回用法提示，不调图片 API', async () => {
-  onebotServer.injectEvent(privateDrawEvent('/draw', WHITELIST_QQ));
+test('空 prompt：回用法提示，不调图片 API', async () => {
+  onebotServer.injectEvent(privateDrawEvent('/draw', USER_QQ));
   const frame = await onebotServer.waitForFrame((f) => textFrame(f)?.startsWith('用法：/draw'));
-  assert.equal(frame.params.user_id, WHITELIST_QQ); // 私聊出站
+  assert.equal(frame.params.user_id, USER_QQ); // 私聊出站
   assert.equal(imageServer.requests.length, 0);
 });
 
 test('群聊成功流（@ 本鱼）：「在画了」文本帧 → 图片段帧（base64://）→ 占位 bot 行落盘 JSONL', async () => {
   const mark = onebotServer.frames.length;
-  onebotServer.injectEvent(groupDrawEvent('/draw 一只橘猫', WHITELIST_QQ, true));
+  onebotServer.injectEvent(groupDrawEvent('/draw 一只橘猫', USER_QQ, true));
 
   // 帧①：先回「在画了」（出图 20-70s 的体验铺垫）
   const ackFrame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f)?.includes('本鱼在画「一只橘猫」')));
@@ -193,7 +178,7 @@ test('群聊成功流（@ 本鱼）：「在画了」文本帧 → 图片段帧�
   assert.equal(seg.data.file.slice('base64://'.length), IMG_BYTES.toString('base64'));
   assert.equal(imgFrame.params.group_id, GROUP_ID);
 
-  // API 侧：prompt 原样上送、白名单外用户期间无额外请求
+  // API 侧：prompt 原样上送
   assert.equal(imageServer.requests.length, 1);
   assert.equal(imageServer.requests[0].body.prompt, '一只橘猫');
 
@@ -209,10 +194,10 @@ test('群聊成功流（@ 本鱼）：「在画了」文本帧 → 图片段帧�
 
 test('私聊成功流：图片段经 sendPrivate（params.user_id，无 group_id）', async () => {
   const mark = onebotServer.frames.length;
-  onebotServer.injectEvent(privateDrawEvent('/draw 奶茶', WHITELIST_QQ));
+  onebotServer.injectEvent(privateDrawEvent('/draw 奶茶', OTHER_USER_QQ));
 
   const imgFrame = await onebotServer.waitForFrame(onlyNew(mark, (f) => imageFrame(f) !== null));
-  assert.equal(imgFrame.params.user_id, WHITELIST_QQ);
+  assert.equal(imgFrame.params.user_id, OTHER_USER_QQ);
   assert.equal(imgFrame.params.group_id, undefined);
   assert.equal(imageServer.requests.at(-1).body.prompt, '奶茶');
 });
@@ -221,7 +206,7 @@ test('生成失败（API 500）：回兜底文案，无图片段出站', async (
   const mark = onebotServer.frames.length;
   imageServer.setFail();
   try {
-    onebotServer.injectEvent(groupDrawEvent('/draw 失败的猫', WHITELIST_QQ, true));
+    onebotServer.injectEvent(groupDrawEvent('/draw 失败的猫', USER_QQ, true));
     const failFrame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f)?.includes('颜料打翻')));
     assert.equal(failFrame.params.group_id, GROUP_ID);
     await delay(SEND_INTERVAL_MS * 3); // 兜底后队列不会再吐图片段
@@ -233,14 +218,14 @@ test('生成失败（API 500）：回兜底文案，无图片段出站', async (
 
 test('/drawxxx 不命中 draw → 落 command 走「不认识」分支（@ 本鱼；边界正确性的反向证明）', async () => {
   const mark = onebotServer.frames.length;
-  onebotServer.injectEvent(groupDrawEvent('/drawxxx', WHITELIST_QQ, true));
+  onebotServer.injectEvent(groupDrawEvent('/drawxxx', USER_QQ, true));
   const frame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f)?.includes('不认识')));
   assert.ok(frame !== undefined);
 });
 
 test('ping 优先不受 draw 注册影响', async () => {
   const mark = onebotServer.frames.length;
-  onebotServer.injectEvent(groupDrawEvent('ping', WHITELIST_QQ));
+  onebotServer.injectEvent(groupDrawEvent('ping', USER_QQ));
   const frame = await onebotServer.waitForFrame(onlyNew(mark, (f) => textFrame(f) === 'pong'));
   assert.ok(frame !== undefined);
 });

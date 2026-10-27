@@ -475,9 +475,8 @@ test('reset 水位过滤：resetAt 之前的入站行与 bot 行同滤，之后�
   assert.ok(!all.includes('水位前的旧回复'), 'resetAt 之前的 bot 行应被水位过滤（bot 行同滤）');
 });
 
-test('usage 落盘：LLM 带 usage 记一行 kind:chat（token 数对应）；usage 为 null 不记账', { timeout: 10000 }, async () => {
+test('usage 落盘：LLM 带 usage 记一行 kind:chat（token 数对应）；usage 为 null 记录未知用量', { timeout: 10000 }, async () => {
   const { appendUsage } = await import('../src/store/usage-store.js');
-  const { access } = await import('node:fs/promises');
 
   // 带 usage：新会话 p-7201，用量文件从无到有、恰一行、字段一一对应
   llmServer.setReply('USAGE_REPLY', { prompt_tokens: 101, completion_tokens: 202, total_tokens: 303, prompt_cache_hit_tokens: 404 });
@@ -506,11 +505,7 @@ test('usage 落盘：LLM 带 usage 记一行 kind:chat（token 数对应）；us
     assert.equal(rec.prompt_cache_hit_tokens, 404);
     assert.ok(Number.isFinite(rec.time), 'time 应为毫秒时间戳');
 
-    // usage 为 null（响应整体缺 usage 字段）：不记账。直接调 handle 取确定性——handle
-    // 返回即 usage 分支已同步执行完；回复出口已改为「加工链 → 存储合并 → 逐条发送」，
-    // 出站走真实 sender 队列（mock OneBot 自然收帧，无需再 mock ctx.reply）；再往
-    // 用量链尾塞 sentinel 并等其落盘，此前提交（若有）必已写完，此时断言文件不存在
-    // 才是可靠否定。
+    // 响应没有 usage 仍需记录一次真实调用，明确标为未知 token。
     llmServer.setReply('NO_USAGE_REPLY', null);
     const event = privateEvent('免记账', 7202);
     await chat.handle({ event, sessionKey: 'p-7202' });
@@ -522,11 +517,11 @@ test('usage 落盘：LLM 带 usage 记一行 kind:chat（token 数对应）；us
         return false;
       }
     });
-    await assert.rejects(
-      () => access(join(USAGE_DIR, 'p-7202.jsonl')),
-      (err) => err.code === 'ENOENT',
-      'usage 为 null 不得落盘'
-    );
+    const unknownRecords = (await readFile(join(USAGE_DIR, 'p-7202.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(unknownRecords.length, 1);
+    assert.equal(unknownRecords[0].usageKnown, false);
+    assert.equal(unknownRecords[0].status, 'success');
+    assert.equal(unknownRecords[0].total_tokens, undefined, '未知不能伪装为零 token');
   } finally {
     llmServer.setReply('MOCK_LLM_REPLY');
   }

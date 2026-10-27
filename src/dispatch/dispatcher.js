@@ -1,5 +1,5 @@
-// L2 分发层：筛选 → 打标 → 存储（旁听）→ 触发器链（bot-core-design §2、§6）。
-// 职责：仅放行 post_type==='message'（第三道筛选，心跳/notice/request 全部拦下）；
+// L2 分发层：协议归一 → 完整事件收件箱 → 消息历史 → 既有触发器链。
+// 新消息段、通知、请求、元事件只接收和保存，不执行新业务。
 // 打标 sessionKey（群 g-{group_id}、私 p-{user_id}）并构造 ctx；
 // 把入站快照以 fire-and-forget 方式交给存储钩子（不 await，失败不影响主管道）；
 // 按注册顺序匹配触发器，命中即停，全不中静默；match/handle 异常捕获记 ERROR。
@@ -7,16 +7,25 @@
 import { getTriggers } from './registry.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 import { appendMessage } from '../store/message-store.js';
+import { appendEvent } from '../store/event-store.js';
+import { normalizeOneBotEvent } from '../protocol/onebot.js';
 import { logger } from '../utils/logger.js';
+import { canUseBot, observeUser } from '../platform/permissions.js';
 
-export async function dispatch(event) {
-  // 筛选③：MVP 只处理 message 事件
-  if (event.post_type !== 'message') return;
+export async function dispatch(input) {
+  const normalized = normalizeOneBotEvent(input);
+  if (!normalized) return;
+  const { event, sessionKey, segments, messageTypes, issues, postType, eventType, subType, handling } = normalized;
+  const allowed = canUseBot(event);
+  appendEvent({ postType, eventType, subType, sessionKey, messageTypes, handling: allowed ? handling : 'blocked', issues, event: input,
+    ...(Array.isArray(event.message) ? { segments } : {}) });
 
-  // 打标（§2.2）：同一会话的索引键——冷却计数、上下文记忆、消息存储都以它为索引
-  const sessionKey = event.message_type === 'group' ? `g-${event.group_id}` : `p-${event.user_id}`;
+  // Complete receipt is independent from business handling. In particular,
+  // message_sent must never create an automatic reply loop or duplicate bot history.
+  try { await observeUser(event); } catch (err) { logger.warn(`用户登记失败: ${err.code ?? 'storage error'}`); }
+  if (!allowed || !normalized.processable || !sessionKey) return;
 
-  logger.info(`收到消息: [${sessionKey}] ${event.sender?.nickname ?? event.user_id}: ${event.raw_message}`);
+  logger.info(`收到消息: [${sessionKey}] id=${event.message_id ?? 'unknown'} types=${messageTypes.join(',')}`);
 
   // 存储钩子（§6.3 旁听者）：打标后、进触发器链前，不 await，写失败只记 WARN
   const snapshot = {
@@ -26,6 +35,8 @@ export async function dispatch(event) {
     message_type: event.message_type,
     user_id: event.user_id,
     raw_message: event.raw_message,
+    message: event.message,
+    sub_type: event.sub_type,
     sender: event.sender,
   };
   if (event.group_id !== undefined) snapshot.group_id = event.group_id;

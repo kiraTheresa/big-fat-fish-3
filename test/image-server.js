@@ -35,8 +35,8 @@ export async function startImageServer() {
       requests.push({ method: req.method, url: req.url, headers: req.headers, body });
 
       if (mode.kind === 'fail') {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'mock image api down' }));
+        res.writeHead(mode.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: mode.error }));
         return;
       }
       if (mode.kind === 'empty') {
@@ -69,8 +69,8 @@ export async function startImageServer() {
     setUrl() {
       mode = { kind: 'url' };
     },
-    setFail() {
-      mode = { kind: 'fail' };
+    setFail(status = 500, error = 'mock image api down') {
+      mode = { kind: 'fail', status, error };
     },
     setEmpty() {
       mode = { kind: 'empty' };

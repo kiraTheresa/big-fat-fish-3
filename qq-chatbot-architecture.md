@@ -1,5 +1,7 @@
 # QQ Chat Bot 架构方向文档
 
+> 2026-10-26 实现更新：完整 OneBot 接收与本地管理平台已落地。配置、持久化、权限、调度、日志、用量和监控的当前契约以 [管理与公共服务](docs/management.md) 为准；本文后续技术选型和路线图保留规划背景。
+
 > 文档版本：v0.4 · 2026-10-26；实现基线：`c167cca`（`0.11.0`）。
 > 定位：说明项目目标、当前架构与阶段边界。具体消息流见 [Bot 核心设计](bot-core-design.md)，功能演进见 [CHANGELOG](CHANGELOG.md)。标为“规划”的能力尚未实现。
 
@@ -102,15 +104,15 @@ big-fat-fish-3/
 | 会话 `character.md`／`memory.md` | 人设与事实记忆 | 对话／提炼时读取，指令可写入 |
 | 源码中的提示词 | 种子人设、聊天场景规则、提炼模板 | 目前随源码维护，前端管理需补充编辑与生效机制 |
 
-未配置聊天 Key 时不启用 chat 和提炼器；未配置绘图 Key 时不启用 draw。权限并非全局拒绝所有对话：群聊管理指令使用 `ADMIN_QQ`，绘图在群聊／私聊均使用 `DRAW_WHITELIST_QQ`，普通聊天与教学指令另按各自触发规则处理。
+未配置聊天 Key 时不启用 chat 和提炼器；未配置绘图 Key 时不启用 draw。权限并非全局拒绝所有对话：群聊管理指令使用 `ADMIN_QQ`，绘图在群聊／私聊均向所有用户开放（群聊仍须 @），普通聊天与教学指令另按各自触发规则处理。
 
 ## 7. 部署形态
 
-当前 Compose 只包含 NapCat，映射 `3001`（OneBot WS）和 `6099`（WebUI）。Bot 在宿主机从项目根目录通过 `npm start` 启动，开发时使用 `npm run dev`；`npm test` 运行本地模拟测试。
+当前 Compose 包含 NapCat 和 Bot，NapCat 映射 `3001`（OneBot WS）和 `6099`（WebUI）。可用 `docker compose up -d --build` 启动两者；也可只启动 NapCat，再在宿主机从项目根目录通过 `npm start` 启动 Bot，开发时使用 `npm run dev`。两种 Bot 运行方式二选一；`npm test` 运行本地模拟测试。
 
-NapCat 登录态与配置由 `napcat/` 挂卷保存；Bot 默认将数据写到本地 `data/`。`DATA_DIR`、`PERSONA_DIR` 和 `USAGE_DIR` 是独立配置，迁移数据时需一起核对。
+NapCat 登录态与配置由 `napcat/` 挂卷保存，启动时固定本地设备标识、选择账号快速登录并自动同步 WS 配置，详见 [NapCat 部署说明](napcat-deployment.md)。QQ 要求手机验证时仍需人工授权。Bot 默认将数据写到本地 `data/`。`DATA_DIR`、`PERSONA_DIR` 和 `USAGE_DIR` 是独立配置，迁移数据时需一起核对。
 
-Bot 容器化与管理服务仍属后续部署工作。当前没有管理 API、面板容器、通用定时任务服务或持久化发送队列。
+当前没有管理 API、面板容器、通用定时任务服务或持久化发送队列。
 
 ## 8. 技术栈
 

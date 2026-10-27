@@ -11,6 +11,9 @@ import { recordBotMessageId } from './bot-msg-ids.js';
 
 const queue = []; // 待发送参数（send_msg 的 params），先进先出
 let draining = false;
+let sent = 0;
+let failed = 0;
+export function getSenderStatus() { return { queued: queue.length, draining, sent, failed }; }
 
 export function sendGroup(groupId, message) {
   enqueue({ message_type: 'group', group_id: groupId, message });
@@ -37,7 +40,9 @@ async function drain() {
         // callApi resolve 即 retcode=0 路径：仅成功确认的出站 id 入集（replyQuote 的
         // 「引用 bot 消息」判定依据）；失败重发会拿到新 id，各按各的确认入集
         recordBotMessageId(data?.message_id);
+        sent++;
       } catch (err) {
+        failed++;
         logger.warn(`发送失败: ${err.message}`); // 单条失败不阻断队列
       }
       await delay(config.sendIntervalMs); // 固定间隔：两条出站帧之间至少间隔 sendIntervalMs
@@ -49,4 +54,10 @@ async function drain() {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function drainSender(timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while ((draining || queue.length) && Date.now() < deadline) await delay(20);
+  return !draining && queue.length === 0;
 }

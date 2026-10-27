@@ -202,6 +202,8 @@ test('群聊自带图：先「在看」提示、flash 块数组上送、回答�
   assert.equal(lookFrame.params.message_type, 'group');
   assert.equal(lookFrame.params.group_id, GROUP_ID);
 
+  // 消息存储是异步旁路：出站确认不代表 JSONL 写入已经完成。
+  await waitUntil(async () => (await readLines(MSG_DIR, `g-${GROUP_ID}`)).filter((line) => line.bot).at(-1)?.raw_message === 'MOCK_LLM_REPLY');
   // JSONL：「在看」提示 + 回答两条 bot 行（ctx.reply 与 persistAndSend 各回存一条）
   const lines = await readLines(MSG_DIR, `g-${GROUP_ID}`);
   const botLines = lines.filter((l) => l.bot === true).map((l) => l.raw_message);
@@ -211,10 +213,11 @@ test('群聊自带图：先「在看」提示、flash 块数组上送、回答�
   await waitUntil(async () => (await usageCount(`g-${GROUP_ID}`)) > usageMark);
   const usageLines = await readUsage(`g-${GROUP_ID}`);
   assert.equal(usageLines.at(-1).model, 'deepseek-flash');
-  assert.equal(usageLines.at(-1).kind, 'chat');
+  assert.equal(usageLines.at(-1).kind, 'vision');
 });
 
 test('多图取第一张：第二张不被拉取（单次一张边界）', { timeout: 10000 }, async () => {
+  const mark = onebotServer.frames.length;
   const reqMark = llmServer.requests.length;
   onebotServer.injectEvent(
     groupEvent({
@@ -230,6 +233,7 @@ test('多图取第一张：第二张不被拉取（单次一张边界）', { tim
     req.body.messages.at(-1).content[1].image_url.url,
     `data:image/png;base64,${IMG_BYTES.toString('base64')}`
   );
+  await onebotServer.waitForFrame(onlyNew(mark, isReplySend));
 });
 
 test('周围图：@ 消息无图时查历史，同用户时间窗内近图被识图', { timeout: 10000 }, async () => {
@@ -258,6 +262,7 @@ test('周围图：@ 消息无图时查历史，同用户时间窗内近图被识
   assert.ok(histFrame !== undefined, '应发出 get_group_msg_history');
   assert.equal(histFrame.params.group_id, GROUP_ID);
   assert.ok(histFrame.params.count > 0);
+  await onebotServer.waitForFrame(onlyNew(mark, isReplySend));
   onebotServer.clearActionResponse('get_group_msg_history');
 });
 
@@ -281,10 +286,12 @@ test('时间窗外不取：纯文本路径，无提示帧、无识图调用', { 
     -1,
     '窗口外不应有「在看」提示'
   );
+  await onebotServer.waitForFrame(onlyNew(mark, isReplySend));
   onebotServer.clearActionResponse('get_group_msg_history');
 });
 
 test('他人图不取：历史里别人的图不算图源', { timeout: 10000 }, async () => {
+  const mark = onebotServer.frames.length;
   const reqMark = llmServer.requests.length;
   const userId = 3005;
   const ev = groupEvent({ text: '图呢', userId });
@@ -297,6 +304,7 @@ test('他人图不取：历史里别人的图不算图源', { timeout: 10000 }, 
   const req = llmServer.requests.at(-1);
   assert.equal(req.body.model, 'deepseek-chat');
   assert.equal(typeof req.body.messages.at(-1).content, 'string');
+  await onebotServer.waitForFrame(onlyNew(mark, isReplySend));
   onebotServer.clearActionResponse('get_group_msg_history');
 });
 
@@ -320,6 +328,7 @@ test('拉图失败回退：提示已出站，纯文本对话不中断', { timeou
 });
 
 test('flash 失败回退：还原 string 换 deepseek-chat 重试一次成功', { timeout: 10000 }, async () => {
+  const usageMark = await usageCount(`g-${GROUP_ID}`);
   const mark = onebotServer.frames.length;
   const reqMark = llmServer.requests.length;
   llmServer.setFailOnce(); // 首调（flash）500，次调（chat）恢复 ok
@@ -336,6 +345,11 @@ test('flash 失败回退：还原 string 换 deepseek-chat 重试一次成功', 
   // 块数组还原为原 string（回退不能把图块残留在纯文本请求里）
   assert.equal(second.body.messages.at(-1).content, '群友3007: 识别一下');
   await onebotServer.waitForFrame(onlyNew(mark, isReplySend)); // 回退重试的回答正常出站
+  const attempts = (await readUsage(`g-${GROUP_ID}`)).slice(usageMark);
+  assert.equal(attempts.length, 2, '视觉失败和文本回退是两次真实请求，都必须计数');
+  assert.deepEqual(attempts.map(({ kind, status }) => ({ kind, status })), [
+    { kind: 'vision', status: 'failure' }, { kind: 'chat', status: 'success' },
+  ]);
 });
 
 test('私聊带图：vision 路径，text 块无私聊前缀', { timeout: 10000 }, async () => {

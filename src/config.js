@@ -2,6 +2,7 @@
 // 默认值出处：napcat-protocol.md §2.4（断线 5s 重连、15s 调用超时）、bot-core-design.md §3（发送固定 1s 间隔）
 // 混合开关（upgrade-chat-pipeline spec）：连接/密钥/路径留 .env，行为开关进 config.json
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { logger } from './utils/logger.js';
 
 function num(value, fallback) {
@@ -10,7 +11,7 @@ function num(value, fallback) {
 }
 
 // 行为开关默认值（字段结构即对外契约，config.json 同名字段覆盖、缺省字段走默认）
-const DEFAULT_BEHAVIOR = {
+export const DEFAULT_BEHAVIOR = {
   trigger: {
     // @命中：群聊 @bot 即触发（条件组合器既有条件，spec「条件全关」场景要求每个条件都有开关）
     at: { enabled: true },
@@ -37,6 +38,7 @@ const DEFAULT_BEHAVIOR = {
 function deepMerge(defaults, overrides) {
   const result = { ...defaults };
   for (const [key, value] of Object.entries(overrides)) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key)) continue;
     const base = defaults[key];
     const bothPlainObject =
       base !== null && typeof base === 'object' && !Array.isArray(base) &&
@@ -87,6 +89,12 @@ export const config = {
   sendIntervalMs: num(process.env.SEND_INTERVAL_MS, 1000),
   // 数据目录（消息 JSONL 落盘根目录）
   dataDir: process.env.DATA_DIR ?? 'data',
+  // 本地管理服务：无 token 不启动；密钥仅从环境读取。
+  adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',
+  adminPort: num(process.env.ADMIN_PORT, 3210),
+  adminToken: process.env.ADMIN_TOKEN ?? '',
+  logLevel: process.env.LOG_LEVEL ?? 'INFO',
+  retentionDays: num(process.env.RETENTION_DAYS, 30),
   // ---- AIChat（LLM）----
   // DeepSeek API Key（留空 = chat 触发器不生效）
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
@@ -114,7 +122,7 @@ export const config = {
     .map((qq) => qq.trim())
     .filter((qq) => qq !== ''),
   // 人设文件根目录（按会话隔离的 character.md / memory.md）
-  personaDir: process.env.PERSONA_DIR ?? 'data/personas',
+  personaDir: process.env.PERSONA_DIR ?? join(process.env.DATA_DIR ?? 'data', 'personas'),
   // character.md / memory.md 单文件字节上限（append 超限环形淘汰，patch 超限拒绝）
   personaMaxBytes: num(process.env.PERSONA_MAX_BYTES, 4096),
   // 离线提炼触发条件一：会话静默毫秒数（与批量条件先到先触发）
@@ -124,7 +132,7 @@ export const config = {
   // 离线提炼调度器扫描间隔（ms）
   distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 60000),
   // LLM 用量 JSONL 落盘根目录
-  usageDir: process.env.USAGE_DIR ?? 'data/usage',
+  usageDir: process.env.USAGE_DIR ?? join(process.env.DATA_DIR ?? 'data', 'usage'),
   // ---- 绘图（draw 触发器 / imagegen.js 唯一出口）----
   // 上游可切换（OpenAI Images 协议 /v1/images/generations：老张中转 / 火山方舟 /
   // 任意兼容源），换上游只改 base_url + key + model 三项，代码零改动。
@@ -137,12 +145,6 @@ export const config = {
   imageSize: process.env.IMAGE_SIZE ?? '2K',
   // 绘图超时（ms）：实测 GPT Image 2.5 出图 20-70s，给足余量
   imageTimeoutMs: num(process.env.IMAGE_TIMEOUT_MS, 120000),
-  // 绘图白名单（DRAW_WHITELIST_QQ 逗号分隔 → 字符串数组）：群聊私聊一律校验，
-  // 空 = 全拒（安全默认，同 adminQq 模式）；未命中静默忽略（防探测）
-  drawWhitelist: (process.env.DRAW_WHITELIST_QQ ?? '')
-    .split(',')
-    .map((qq) => qq.trim())
-    .filter((qq) => qq !== ''),
   // ---- 行为开关（config.json 层，字段说明见 config.example.json）----
   behavior: deepMerge(DEFAULT_BEHAVIOR, loadBehaviorConfig()),
 };

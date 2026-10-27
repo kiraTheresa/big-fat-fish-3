@@ -1,0 +1,47 @@
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Scheduler } from '../src/platform/scheduler.js';
+import { readJson, atomicWriteJson } from '../src/platform/persistence.js';
+const dir = await mkdtemp(join(tmpdir(), 'fish-jobs-'));
+after(() => rm(dir, { recursive: true, force: true }));
+
+test('任务持久化、停用不运行、并发扫描只执行一次、错过周期不补发', async () => {
+  let now = 1800000000000;
+  let calls = 0;
+  const scheduler = new Scheduler({ dataDir: dir, clock: () => now, handlers: { maintenance: async () => { calls++; await new Promise((resolve) => setTimeout(resolve, 10)); } } });
+  await scheduler.initialize();
+  const job = await scheduler.create({ name: '清理', type: 'maintenance', enabled: true, schedule: { kind: 'interval', everyMs: 1000 } });
+  now += 10000;
+  await Promise.all([scheduler.runDue(), scheduler.runDue(), scheduler.runDue()]);
+  assert.equal(calls, 1);
+  assert.equal(scheduler.list().items[0].nextRunAt, now + 1000);
+  assert.equal(scheduler.list().items[0].lastStatus, 'success');
+  await scheduler.update(job.id, { ...job, enabled: false });
+  now += 2000;
+  await scheduler.runDue();
+  assert.equal(calls, 1);
+  const restarted = new Scheduler({ dataDir: dir, clock: () => now, handlers: scheduler.handlers });
+  await restarted.initialize();
+  assert.equal(restarted.list().items[0].enabled, false);
+});
+test('单次任务失败也不重复执行，崩溃状态重启记 interrupted', async () => {
+  let now = 1800001000000;
+  const scheduler = new Scheduler({ dataDir: join(dir, 'once'), clock: () => now, handlers: { maintenance: async () => { throw new Error('模拟失败'); } } });
+  await scheduler.initialize();
+  await scheduler.create({ name: '单次', type: 'maintenance', enabled: true, schedule: { kind: 'once', at: new Date(now + 1000).toISOString() } });
+  now += 1500;
+  await scheduler.runDue();
+  const result = scheduler.list().items[0];
+  assert.equal(result.enabled, false);
+  assert.equal(result.lastStatus, 'failed');
+  const saved = await readJson(scheduler.file);
+  saved.items[0].lastStatus = 'running';
+  await atomicWriteJson(scheduler.file, saved);
+  await scheduler.initialize();
+  assert.equal(scheduler.list().items[0].lastStatus, 'interrupted');
+  assert.equal(scheduler.list().items[0].enabled, false);
+  await assert.rejects(scheduler.create({ name: '命令', type: 'shell', enabled: true, schedule: { kind: 'interval', everyMs: 1000 } }));
+});

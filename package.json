@@ -9,6 +9,7 @@
     "test": "node --test test/**/*.test.js"
   },
   "dependencies": {
+    "proper-lockfile": "4.1.2",
     "ws": "^8.18.0"
   }
 }

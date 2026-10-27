@@ -1,0 +1,13 @@
+# 构建上下文瘦身 + 防敏感物进镜像（COPY 白名单之外的双保险）
+node_modules/
+data/
+napcat/
+tmp/
+test/
+.trae/
+.git/
+.env
+.env.local
+*.log
+config.json
+STATE.md

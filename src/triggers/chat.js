@@ -13,7 +13,7 @@
 //   system+历史字节总量，超出的最旧历史先裁，与 20 条上限谁更紧听谁的）→ 调 LLM →
 //   出口加工链（chat-reply-chain.js：随机延迟、
 //   || 分段连发）→ 存储合并 + 逐条发送；
-//   usage 旁路 appendUsage(kind: 'chat') fire-and-forget 落盘；
+//   所有模型请求在统一 gateway 记录成功/失败及用量；
 //   LLM 失败/超时 → 固定兜底文案 + WARN（兜底不走加工链，告警类消息无需拟人延迟）。
 // 识图分流（upgrade-vision）：消息带图（或群聊同用户时间窗内近图）→「在看」提示 →
 //   现拉 base64（不落盘）→ 最后一条 user content 换块数组、模型换 deepseek-flash；
@@ -23,7 +23,6 @@ import { chatCompletion } from '../llm.js';
 import { appendMessage, readRecentMessages } from '../store/message-store.js';
 import { getPersona } from '../store/persona-store.js';
 import { readState } from '../store/session-state.js';
-import { appendUsage } from '../store/usage-store.js';
 import { extractText } from '../utils/extract-text.js';
 import { extractImages } from '../utils/extract-images.js';
 import { fetchImageAsB64, mimeOfB64 } from '../utils/fetch-image.js';
@@ -202,10 +201,9 @@ export default {
 
     try {
       let reply;
-      let usage;
       if (visionB64 !== null) {
         try {
-          ({ content: reply, usage } = await chatCompletion(messages, { model: usedModel }));
+          ({ content: reply } = await chatCompletion(messages, { model: usedModel, kind: 'vision', sessionKey }));
         } catch (err) {
           // flash 挂了不整个对话兜底：还原纯文本、换 deepseek-chat 重试一次（分流策略拍板）
           logger.warn(`[chat] 视觉模型调用失败，回退纯文本: ${err.message}`);
@@ -214,7 +212,7 @@ export default {
       }
       if (reply === undefined) {
         lastUser.content = plainContent; // 还原 string（纯文本路径此赋值恒等，无害）
-        ({ content: reply, usage } = await chatCompletion(messages));
+        ({ content: reply } = await chatCompletion(messages, { kind: 'chat', sessionKey }));
       }
 
       // 出口加工链：LLM 原始输出装入 segments 数组（Task 4 的 split 从这里接管拆分），
@@ -225,24 +223,12 @@ export default {
       }
       persistAndSend(reply, segments);
 
-      // 用量旁路观测（spec「用量观测」）：fire-and-forget 不 await（appendUsage 内部
-      // 全捕获、失败仅 WARN），不阻塞回复主链路；响应缺 usage 字段（null）不记账
-      if (usage !== null) {
-        appendUsage(sessionKey, {
-          time: Date.now(),
-          kind: 'chat',
-          model: usedModel, // 按实际调用款记账（识图 flash / 文字 chat）
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: usage.completion_tokens,
-          total_tokens: usage.total_tokens,
-          prompt_cache_hit_tokens: usage.prompt_cache_hit_tokens,
-        });
-      }
     } catch (err) {
       logger.warn(`[chat] LLM 调用失败: ${err.message}`);
       // 兜底文案不是 LLM 输出：不走加工链（不延迟，出错要立刻让人知道），但存储与
       // 发送仍走统一出口（与既有行为等价：回存一条 bot 行 + 发一条）
-      persistAndSend(FALLBACK_REPLY, [FALLBACK_REPLY]);
+      const failureReply = err.name === 'UsageLimitError' ? `本鱼暂时不能调用模型：${err.message}。` : FALLBACK_REPLY;
+      persistAndSend(failureReply, [failureReply]);
     }
   },
 };
