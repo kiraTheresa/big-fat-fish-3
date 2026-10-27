@@ -15,8 +15,7 @@
 import { config } from '../config.js';
 import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
-import { appendMessage } from '../store/message-store.js';
-import { sendGroup, sendPrivate } from '../sender/sender.js';
+import { deliverGeneratedImage } from '../tools/deliver-image.js';
 import { generateImage } from '../imagegen.js';
 import { logger } from '../utils/logger.js';
 
@@ -58,23 +57,7 @@ export default {
     try {
       const { b64 } = await generateImage(prompt, { sessionKey });
 
-      // 占位回存：图不进上下文，占位文本让后续追问可接上（行形状与 dispatcher 的
-      // ctx.reply bot 行一致：秒级 time、bot:true、无 message_id）
-      appendMessage({
-        sessionKey,
-        time: Math.floor(Date.now() / 1000),
-        message_type: event.message_type,
-        ...(event.group_id !== undefined ? { group_id: event.group_id } : {}),
-        user_id: event.user_id,
-        raw_message: `[图片] ${prompt}`,
-        bot: true,
-      });
-
-      // 图片段出站：OneBot 数组消息段，base64:// 前缀直接透传 NapCat（每条独立过
-      // sender 1s 队列节流）
-      const segments = [{ type: 'image', data: { file: `base64://${b64}` } }];
-      if (event.message_type === 'group') sendGroup(event.group_id, segments);
-      else sendPrivate(event.user_id, segments);
+      deliverGeneratedImage(ctx, b64, prompt);
     } catch (err) {
       logger.warn(`[draw] 生成失败（${sessionKey}）: ${err.message}`);
       await ctx.reply(err.name === 'UsageLimitError' ? `本鱼暂时不能画图：${err.message}。` : DRAW_FAIL_REPLY);

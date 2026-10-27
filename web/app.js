@@ -38,6 +38,7 @@ const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 const pages = {
   overview: ['运行概览', '照看大肥鱼的每一次运行。', 'OVERVIEW'],
   events: ['消息收件箱', '所有接收事件都在这里；接收不等于自动处理。', 'INBOX'],
+  prompt: ['Prompt 控制台', '编辑草稿、检验表现，再发布给大肥鱼。', 'PROMPT STUDIO'],
   config: ['配置与能力', '让每项能力按你的节奏工作。', 'CONFIGURATION'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
@@ -50,6 +51,7 @@ const state = {
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
   filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { since: '', until: '', kind: '', sessionKey: '' } },
 };
+let promptConsole;
 let toastTimer;
 let lastFocus;
 
@@ -62,6 +64,7 @@ function toast(message, error = false) {
 }
 
 function logout(message = '') {
+  promptConsole?.clear();
   state.token = '';
   state.config = null;
   state.dirty = false;
@@ -171,6 +174,7 @@ async function loadPage({ quiet = false } = {}) {
     const html = await renderers[page](sequence);
     if (sequence !== state.sequence || !state.token) return;
     $('#content').innerHTML = html;
+    if (page === 'prompt') promptConsole.attach($('#content'));
     $('#updated-at').textContent = `更新于 ${date(Date.now(), true)}`;
     if (page !== 'overview') api('/status').then((status) => { if (sequence === state.sequence && state.token) updateStatus(status); }).catch(() => {});
   } catch (error) {
@@ -270,7 +274,7 @@ async function renderConfig(sequence) {
     <div class="form-section"><h3>什么时候回应</h3>${toggle('behavior.trigger.at.enabled', '被 @ 时回应', '群消息提及 Bot 时触发。')}${toggle('behavior.trigger.nameCall.enabled', '被叫名字时回应', '命中下面的任意别名时触发。')}${toggle('behavior.trigger.replyQuote.enabled', '被引用时回应', '用户引用 Bot 的消息时触发。')}<div class="form-field full"><label for="aliases">呼唤别名</label><input id="aliases" name="aliases" value="${e((getPath(b, 'trigger.nameCall.aliases', [])).join('，'))}" placeholder="大肥鱼，肥鱼"><p class="field-hint">使用中文或英文逗号分隔。</p></div></div>
     <div class="form-section"><h3>如何回复</h3>${toggle('behavior.reply.delay.enabled', '随机回复延迟', '为回复保留一点自然的停顿。')}<div class="form-grid">${numberField('behavior.reply.delay.minMs', '最短延迟 / 毫秒', getPath(b, 'reply.delay.minMs', 2000), '范围为 0–60,000 毫秒。', { max: 60000 })}${numberField('behavior.reply.delay.maxMs', '最长延迟 / 毫秒', getPath(b, 'reply.delay.maxMs', 8000), '不得小于最短延迟，最多 60,000。', { max: 60000 })}</div>${toggle('behavior.reply.split.enabled', '分段发送回复', '使用分隔符将模型回复拆成多条消息。')}<div class="form-field"><label for="separator">回复分隔符</label><textarea id="separator" name="separator" rows="2" maxlength="20">
 ${e(getPath(b, 'reply.split.separator', '||'))}</textarea><p class="field-hint">支持换行，最多 20 字符；留空则仅按换行分段。</p></div>${toggle('behavior.reply.quote.enabled', '引用原消息', '回复时带上触发消息的引用。')}</div>
-    <div class="form-section"><h3>上下文</h3><p class="section-description">控制人设、记忆和历史消息的总大小。</p>${numberField('behavior.context.budgetBytes', '上下文字节预算', getPath(b, 'context.budgetBytes', 12000), '超出预算后裁剪较早的历史消息。', { min: 512, max: 1000000 })}</div></section>
+    <div class="form-section"><h3>上下文</h3><p class="section-description">历史筛选与字节预算由 Prompt 发布版本统一管理。</p>${pageLink('prompt', '前往 Prompt 控制台')}</div></section>
     <section class="panel">${panelHead('能力与额度', '关闭能力后，对应消息仍会接收并记录。')}${toggle('policy.features.chat', '文字对话', '允许调用聊天模型。')}${toggle('policy.features.vision', '图片理解', '允许已有识图流程处理图片。')}${toggle('policy.features.draw', '绘图', '对所有未被封禁的用户开放。')}${toggle('policy.features.distill', '记忆提炼', '允许离线整理对话记忆。')}<div class="form-section"><h3>每日用量上限</h3><p class="section-description">0 表示不限额。按北京时间自然日计数。</p><div class="form-grid">${numberField('policy.limits.maxCallsPerDay', '最多调用 / 次', getPath(p, 'limits.maxCallsPerDay', 0), '新调用达到上限后停止。', { max: 1000000 })}${numberField('policy.limits.maxTokensPerDay', '最多 Token', getPath(p, 'limits.maxTokensPerDay', 0), '按已知用量判断，不含上游未回传用量。', { max: 1000000000 })}</div></div>
     <div class="form-section"><h3>连接信息</h3><p class="section-description">连接、模型与密钥由环境变量管理。</p><dl class="key-values"><div><dt>QQ 地址</dt><dd class="mono">${e(connection.wsUrl || '—')}</dd></div><div><dt>对话模型</dt><dd class="mono">${e(connection.model || connection.deepseekModel || '—')}</dd></div><div><dt>绘图模型</dt><dd class="mono">${e(connection.imageModel || '—')}</dd></div></dl><p class="field-hint">对话接口：${result.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${result.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}</p><p class="field-hint">修改环境变量后需要重启 Bot。管理台不显示密钥。</p></div>
     <div class="form-section"><h3>配置版本</h3><p class="field-hint mono">${e(result.revision ?? '—')}</p></div></section></div><div class="save-bar"><p id="save-state">所有配置已同步</p><div><button type="button" class="button" data-action="reload-config">重新读取</button><button type="submit" id="save-config" class="button primary" disabled>保存配置 ${icon('check')}</button></div></div><p id="config-error" class="form-error" role="alert" hidden></p></form>`;
@@ -340,7 +344,15 @@ async function renderUsage(sequence) {
     <div class="usage-grid"><section class="panel">${panelHead('按能力分布', '调用次数与已知 Token。')}${usageBars(groupEntries(result.byKind, 'kind'), kindNames)}</section><section class="panel">${panelHead('活跃会话', '按调用次数排序，最多显示 8 个会话。')}${usageBars(groupEntries(result.bySession, 'sessionKey'))}</section></div>
     <section class="panel">${panelHead('调用明细', `统计覆盖全部匹配记录，下方显示最新 ${state.rows.length} 条。`)}${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>能力 / 模型</th><th>会话</th><th>结果</th><th>Token</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => `<tr><td class="mono">${e(date(row.time ?? row.timestamp))}</td><td><span class="cell-main">${e(kindNames[row.kind] || row.kind || '—')}</span><span class="cell-sub mono">${e(row.model || '—')}</span></td><td class="mono">${e(row.sessionKey || '—')}</td><td>${row.success === false || ['failed', 'failure', 'error', 'interrupted'].includes(row.status) ? pill('失败', 'danger') : row.success === true || row.status === 'success' ? pill('成功') : pill('已记录', 'neutral')}</td><td class="mono">${row.total_tokens === undefined && row.totalTokens === undefined ? '未返回' : e(number(row.total_tokens ?? row.totalTokens))}</td><td class="cell-actions"><button type="button" class="button small" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有模型调用', '调用发生后可在此追踪结果与用量。', 'usage')}</section>`;
 }
-const renderers = { overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+async function renderPrompt(sequence) {
+  if (!promptConsole) {
+    const { createPromptConsole } = await import('/prompt.js');
+    promptConsole = createPromptConsole({ api, state, toast });
+  }
+  return promptConsole.render(sequence);
+}
+
+const renderers = { prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;

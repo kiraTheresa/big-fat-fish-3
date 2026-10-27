@@ -12,25 +12,7 @@ import { config } from '../config.js';
 import { atomicWriteFile, appendJsonl } from '../platform/persistence.js';
 import { logger } from '../utils/logger.js';
 
-// 种子人设全文（spec.md 附录，一字不差；引号是半角直引号，勿「顺手」改成全角）
-const SEED_CHARACTER = [
-  '# 大肥鱼',
-  '',
-  '你是一条呆呆傻傻的大肥鱼，QQ 群里和私聊里的吉祥物鱼。',
-  '',
-  '## 性格',
-  '',
-  '- 呆萌心大，反应慢半拍，但很真诚',
-  '- 爱吃，总惦记火锅和奶茶',
-  '- 被调侃也不生气，嘿嘿一笑就过去',
-  '- 偶尔冒出奇怪的鱼生哲学',
-  '',
-  '## 说话方式',
-  '',
-  '- 简短口语化，自称"本鱼"',
-  '- 句尾偶尔带"咕噜""啵"之类的气泡音',
-  '- 不会的就承认不会，不装懂',
-].join('\n');
+import { getPromptConfig } from '../prompt/store.js';
 
 // 写入串行化：getPersona 落种子、appendMemory 的「读-淘汰-写回」、patch、reset 会从
 // chat / 指令 / distiller 等不同异步流到达，若并发执行，后写者会以过期底稿覆盖先写者
@@ -77,26 +59,26 @@ function memorySizeBytes(entries) {
 }
 
 // ---- getPersona：目录/文件不存在则先落种子，再返回 { character, memory } ----
-export function getPersona(sessionKey) {
-  return runSerialized(() => getPersonaOne(sessionKey));
+export function getPersona(sessionKey, seed = getPromptConfig().prompts.seed) {
+  return runSerialized(() => getPersonaOne(sessionKey, seed));
 }
 
-async function getPersonaOne(sessionKey) {
+async function getPersonaOne(sessionKey, seed) {
   try {
     const dir = sessionDir(sessionKey);
     await mkdir(dir, { recursive: true });
     const character = await readIfExists(join(dir, 'character.md'));
     const memory = await readIfExists(join(dir, 'memory.md'));
     // 种子写入不检查大小上限：种子本身即受信任的基线内容
-    if (character === null) await atomicWriteFile(join(dir, 'character.md'), SEED_CHARACTER);
+    if (character === null) await atomicWriteFile(join(dir, 'character.md'), seed);
     if (memory === null) await atomicWriteFile(join(dir, 'memory.md'), '');
     return {
-      character: character ?? SEED_CHARACTER,
+      character: character ?? seed,
       memory: memory ?? '',
     };
   } catch (err) {
     logger.warn(`人设读取失败(${sessionKey}): ${err.message}`);
-    return { character: SEED_CHARACTER, memory: '' }; // 兜底：读不到也要让人设可用
+    return { character: seed, memory: '' }; // 兜底：读不到也要让人设可用
   }
 }
 
@@ -156,7 +138,7 @@ async function appendCharacterOne(sessionKey, text) {
     await mkdir(dir, { recursive: true });
     const line = `- [${formatTimestamp(new Date())}] ${text}`;
     // 底稿：会话从未访问过（无文件）则以种子为底，等效 getPersona 先落种子再追加
-    const existing = (await readIfExists(join(dir, 'character.md'))) ?? SEED_CHARACTER;
+    const existing = (await readIfExists(join(dir, 'character.md'))) ?? getPromptConfig().prompts.seed;
     const lines = existing.split('\n');
     while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     if (lines.length === 0 || !lines[lines.length - 1].startsWith('- [')) lines.push('');
@@ -302,7 +284,7 @@ async function resetPersonaOne(sessionKey) {
   try {
     const dir = sessionDir(sessionKey);
     await mkdir(dir, { recursive: true });
-    await atomicWriteFile(join(dir, 'character.md'), SEED_CHARACTER);
+    await atomicWriteFile(join(dir, 'character.md'), getPromptConfig().prompts.seed);
     await atomicWriteFile(join(dir, 'memory.md'), '');
   } catch (err) {
     logger.warn(`人设重置失败(${sessionKey}): ${err.message}`);
@@ -335,4 +317,10 @@ export async function readHistory(sessionKey, limit) {
     logger.warn(`审计读取失败(${sessionKey}): ${err.message}`);
     return [];
   }
+}
+
+export async function readPersonaSnapshot(sessionKey) {
+  if (!/^[gp]-[A-Za-z0-9_-]{1,64}$/.test(sessionKey)) throw new Error('会话标识不正确');
+  await writeChain;
+  return { character: await readIfExists(join(sessionDir(sessionKey), 'character.md')), memory: (await readIfExists(join(sessionDir(sessionKey), 'memory.md'))) ?? '' };
 }

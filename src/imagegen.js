@@ -4,17 +4,20 @@ import { config } from './config.js';
 import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { redactText } from './utils/logger.js';
 
-export async function generateImage(prompt, { sessionKey = 'system' } = {}) {
+export async function generateImage(prompt, { sessionKey = 'system', onAttempt } = {}) {
   const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey });
   let usage = null;
   let httpStatus;
   let images = 0;
   let failure;
+  const request = { model: config.imageModel, prompt, size: config.imageSize };
+  const startedAt = Date.now();
+  onAttempt?.({ phase: 'request', name: 'image_api', request, at: startedAt });
   try {
     const res = await fetch(`${config.imageApiBaseUrl}/images/generations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.imageApiKey}` },
-      body: JSON.stringify({ model: config.imageModel, prompt, size: config.imageSize }),
+      body: JSON.stringify(request),
       signal: AbortSignal.timeout(config.imageTimeoutMs),
     });
     httpStatus = res.status;
@@ -32,6 +35,7 @@ export async function generateImage(prompt, { sessionKey = 'system' } = {}) {
     const item = data.data?.[0];
     // Image count is generated output, independent of a later download error.
     images = Array.isArray(data.data) ? data.data.filter((entry) => entry?.b64_json || entry?.url).length : 0;
+    onAttempt?.({ phase: 'response', name: 'image_api', httpStatus, usage, images, elapsedMs: Date.now() - startedAt });
     if (typeof item?.b64_json === 'string' && item.b64_json !== '') return { b64: item.b64_json };
     if (item?.url) {
       const imgRes = await fetch(item.url, { signal: AbortSignal.timeout(60000) });
@@ -41,6 +45,7 @@ export async function generateImage(prompt, { sessionKey = 'system' } = {}) {
     throw new Error('Image API 响应缺少 data[0].b64_json/url');
   } catch (error) {
     failure = error;
+    onAttempt?.({ phase: 'error', name: 'image_api', httpStatus, error: redactText(error.message, [config.imageApiKey]), elapsedMs: Date.now() - startedAt });
     throw error;
   } finally {
     await finishUsage(attempt, { usage, error: failure, httpStatus, images });

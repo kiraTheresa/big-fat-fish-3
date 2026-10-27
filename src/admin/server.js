@@ -6,19 +6,19 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 const WEB_DIR = fileURLToPath(new URL('../../web/', import.meta.url));
-const STATIC = new Map([['/', ['index.html', 'text/html']], ['/index.html', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/style.css', ['style.css', 'text/css']], ['/styles.css', ['styles.css', 'text/css']]]);
+const STATIC = new Map([['/', ['index.html', 'text/html']], ['/index.html', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/prompt.js', ['prompt.js', 'text/javascript']], ['/style.css', ['style.css', 'text/css']], ['/styles.css', ['styles.css', 'text/css']]]);
 const hash = (value) => createHash('sha256').update(value).digest();
 function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(value));
 }
-async function body(req) {
+async function body(req, limit = 65536) {
   if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) throw Object.assign(new Error('需要 application/json'), { status: 415 });
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 65536) throw Object.assign(new Error('请求体超过 64 KiB'), { status: 413 });
+    if (size > limit) throw Object.assign(new Error(`请求体超过 ${limit / 1024} KiB`), { status: 413 });
     chunks.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
@@ -67,6 +67,17 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
       }
       for (const key of Object.keys(query)) if (query[key] === '') delete query[key];
       const route = `${req.method} ${url.pathname}`;
+      if (url.pathname.startsWith('/api/prompt/') && services.prompt) {
+        const action = `${req.method} ${url.pathname.slice('/api/prompt/'.length)}`;
+        const prompt = services.prompt;
+        if (action === 'GET workspace') return reply(res, 200, prompt.workspace());
+        if (action === 'GET sessions') return reply(res, 200, await prompt.sessions());
+        if (action === 'GET runs') return reply(res, 200, await prompt.listRuns());
+        const runMatch = url.pathname.match(/^\/api\/prompt\/runs\/([a-f0-9-]{36})(?:\/images\/(\d+))?$/);
+        if (req.method === 'GET' && runMatch) return reply(res, 200, runMatch[2] === undefined ? await prompt.readRun(runMatch[1]) : await prompt.readRunImage(runMatch[1], Number(runMatch[2])));
+        const handlers = { 'PUT draft': 'saveDraft', 'POST restore': 'restore', 'POST review': 'review', 'POST publish': 'publish', 'POST snapshot': 'snapshot', 'POST preview': 'preview', 'POST tests': 'startTest' };
+        if (handlers[action]) return reply(res, action === 'POST tests' ? 202 : 200, await prompt[handlers[action]](await body(req, 524288)));
+      }
       if (route === 'GET /api/status') return reply(res, 200, await services.status());
       if (route === 'GET /api/config') return reply(res, 200, services.getSettings());
       if (route === 'PUT /api/config') return reply(res, 200, await services.updateSettings(await body(req)));

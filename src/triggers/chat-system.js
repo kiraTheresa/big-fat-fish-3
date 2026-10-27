@@ -72,7 +72,7 @@ const IDENTITY_LINES = [
 // 完整 system：固定前缀 + 空行衔接 + 动态尾部。前缀结构（spec MODIFIED「AIChat system
 // 组装」明文顺序）：character → ## 记忆 → memory → ## 行为规则（场景二选一）→
 // ## 身份与消息格式；同一会话内 isGroup 恒定 → 前缀逐字节稳定命中 DeepSeek 上下文缓存
-export function buildSystemPrompt(persona, scene) {
+export function buildSystemPrompt(persona, scene, prompts) {
   const prefix = [
     persona.character,
     '',
@@ -82,11 +82,13 @@ export function buildSystemPrompt(persona, scene) {
     '',
     '## 行为规则',
     '',
-    ...(scene.isGroup ? GROUP_RULES : PRIVATE_RULES),
+    ...(prompts ? [scene.isGroup ? prompts.group : prompts.private] : scene.isGroup ? GROUP_RULES : PRIVATE_RULES),
     '',
     '## 身份与消息格式',
     '',
-    ...IDENTITY_LINES,
+    ...(prompts ? [prompts.identity, '', '## 工具使用规则', '', prompts.toolRules] : IDENTITY_LINES),
   ].join('\n');
-  return `${prefix}\n\n${buildSceneTail(scene)}`;
+  const values = { time: formatLocalTime(scene.nowMs), scene: scene.isGroup ? '群聊' : '私聊', silence: describeSilence(scene.lastTimeSec, scene.nowMs) };
+  const tail = prompts ? prompts.scene.replace(/\{\{(time|scene|silence)\}\}/g, (_, key) => values[key]) : buildSceneTail(scene);
+  return `${prefix}\n\n${tail}`;
 }

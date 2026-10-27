@@ -4,16 +4,19 @@ import { config } from './config.js';
 import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { redactText } from './utils/logger.js';
 
-export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system' } = {}) {
+export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system', tools, toolChoice, onAttempt } = {}) {
   const attempt = await beginUsage({ kind, model, sessionKey });
   let usage = null;
   let httpStatus;
   let failure;
+  const request = { model, messages, ...(tools?.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}) };
+  const startedAt = Date.now();
+  onAttempt?.({ phase: 'request', request: structuredClone(request), at: startedAt });
   try {
     const res = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.deepseekApiKey}` },
-      body: JSON.stringify({ model, messages }),
+      body: JSON.stringify(request),
       signal: AbortSignal.timeout(config.chatTimeoutMs),
     });
     httpStatus = res.status;
@@ -28,11 +31,15 @@ export async function chatCompletion(messages, { model = config.deepseekModel, k
     }
     const data = await res.json();
     usage = data.usage ?? null;
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') throw new Error('DeepSeek 响应缺少 choices[0].message.content');
-    return { content, usage };
+    const message = data.choices?.[0]?.message;
+    const content = message?.content;
+    const calls = message?.tool_calls;
+    if (typeof content !== 'string' && !(Array.isArray(calls) && calls.length)) throw new Error('DeepSeek 响应缺少 choices[0].message.content / tool_calls');
+    onAttempt?.({ phase: 'response', message: structuredClone(message), usage, httpStatus, elapsedMs: Date.now() - startedAt });
+    return { content, usage, message };
   } catch (error) {
     failure = error;
+    onAttempt?.({ phase: 'error', error: redactText(error.message, [config.deepseekApiKey]), httpStatus, elapsedMs: Date.now() - startedAt });
     throw error;
   } finally {
     await finishUsage(attempt, { usage, error: failure, httpStatus });

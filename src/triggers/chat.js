@@ -19,7 +19,12 @@
 //   现拉 base64（不落盘）→ 最后一条 user content 换块数组、模型换 deepseek-flash；
 //   任一步失败回退纯文本路径（看图是增强不是依赖）；DEEPSEEK_VISION_MODEL 空 = 关闭。
 import { config } from '../config.js';
-import { chatCompletion } from '../llm.js';
+import { randomUUID } from 'node:crypto';
+import { getPublishedPrompt } from '../prompt/store.js';
+import { buildChatRequest } from '../prompt/builder.js';
+import { runToolConversation } from '../prompt/runner.js';
+import { saveRun } from '../prompt/traces.js';
+import { deliverGeneratedImage } from '../tools/deliver-image.js';
 import { appendMessage, readRecentMessages } from '../store/message-store.js';
 import { getPersona } from '../store/persona-store.js';
 import { readState } from '../store/session-state.js';
@@ -29,8 +34,6 @@ import { fetchImageAsB64, mimeOfB64 } from '../utils/fetch-image.js';
 import { callApi } from '../connection/onebot.js';
 import { logger } from '../utils/logger.js';
 import { matchGroupChat } from './chat-conditions.js';
-import { fitHistoryToBudget } from './chat-context.js';
-import { buildSystemPrompt } from './chat-system.js';
 import { chatReplyChain } from './chat-reply-chain.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 
@@ -98,60 +101,25 @@ export default {
     }
     cooldowns.set(sessionKey, Date.now());
 
-    // persona（character + memory）与会话状态（resetAt 水位）互不依赖，并行读
-    const [persona, state] = await Promise.all([getPersona(sessionKey), readState(sessionKey)]);
-
+    const version = getPublishedPrompt();
+    const settings = version.config;
+    const [persona, state, records] = await Promise.all([
+      getPersona(sessionKey, settings.prompts.seed), readState(sessionKey), readRecentMessages(sessionKey, 1000),
+    ]);
     const isGroup = event.message_type === 'group';
-
-    // 上下文：会话 JSONL 尾部 N 条。入站消息在触发器之前已被 dispatcher 落盘，records
-    // 尾部通常就是当前消息——先按 message_id 滤出 prevRecords（上一条及更早），供两处
-    // 消费：LLM history（再滤 /reset 水位）与动态尾部的静默时长锚点
-    const records = await readRecentMessages(sessionKey, config.chatContextLines);
-    const prevRecords = records.filter((rec) => rec.message_id !== event.message_id);
-    // 上一条消息的秒级时间戳（OneBot 量纲，bot 行回存 time 同量纲）；无历史或异常行
-    // 缺 time 时兜底 null（新对话语义），不让 undefined 算出 NaN 静默文案
-    const lastTimeSec = prevRecords.at(-1)?.time ?? null;
-
-    // system 组装（add-self-evolving-persona「人设注入」+ upgrade-chat-pipeline「动态
-    // 尾部」）：固定前缀（character → ## 记忆 → memory → ## 行为规则）逐字节稳定才能
-    // 命中 DeepSeek 上下文缓存（为省几个空行击穿缓存得不偿失），时间/场景/静默时长是
-    // 动态尾部、全部后置；静默锚点取 prevRecords 尾部（JSONL 真实最后一条，不受 /reset
-    // 水位过滤影响——水位只约束 LLM 可见历史，静默时长描述的是会话本身）
-    const systemPrompt = buildSystemPrompt(persona, { isGroup, nowMs: Date.now(), lastTimeSec });
-
-    const history = prevRecords
-      // /reset 水位：resetAt 之前的行（入站与 bot 行同滤）不再进入上下文——JSONL
-      // 本体保留（append-only 纪律），只影响 LLM 可见范围；resetAt 不存在时不过滤
-      .filter((rec) => state.resetAt === undefined || !(rec.time < state.resetAt))
-      .map((rec) =>
-        rec.bot
-          ? { role: 'assistant', content: rec.raw_message }
-          : {
-              role: 'user',
-              content: isGroup ? `${rec.sender?.nickname ?? rec.user_id}: ${rec.raw_message}` : rec.raw_message,
-            }
-      );
-
-    // 预算裁剪（spec「上下文预算制」）：budgetBytes 封顶 system+历史的字节总量，从最新
-    // 向最旧装填、装不下即停——最旧先裁、保留最近的连续段。放在条数上限
-    //（readRecentMessages 的 chatContextLines 截取）之后，两者同时生效、谁更紧听谁的。
-    // lastTimeSec 静默锚点取 prevRecords 尾部（裁剪前的完整过滤集），且裁剪只砍头部
-    // 不碰尾部——静默计算不受影响
-    const fittedHistory = fitHistoryToBudget(history, systemPrompt, config.behavior.context.budgetBytes);
-
-    const speaker = event.sender?.nickname ?? event.user_id;
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...fittedHistory,
-      { role: 'user', content: isGroup ? `${speaker}: ${content}` : content },
-    ];
+    const built = buildChatRequest(settings, { persona, records, state, event, text: content });
+    const messages = built.request.messages;
+    const trace = [];
+    const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
+    const toolContext = { sessionKey, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
+      onImage: (b64, prompt) => deliverGeneratedImage(ctx, b64, prompt) };
 
     // ---- 识图分流：图源判定 →「在看」提示 → 现拉 base64（不落盘）----
     // 任一步失败（无图源/历史查询挂/下载挂）均 visionB64=null，messages 原样走纯文本——
     // 看图是增强不是依赖。入站 raw_message 本就含 [CQ:image] 痕迹（dispatcher 已落盘），
     // 后续上下文天然知道「发过图」；图本身不进上下文（边界纪律），追问靠首答文字自洽
     let visionB64 = null;
-    if (config.deepseekVisionModel !== '') {
+    if (settings.context.vision && config.deepseekVisionModel !== '') {
       const imageUrl = await resolveImageUrl(event);
       if (imageUrl !== null) {
         await ctx.reply(LOOKING_IMAGE_REPLY); // 过渡提示先出站，赶在拉图/视觉推理前
@@ -203,8 +171,9 @@ export default {
       let reply;
       if (visionB64 !== null) {
         try {
-          ({ content: reply } = await chatCompletion(messages, { model: usedModel, kind: 'vision', sessionKey }));
+          ({ content: reply } = await runToolConversation({ ...built.request, model: usedModel, messages }, settings, { ...toolContext, kind: 'vision' }, { trace }));
         } catch (err) {
+          if (err.toolStarted) throw err; // 已执行工具后不能回退重跑，否则可能重复副作用
           // flash 挂了不整个对话兜底：还原纯文本、换 deepseek-chat 重试一次（分流策略拍板）
           logger.warn(`[chat] 视觉模型调用失败，回退纯文本: ${err.message}`);
           usedModel = config.deepseekModel;
@@ -212,7 +181,7 @@ export default {
       }
       if (reply === undefined) {
         lastUser.content = plainContent; // 还原 string（纯文本路径此赋值恒等，无害）
-        ({ content: reply } = await chatCompletion(messages, { kind: 'chat', sessionKey }));
+        ({ content: reply } = await runToolConversation({ ...built.request, messages }, settings, toolContext, { trace }));
       }
 
       // 出口加工链：LLM 原始输出装入 segments 数组（Task 4 的 split 从这里接管拆分），
@@ -222,13 +191,19 @@ export default {
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
       persistAndSend(reply, segments);
+      run.status = 'completed';
+      run.content = reply;
 
     } catch (err) {
+      run.status = 'failed';
+      run.error = err.message;
       logger.warn(`[chat] LLM 调用失败: ${err.message}`);
       // 兜底文案不是 LLM 输出：不走加工链（不延迟，出错要立刻让人知道），但存储与
       // 发送仍走统一出口（与既有行为等价：回存一条 bot 行 + 发一条）
       const failureReply = err.name === 'UsageLimitError' ? `本鱼暂时不能调用模型：${err.message}。` : FALLBACK_REPLY;
       persistAndSend(failureReply, [failureReply]);
+    } finally {
+      await saveRun(run).catch((error) => logger.warn(`[prompt] 请求记录保存失败: ${error.code ?? 'storage error'}`));
     }
   },
 };

@@ -9,6 +9,9 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ### feat
 
+- Natural-language drawing and memory tools after the existing wake-up rules, with server-bound scope, argument checks, bounded tool loops and per-turn duplicate protection.
+- Prompt console with layered editing, explainable history filtering, request JSON, isolated session snapshots, real-model tests, manual review, revision-bound publishing and rollback through drafts. Initial persona changes apply only to new/reset sessions.
+
 - Receive and persist all OneBot 11 standard event families and message segments, including CQ strings and unknown extensions. Newly supported types are receipt-only.
 - Local management console with a liquid-glass interface: runtime health, event inbox, validated live configuration, QQ roles, durable jobs, structured logs and model usage. Admin APIs require a separate token.
 - Shared atomic persistence, single-process data-directory guard, recoverable interval/once jobs and daily observation retention.

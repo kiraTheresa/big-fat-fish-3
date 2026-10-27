@@ -23,7 +23,8 @@
 |---|---|
 | 总览 | 查看 WebSocket、心跳、运行时间、任务、入站事件及模型用量 |
 | 事件收件箱 | 按类型、会话筛选，分页查看完整事件及消息段 |
-| 配置 | 编辑触发条件、回复延迟/分段/引用、上下文预算、模型功能开关及每日上限 |
+| 配置 | 编辑触发条件、回复延迟/分段/引用、模型功能开关及每日上限 |
+| Prompt 控制台 | 全局草稿、请求预览、会话快照测试、人工评审、发布 / 回退与工具调用观察；见 [操作说明](prompt-console.md) |
 | 用户权限 | 登记 QQ，设为普通用户、管理员或封禁，恢复默认权限 |
 | 调度 | 新建、修改、暂停、删除单次或间隔任务；查看执行结果 |
 | 日志 | 按级别、关键词筛选结构化日志 |
@@ -63,6 +64,8 @@
 | `data/logs/YYYY-MM-DD.jsonl` | 按 UTC 日期的脱敏结构化日志 |
 | `data/management/settings.json` | 行为配置、功能开关、预算与 revision |
 | `data/management/users.json` | 用户身份、显式角色、备注与最近出现时间 |
+| `data/management/prompts.json` | Prompt 发布版本、草稿和测试评审摘要 |
+| `data/prompt-runs/` | 最近 50 次运行的脱敏请求与测试结果、关联测试图片 |
 | `data/management/jobs.json` | 任务定义、下一次时间、上次结果 |
 | `data/messages/*.jsonl` | 既有可处理消息及出站文本；保留归一化消息段 |
 | `data/session-state/*.json` | reset / distill 水位 |

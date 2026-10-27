@@ -15,6 +15,8 @@ import { getPersistenceStatus, flushPersistence } from './persistence.js';
 import { scanOnce } from '../distill/distiller.js';
 import { startAdminServer } from '../admin/server.js';
 import { acquireRuntimeLock } from './runtime-lock.js';
+import { initializePrompts, getPromptWorkspace, savePromptDraft, restorePromptVersion, reviewPromptTest, publishPromptDraft } from '../prompt/store.js';
+import { createPromptService } from '../prompt/service.js';
 
 export async function startPlatform({ admin = true, schedule = true } = {}) {
   const releaseLock = await acquireRuntimeLock(config.dataDir);
@@ -24,6 +26,9 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
     await initializeSettings(setUsagePolicy);
     await initializePermissions();
     await initializeUsage();
+    await initializePrompts();
+    const prompt = createPromptService();
+    await prompt.recover();
     const scheduler = new Scheduler({ dataDir: config.dataDir, handlers: {
       maintenance: async () => { const result = await pruneObservations(config.dataDir, config.retentionDays); logger.info('[scheduler] 观察数据清理完成', result); },
       distill: async () => {
@@ -36,6 +41,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
       { name: '观察数据保留清理', type: 'maintenance', enabled: true, schedule: { kind: 'interval', everyMs: 86400000 } },
     ]);
     const services = {
+      prompt: { ...prompt, workspace: getPromptWorkspace, saveDraft: savePromptDraft, restore: restorePromptVersion, review: reviewPromptTest, publish: publishPromptDraft },
       getSettings,
       updateSettings: async (value) => { const result = await updateSettings(value); logger.info('[admin] 行为配置与用量策略已保存', { revision: result.revision }); return result; },
       listUsers,
@@ -64,6 +70,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
       async stop() {
         await scheduler.stop();
         await management?.close();
+        await prompt.close();
         await flushEventStore();
         await flushMessageStore();
         await flushUsage();

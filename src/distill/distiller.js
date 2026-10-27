@@ -27,14 +27,7 @@ export { extractLockedLines, patchKeepsLockedLines };
 // 提炼 system 模板（spec 设计决策：增量演化不推翻核心设定、分级标准去粗取精、
 // memory 条目式、输出纯 JSON、各自上限内）。{maxBytes} 占位符在调用时以
 // config.personaMaxBytes 替换——调用时读取而非模块加载时固化，保证测试注入生效。
-const DISTILL_SYSTEM_TEMPLATE = [
-  '你是 QQ 机器人人设文件的维护者。规则：',
-  '① character.md 在现有基础上增量演化——只写说话风格、口头禅、梗、性格，不包含行为底线规则（简短回复、不刷屏、|| 分段等由系统层注入，写进会重复冲突）；核心设定（呆萌大肥鱼、真诚、吉祥物定位）不许推翻；文中以 "- [" 开头的行是用户 /character 钦定的设定，必须逐行原样保留；',
-  '② 值得记进 memory.md 的只有三类：用户的偏好（爱吃什么、喜欢什么）、身份事实（名字、职业、重要关系）、约定（说过要做什么）；闲聊情绪、临时话题、客套话不值得记，一律不写入；',
-  '③ memory.md 为条目式——每条一行、以 "- " 开头；保留仍然有效的，删除过时错误的，合并重复；',
-  '④ 每个文件不超过 {maxBytes} 字节；',
-  '⑤ 只输出 JSON，不要 markdown 围栏，格式 {"character": "完整文件内容", "memory": "完整文件内容"}',
-].join('\n');
+import { getPromptConfig } from '../prompt/store.js';
 
 // 待消化对话里 bot 行的统一昵称（入站行用 sender.nickname ?? user_id，同 chat.js 约定）
 const BOT_SPEAKER = '大肥鱼';
@@ -71,7 +64,7 @@ function budgetHeader(name, bytes, maxBytes, slimmingHint) {
 
 // 组装提炼 LLM messages：system 固定模板 + user（现有两份文件全文（含预算标注）+
 // 待消化对话逐行）。导出供直测（纯函数，同 shouldDistill 先例）。
-export function buildMessages(persona, newMessages) {
+export function buildMessages(persona, newMessages, template = getPromptConfig().prompts.distill) {
   const dialogue = newMessages.map((rec) => `[${rec.time}] ${speakerOf(rec)}: ${rec.raw_message}`);
   const maxBytes = config.personaMaxBytes;
   const user = [
@@ -87,7 +80,7 @@ export function buildMessages(persona, newMessages) {
   return [
     {
       role: 'system',
-      content: DISTILL_SYSTEM_TEMPLATE.replaceAll('{maxBytes}', String(config.personaMaxBytes)),
+      content: template.replaceAll('{maxBytes}', String(config.personaMaxBytes)),
     },
     { role: 'user', content: user },
   ];
@@ -95,7 +88,7 @@ export function buildMessages(persona, newMessages) {
 
 // 解析 LLM 输出为人设补丁：strip 可能的 ```json 围栏 → JSON.parse → 形状校验
 // （对象且 character/memory 均为 string）。任何一步不符返回 null（调用方 WARN 跳过）。
-function parsePatch(content) {
+export function parsePatch(content) {
   let parsed;
   try {
     const stripped = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
