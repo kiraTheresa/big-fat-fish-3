@@ -2,12 +2,12 @@ import { config } from '../config.js';
 import { buildSystemPrompt } from '../triggers/chat-system.js';
 import { toolAvailability, toolDefinitions } from '../tools/registry.js';
 
-export function buildChatRequest(settings, { persona, records = [], state = {}, event, text, nowMs = Date.now() }) {
+export function buildChatRequest(settings, { persona, records = [], state = {}, event, text, nowMs = Date.now(), systemSuffix = '' }) {
   const isGroup = event.message_type === 'group';
   const context = settings.context;
   const previous = records.filter((rec) => event.message_id === undefined || rec.message_id !== event.message_id);
   const effectivePersona = { character: persona?.character ?? settings.prompts.seed, memory: context.injectMemory ? persona?.memory ?? '' : '' };
-  const system = buildSystemPrompt(effectivePersona, { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null }, settings.prompts);
+  const system = buildSystemPrompt(effectivePersona, { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null }, settings.prompts) + systemSuffix;
   const inspections = previous.map((rec, index) => {
     const raw = typeof rec.raw_message === 'string' ? rec.raw_message : '';
     const image = /\[CQ:image[\s,\]]|^\[图片\]/.test(raw) || rec.message?.some?.((s) => s?.type === 'image');

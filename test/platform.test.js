@@ -65,3 +65,33 @@ test('权限：默认公开，环境管理员兼容；持久化封禁及角色�
   assert.equal(permissions.getRole(42), 'user');
   assert.equal(JSON.parse(await readFile(join(dir, 'management/users.json'))).version, 1);
 });
+
+test('旧配置补齐戳一戳与冷却；面板修改、重启恢复及非法值校验', async () => {
+  const file = join(dir, 'management', 'settings.json');
+  const legacy = JSON.parse(await readFile(file, 'utf8'));
+  delete legacy.behavior.chat;
+  delete legacy.behavior.trigger.poke;
+  await atomicWriteJson(file, legacy);
+  await settings.initializeSettings();
+  const migrated = settings.getSettings();
+  assert.equal(migrated.behavior.trigger.poke.enabled, true);
+  assert.equal(migrated.behavior.chat.cooldownMs, 2000);
+  assert.equal(migrated.behavior.trigger.at.enabled, legacy.behavior.trigger.at.enabled);
+  for (const value of [-1, 60001, 1.5]) {
+    const bad = structuredClone(migrated);
+    bad.behavior.chat.cooldownMs = value;
+    await assert.rejects(settings.updateSettings(bad), /对话冷却/);
+  }
+  for (const value of ['', '  ', 'x'.repeat(2001)]) {
+    const bad = structuredClone(migrated);
+    bad.behavior.trigger.poke.prompt = value;
+    await assert.rejects(settings.updateSettings(bad), /戳一戳提示词/);
+  }
+  migrated.behavior.trigger.poke = { enabled: false, prompt: '简短地咕噜一句' };
+  migrated.behavior.chat.cooldownMs = 1000;
+  const saved = await settings.updateSettings(migrated);
+  assert.equal(config.behavior.chat.cooldownMs, 1000);
+  assert.equal(config.behavior.trigger.poke.enabled, false);
+  await settings.initializeSettings();
+  assert.deepEqual(settings.getSettings().behavior, saved.behavior);
+});

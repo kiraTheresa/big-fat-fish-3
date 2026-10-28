@@ -77,16 +77,17 @@ const cooldowns = new Map();
 export default {
   name: 'chat',
   match(event) {
+    if (event.post_type !== 'message') return false;
     if (config.deepseekApiKey === '') return false; // 未配置 LLM：本触发器不生效
     if (event.message_type === 'private') return true;
     // 群聊：条件组合器任一命中即触发（非群聊事件组合器内恒 false）
     return matchGroupChat(event);
   },
 
-  async handle(ctx) {
+  async handle(ctx, { poke = false } = {}) {
     const { event, sessionKey } = ctx;
 
-    const content = extractText(event);
+    const content = poke ? '[戳一戳] 戳了戳你' : extractText(event);
     if (content === '') {
       logger.info(`[chat] ${sessionKey} 消息无文本内容，忽略`);
       return;
@@ -95,7 +96,7 @@ export default {
     // 冷却防刷：窗口内静默跳过（不调 LLM、不回复）。计时在 LLM 调用前 set：
     // 冷却管「开始响应」，出口加工链的随机延迟管「发出节奏」，两者互不干扰
     const last = cooldowns.get(sessionKey) ?? 0;
-    if (Date.now() - last < config.chatCooldownMs) {
+    if (Date.now() - last < config.behavior.chat.cooldownMs) {
       logger.info(`[chat] 会话 ${sessionKey} 冷却中，跳过`);
       return;
     }
@@ -108,10 +109,16 @@ export default {
       getPersona(sessionKey, settings.prompts.seed), readState(sessionKey), readRecentMessages(sessionKey, 1000),
     ]);
     const isGroup = event.message_type === 'group';
-    const built = buildChatRequest(settings, { persona, records, state, event, text: content });
+    const systemSuffix = poke ? `\n\n## 戳一戳回复\n${config.behavior.trigger.poke.prompt}\n本轮只回复一句短话，不调用工具，不分段。` : '';
+    const built = buildChatRequest(settings, { persona, records, state, event, text: content, systemSuffix });
+    if (poke) {
+      delete built.request.tools;
+      appendMessage({ sessionKey, time: event.time ?? Math.floor(Date.now() / 1000), message_type: event.message_type,
+        ...(isGroup ? { group_id: event.group_id } : {}), user_id: event.user_id, sender: event.sender, raw_message: content });
+    }
     const messages = built.request.messages;
     const trace = [];
-    const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
+    const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
     const toolContext = { sessionKey, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
       onImage: (b64, prompt) => deliverGeneratedImage(ctx, b64, prompt) };
 
@@ -120,7 +127,7 @@ export default {
     // 看图是增强不是依赖。入站 raw_message 本就含 [CQ:image] 痕迹（dispatcher 已落盘），
     // 后续上下文天然知道「发过图」；图本身不进上下文（边界纪律），追问靠首答文字自洽
     let visionB64 = null;
-    if (settings.context.vision && config.deepseekVisionModel !== '') {
+    if (!poke && settings.context.vision && config.deepseekVisionModel !== '') {
       const imageUrl = await resolveImageUrl(event);
       if (imageUrl !== null) {
         await ctx.reply(LOOKING_IMAGE_REPLY); // 过渡提示先出站，赶在拉图/视觉推理前
@@ -187,8 +194,10 @@ export default {
 
       // 出口加工链：LLM 原始输出装入 segments 数组（Task 4 的 split 从这里接管拆分），
       // 各模块按 enabled(config) 自决参与、依序 await 加工（delay 在此吃掉随机时长）
+      if (poke) reply = reply.replaceAll('||', ' ').replace(/\s+/g, ' ').trim();
       let segments = [reply];
       for (const mod of chatReplyChain) {
+        if (poke) continue; // 戳一戳立即发一条短回复，不引用不存在的消息。
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
       persistAndSend(reply, segments);

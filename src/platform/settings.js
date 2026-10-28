@@ -24,6 +24,8 @@ function integer(value, min, max, name) { if (!Number.isSafeInteger(value) || va
 export function validateSettings(behavior, policy) {
   checkShape(behavior, DEFAULT_BEHAVIOR, 'behavior');
   checkShape(policy, DEFAULT_POLICY, 'policy');
+  integer(behavior.chat.cooldownMs, 0, 60000, '对话冷却');
+  if (!behavior.trigger.poke.prompt.trim() || behavior.trigger.poke.prompt.length > 2000) throw new Error('戳一戳提示词需为 1–2000 字符');
   integer(behavior.reply.delay.minMs, 0, 60000, '最短延迟');
   integer(behavior.reply.delay.maxMs, behavior.reply.delay.minMs, 60000, '最长延迟');
   if (behavior.reply.split.separator.length > 20) throw new Error('分段符最多 20 字符（留空则仅按换行分段）');
@@ -36,6 +38,13 @@ export async function initializeSettings(listener = () => {}) {
   const saved = await readJson(path(), null);
   if (saved) {
     if (saved.version !== 1 || typeof saved.revision !== 'string') throw new Error('管理配置版本不正确');
+    // 仅补齐本次新增字段，已有值仍须通过完整校验。
+    if (object(saved.behavior)) {
+      if (saved.behavior.chat === undefined) saved.behavior.chat = structuredClone(config.behavior.chat);
+      if (object(saved.behavior.trigger) && saved.behavior.trigger.poke === undefined) {
+        saved.behavior.trigger.poke = structuredClone(config.behavior.trigger.poke);
+      }
+    }
     validateSettings(saved.behavior, saved.policy);
     current = saved;
   } else {

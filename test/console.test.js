@@ -117,6 +117,9 @@ test('配置保存期间锁定控件并防重复提交；409 后保留编辑值�
     { name: 'separator', value: '', disabled: false },
   ];
   fields.aliases = fields[2]; fields.separator = fields[3];
+  fields.push({ name: 'behavior.trigger.poke.enabled', type: 'checkbox', checked: false, disabled: false },
+    { name: 'behavior.trigger.poke.prompt', type: 'textarea', value: '简短回应', disabled: false },
+    { name: 'behavior.chat.cooldownMs', type: 'number', value: '2000', disabled: false });
   const button = ui.node('#save-config');
   fields.push(button);
   ui.context.testForm = { elements: fields };
@@ -130,6 +133,9 @@ test('配置保存期间锁定控件并防重复提交；409 后保留编辑值�
   assert.equal(ui.calls.length, 1);
   const payload = JSON.parse(ui.calls[0].options.body);
   assert.equal(payload.revision, 'original');
+  assert.equal(payload.behavior.trigger.poke.enabled, false);
+  assert.equal(payload.behavior.trigger.poke.prompt, '简短回应');
+  assert.equal(payload.behavior.chat.cooldownMs, 2000);
   assert.deepEqual(payload.behavior.trigger.nameCall.aliases, ['肥鱼', '小鱼']);
   assert.equal(payload.behavior.reply.split.separator, '');
   finish();

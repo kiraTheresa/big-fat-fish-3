@@ -2,8 +2,10 @@
   "trigger": {
     "at": { "enabled": true },
     "nameCall": { "enabled": true, "aliases": ["大肥鱼", "肥鱼"] },
-    "replyQuote": { "enabled": true }
+    "replyQuote": { "enabled": true },
+    "poke": { "enabled": true, "prompt": "有人戳了戳你，请结合人设俏皮地回应一句，简短自然，不超过 30 个字。" }
   },
+  "chat": { "cooldownMs": 2000 },
   "reply": {
     "delay": { "enabled": true, "minMs": 2000, "maxMs": 8000 },
     "split": { "enabled": true, "separator": "||" },

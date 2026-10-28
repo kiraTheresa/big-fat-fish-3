@@ -60,7 +60,7 @@ test('默认值：未设置相关 env 时返回全部默认值', async () => {
   assert.equal(config.deepseekModel, 'deepseek-chat');
   assert.equal(config.chatTimeoutMs, 60000);
   assert.equal(config.chatContextLines, 20);
-  assert.equal(config.chatCooldownMs, 5000);
+  assert.equal(config.chatCooldownMs, 2000);
   // 自进化人设（add-self-evolving-persona spec）
   assert.deepEqual(config.adminQq, []);
   assert.equal(config.personaDir, 'data/personas');

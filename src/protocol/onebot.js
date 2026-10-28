@@ -11,6 +11,14 @@ const plainObject = (value) => value !== null && typeof value === 'object' && !A
 const validId = (value) => (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
   || (typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value));
 
+export function isBotPoke(event) {
+  return event?.post_type === 'notice' && event.notice_type === 'notify' && event.sub_type === 'poke'
+    && validId(event.self_id) && validId(event.user_id) && validId(event.target_id)
+    && (event.group_id === undefined || validId(event.group_id))
+    && String(event.target_id) === String(event.self_id)
+    && String(event.user_id) !== String(event.self_id);
+}
+
 // Decode once, after tokenization: escaped literal CQ code must remain text.
 export function decodeCq(value, parameter = false) {
   let text = value.replaceAll('&#91;', '[').replaceAll('&#93;', ']');
@@ -105,7 +113,7 @@ export function normalizeOneBotEvent(input) {
   const knownSubtype = event.sub_type === undefined || (event.message_type === 'group'
     ? ['normal', 'anonymous'].includes(event.sub_type)
     : ['friend', 'group', 'other'].includes(event.sub_type));
-  const processable = event.post_type === 'message' && issues.length === 0 && !unsupported && knownSubtype;
+  const processable = isBotPoke(event) || (event.post_type === 'message' && issues.length === 0 && !unsupported && knownSubtype);
   return {
     event, sessionKey, segments, messageTypes, issues: [...new Set(issues)], processable,
     postType: event.post_type,

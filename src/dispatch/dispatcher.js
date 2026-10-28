@@ -1,5 +1,5 @@
 // L2 分发层：协议归一 → 完整事件收件箱 → 消息历史 → 既有触发器链。
-// 新消息段、通知、请求、元事件只接收和保存，不执行新业务。
+// 除发给机器人的戳一戳外，新消息段、通知、请求、元事件只接收和保存。
 // 打标 sessionKey（群 g-{group_id}、私 p-{user_id}）并构造 ctx；
 // 把入站快照以 fire-and-forget 方式交给存储钩子（不 await，失败不影响主管道）；
 // 按注册顺序匹配触发器，命中即停，全不中静默；match/handle 异常捕获记 ERROR。
@@ -42,7 +42,7 @@ export async function dispatch(input) {
     sender: event.sender,
   };
   if (event.group_id !== undefined) snapshot.group_id = event.group_id;
-  appendMessage(snapshot);
+  if (event.post_type === 'message') appendMessage(snapshot);
 
   // ctx：触发器可用的全部能力——出站只经 reply() 走发送层，禁止直接触碰连接层
   const ctx = {

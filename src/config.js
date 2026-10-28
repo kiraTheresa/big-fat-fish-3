@@ -19,7 +19,9 @@ export const DEFAULT_BEHAVIOR = {
     nameCall: { enabled: true, aliases: ['大肥鱼', '肥鱼'] },
     // 引用回复：引用 bot 消息即触发
     replyQuote: { enabled: true },
+    poke: { enabled: true, prompt: '有人戳了戳你，请结合人设俏皮地回应一句，简短自然，不超过 30 个字。' },
   },
+  chat: { cooldownMs: 2000 },
   reply: {
     // 随机延迟：模拟人的打字节奏
     delay: { enabled: true, minMs: 2000, maxMs: 8000 },
@@ -105,8 +107,8 @@ export const config = {
   chatTimeoutMs: num(process.env.CHAT_TIMEOUT_MS, 60000),
   // 每次对话携带的历史条数（会话 JSONL 尾部）
   chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
-  // 会话级冷却（ms）：窗口内后续消息静默跳过，防刷防刷量
-  chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 5000),
+  // 会话冷却启动初值（ms）；运行时使用 behavior.chat.cooldownMs，支持面板热更新
+  chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 2000),
   // ---- 识图（chat 触发器图分流；DeepSeek 视觉款，与上共用同一 Key/BaseUrl）----
   // 视觉模型（留空 = 识图关闭，同 deepseekApiKey 模式；deepseek-flash 实测可看图，
   // 单图约 1024 tokens，图只能放 user 消息块——system/assistant 带图 400）
@@ -148,5 +150,5 @@ export const config = {
   // 绘图超时（ms）：实测 GPT Image 2.5 出图 20-70s，给足余量
   imageTimeoutMs: num(process.env.IMAGE_TIMEOUT_MS, 120000),
   // ---- 行为开关（config.json 层，字段说明见 config.example.json）----
-  behavior: deepMerge(DEFAULT_BEHAVIOR, loadBehaviorConfig()),
+  behavior: deepMerge({ ...DEFAULT_BEHAVIOR, chat: { cooldownMs: num(process.env.CHAT_COOLDOWN_MS, 2000) } }, loadBehaviorConfig()),
 };
