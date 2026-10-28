@@ -36,14 +36,14 @@ const icons = {
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.events}</svg>`;
 const pages = {
-  overview: ['运行概览', '照看大肥鱼的每一次运行。', 'OVERVIEW'],
+  overview: ['运行概览', '检查连接、调用和任务状态，进入常用工具。', 'OVERVIEW'],
   events: ['消息收件箱', '所有接收事件都在这里；接收不等于自动处理。', 'INBOX'],
-  prompt: ['Prompt 控制台', '编辑草稿、检验表现，再发布给大肥鱼。', 'PROMPT STUDIO'],
-  config: ['配置与能力', '让每项能力按你的节奏工作。', 'CONFIGURATION'],
+  prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。', 'PROMPT STUDIO'],
+  config: ['配置与能力', '管理能力开关、调用预算与运行参数。', 'CONFIGURATION'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
-  logs: ['运行日志', '从每一个线索，理解运行现场。', 'LOGS'],
-  usage: ['用量观察', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
+  logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
+  usage: ['调用与用量', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
 };
 const state = {
   token: '', page: pages[location.hash.slice(1)] ? location.hash.slice(1) : 'overview',
@@ -206,7 +206,7 @@ function eventTypeBadge(type) {
   return pill(labels[type] || type, { notice: 'blue', request: 'violet', meta_event: 'neutral', message_sent: 'neutral', unknown: 'warning' }[type] || '');
 }
 function recentEvents(items) {
-  if (!items.length) return empty('收件箱还很安静', 'QQ 接收的消息、通知和其他事件会出现在这里。');
+  if (!items.length) return empty('暂无接收事件', 'QQ 接收的消息、通知和其他事件会出现在这里。');
   return `<div class="event-list">${items.slice(0, 6).map((row) => {
     const info = eventInfo(row);
     return `<div class="event-row"><span class="event-icon">${icon(info.postType === 'meta_event' ? 'pulse' : 'events')}</span><div class="event-text"><strong>${e(info.text || `${info.type} · ${info.types.join(' / ') || '事件已接收'}`)}</strong><p>${e(info.session)} · ${e(info.sender)}</p></div><time>${e(date(info.time, true))}</time></div>`;
@@ -225,9 +225,9 @@ async function renderOverview(sequence) {
   const jobs = Array.isArray(status.scheduler?.jobs) ? status.scheduler.jobs.length : status.scheduler?.jobs ?? 0;
   const failed = usage.failures ?? 0;
   const storage = status.storage || {};
-  return `${persistenceError ? `<div class="notice error">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">YOUR LITTLE CONTROL ROOM</p><h2>${connection.connected ? '大肥鱼，在线游弋。' : '控制台就绪，等待 QQ 连接。'}</h2><p>${connection.connected ? '消息接收、运行状态与用量，尽在眼前。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="status-illustration" aria-hidden="true">${icon(connection.connected ? 'check' : 'pulse')}</div></section>
+  return `${persistenceError ? `<div class="notice error">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可查看消息接收与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">检查日志</button></div></section>
     <div class="metrics-grid">${metric('运行时间', duration(status.uptimeSeconds), `启动于 ${date(status.startedAt)}`, 'pulse')}${metric('今日调用', usageNumber(usage.calls), ledgerAvailable ? `下次重置 ${date(status.usage?.resetAt)}` : '用量账本当前不可读取', 'usage', '次')}${metric('今日 Token', usageNumber(usage.totalTokens), ledgerAvailable ? `${number(usage.unknownUsageCalls)} 次调用未返回完整用量` : '暂时无法汇总已知用量', 'config')}${metric('计划任务', number(jobs), status.scheduler?.running ? '调度器正在运行' : '调度器未运行', 'jobs', '项')}</div>
-    <div class="overview-grid"><section class="panel">${panelHead('最近收到', '从最新事件，看看发生了什么。', pageLink('events', '全部事件'))}${events ? recentEvents(events.items || []) : '<div class="notice error">事件列表暂时无法读取，请到消息收件箱重试。</div>'}</section>
+    <div class="overview-grid"><section class="panel">${panelHead('最近收到', '最近 6 条接收事件，按时间倒序。', pageLink('events', '全部事件'))}${events ? recentEvents(events.items || []) : '<div class="notice error">事件列表暂时无法读取，请到消息收件箱重试。</div>'}</section>
     <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>日志已写入</dt><dd>${e(number(status.logStats?.written))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看日志</button></div></section></div><div class="summary-strip"><span>本次进程接收<strong>${e(number(status.events?.received))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
 }
 
@@ -276,7 +276,7 @@ async function renderConfig(sequence) {
     <div class="form-section"><h3>对话冷却</h3>${numberField('behavior.chat.cooldownMs', '冷却时间 / 毫秒', getPath(b, 'chat.cooldownMs', 2000), '2000 毫秒 = 2 秒。同一会话从开始响应计时，聊天与戳一戳共用；0 表示关闭。', { max: 60000 })}</div>
     <div class="form-section"><h3>如何回复</h3>${toggle('behavior.reply.delay.enabled', '随机回复延迟', '为回复保留一点自然的停顿。')}<div class="form-grid">${numberField('behavior.reply.delay.minMs', '最短延迟 / 毫秒', getPath(b, 'reply.delay.minMs', 2000), '范围为 0–60,000 毫秒。', { max: 60000 })}${numberField('behavior.reply.delay.maxMs', '最长延迟 / 毫秒', getPath(b, 'reply.delay.maxMs', 8000), '不得小于最短延迟，最多 60,000。', { max: 60000 })}</div>${toggle('behavior.reply.split.enabled', '分段发送回复', '使用分隔符将模型回复拆成多条消息。')}<div class="form-field"><label for="separator">回复分隔符</label><textarea id="separator" name="separator" rows="2" maxlength="20">
 ${e(getPath(b, 'reply.split.separator', '||'))}</textarea><p class="field-hint">支持换行，最多 20 字符；留空则仅按换行分段。</p></div>${toggle('behavior.reply.quote.enabled', '引用原消息', '回复时带上触发消息的引用。')}</div>
-    <div class="form-section"><h3>上下文</h3><p class="section-description">历史筛选与字节预算由 Prompt 发布版本统一管理。</p>${pageLink('prompt', '前往 Prompt 控制台')}</div></section>
+    <div class="form-section"><h3>上下文</h3><p class="section-description">历史筛选与字节预算由 Prompt 发布版本统一管理。</p>${pageLink('prompt', '前往 Prompt 工作台')}</div></section>
     <section class="panel">${panelHead('能力与额度', '关闭能力后，对应消息仍会接收并记录。')}${toggle('policy.features.chat', '文字对话', '允许调用聊天模型。')}${toggle('policy.features.vision', '图片理解', '允许已有识图流程处理图片。')}${toggle('policy.features.draw', '绘图', '对所有未被封禁的用户开放。')}${toggle('policy.features.distill', '记忆提炼', '允许离线整理对话记忆。')}<div class="form-section"><h3>每日用量上限</h3><p class="section-description">0 表示不限额。按北京时间自然日计数。</p><div class="form-grid">${numberField('policy.limits.maxCallsPerDay', '最多调用 / 次', getPath(p, 'limits.maxCallsPerDay', 0), '新调用达到上限后停止。', { max: 1000000 })}${numberField('policy.limits.maxTokensPerDay', '最多 Token', getPath(p, 'limits.maxTokensPerDay', 0), '按已知用量判断，不含上游未回传用量。', { max: 1000000000 })}</div></div>
     <div class="form-section"><h3>连接信息</h3><p class="section-description">连接、模型与密钥由环境变量管理。</p><dl class="key-values"><div><dt>QQ 地址</dt><dd class="mono">${e(connection.wsUrl || '—')}</dd></div><div><dt>对话模型</dt><dd class="mono">${e(connection.model || connection.deepseekModel || '—')}</dd></div><div><dt>绘图模型</dt><dd class="mono">${e(connection.imageModel || '—')}</dd></div></dl><p class="field-hint">对话接口：${result.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${result.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}</p><p class="field-hint">修改环境变量后需要重启 Bot。管理台不显示密钥。</p></div>
     <div class="form-section"><h3>配置版本</h3><p class="field-hint mono">${e(result.revision ?? '—')}</p></div></section></div><div class="save-bar"><p id="save-state">所有配置已同步</p><div><button type="button" class="button" data-action="reload-config">重新读取</button><button type="submit" id="save-config" class="button primary" disabled>保存配置 ${icon('check')}</button></div></div><p id="config-error" class="form-error" role="alert" hidden></p></form>`;
@@ -543,7 +543,7 @@ $('#login-form').addEventListener('submit', async (event) => {
   } catch (error) {
     $('#login-error').textContent = error.message;
     $('#login-error').hidden = false;
-  } finally { button.disabled = false; button.innerHTML = '进入管理台 <span aria-hidden="true">↗</span>'; }
+  } finally { button.disabled = false; button.innerHTML = '进入工作台 <span aria-hidden="true">↗</span>'; }
 });
 $('#toggle-token').addEventListener('click', () => {
   const show = $('#admin-token').type === 'password';
@@ -559,7 +559,12 @@ $('#close-dialog').addEventListener('click', closeDialog);
 $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) event.preventDefault(); });
 $('#detail-dialog').addEventListener('close', () => { if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
-$('#navigation').innerHTML = Object.entries(pages).map(([page, [title]]) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(title)}</span></a>`).join('');
+const navigationGroups = [
+  ['运行排查', ['overview', 'events', 'logs', 'usage']],
+  ['开发调试', ['prompt']],
+  ['实例管理', ['config', 'jobs', 'users']],
+];
+$('#navigation').innerHTML = navigationGroups.map(([label, keys]) => `<div class="nav-group"><p class="nav-label">${label}</p>${keys.map((page) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(pages[page][0])}</span></a>`).join('')}</div>`).join('');
 window.addEventListener('beforeunload', (event) => { if (state.dirty || state.saving) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('hashchange', () => {
   const next = location.hash.slice(1);

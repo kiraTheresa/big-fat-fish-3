@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -22,10 +22,23 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = []; page.on('pageerror', (e) => errors.push(e.message));
+  const screenshotDir = process.env.SCREENSHOT_DIR;
+  if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
+  const screenshot = async (name) => {
+    if (!screenshotDir) return;
+    await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); });
+    await page.screenshot({ path: join(screenshotDir, `${name}.png`), fullPage: true });
+  };
   await page.goto(`http://127.0.0.1:${platform.management.port}/#prompt`);
+  await screenshot('login');
   await page.locator('#admin-token').fill('isolated-console-test-token');
   await page.locator('.login-submit').click();
   await page.waitForSelector('#pp-request-blocks .pp-budget');
+  await screenshot('prompt-desktop');
+  await page.locator('[data-pp-jump="release"]').click();
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'pp-release-stage');
+  assert.match(await page.locator('#pp-publish-reason').innerText(), /聊天测试/);
+  await page.locator('[data-pp-jump="edit"]').click();
   const seed = page.locator('[data-pp-field="prompts.seed"]');
   await seed.fill('# 大肥鱼\n一条喜欢海洋、简短说话的鱼。');
   await page.waitForTimeout(600);
@@ -37,6 +50,7 @@ try {
   assert.match(await page.locator('#pp-result').innerText(), /记住啦/);
   await page.locator('[data-pp-action="pass"]').click();
   await page.waitForFunction(() => !document.querySelector('#pp-publish').disabled);
+  assert.match(await page.locator('#pp-publish-reason').innerText(), /已满足/);
   await page.locator('#pp-note').fill('隔离实例端到端测试');
   await page.locator('#pp-publish').click();
   await page.waitForFunction(() => document.querySelector('.pp-versionbar').textContent.includes('v1'));
@@ -60,8 +74,21 @@ try {
   assert.equal(await page.locator('#pp-test').isDisabled(), true);
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await screenshot('prompt-mobile');
+  // Discard only the isolated test draft when navigating to the other pages.
+  page.on('dialog', (dialog) => dialog.accept());
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    for (const name of ['overview', 'events', 'logs', 'usage', 'config', 'jobs', 'users']) {
+      await page.locator(`#navigation [data-page="${name}"]`).click();
+      await page.waitForFunction(() => document.querySelector('#content').getAttribute('aria-busy') === 'false');
+      assert.equal(await page.locator('.error-state').count(), 0, name);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${name} at ${width}px`);
+      await screenshot(`${name}-${width}`);
+    }
+  }
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'PASS', checked: ['login', 'draft save', 'tools trace', 'manual review', 'publish', 'same snapshot compare', 'edit invalidates pass', 'tool preview', 'mobile overflow'], pageErrors: errors }));
+  console.log(JSON.stringify({ result: 'PASS', checked: ['login', 'workflow navigation', 'publish requirements', 'draft save', 'tools trace', 'manual review', 'publish', 'same snapshot compare', 'edit invalidates pass', 'tool preview', 'all pages desktop/mobile overflow'], pageErrors: errors }));
 } finally {
   await browser?.close(); await platform.stop(); mock.closeAllConnections(); await new Promise((resolve) => mock.close(resolve)); await rm(dir, { recursive: true, force: true });
 }
