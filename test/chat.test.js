@@ -66,6 +66,7 @@ const registry = await import('../src/dispatch/registry.js');
 const { config } = await import('../src/config.js');
 const ping = (await import('../src/triggers/ping.js')).default;
 const chat = (await import('../src/triggers/chat.js')).default;
+const { readState: readMemoryState } = await import('../src/store/session-state.js');
 
 // 文件级基线：关闭随机延迟（默认开启且区间 2–8s，会把所有用例拖到秒级）；
 // delay 行为另有专项用例临时开启并收窄区间验证
@@ -214,6 +215,9 @@ test('群聊 @bot 触发：at 段剥离、昵称前缀、回复带引用发往�
     frameBaseline,
     (f) => f.action === 'send_msg' && f.params?.message_type === 'group' && f.params?.group_id === 3001
   );
+  const activity = (await readMemoryState('g-3001')).memoryActivity;
+  assert.equal(activity.sleeping, false);
+  assert.ok(activity.lastInvokedAt > 0);
   // quote 模块（Task 9）默认开启：群聊首帧为消息段数组——reply 段指向触发消息
   // message_id + text 段携带回复内容（napcat-protocol §3.4 形状）
   assert.deepEqual(frame.params.message, [
@@ -297,6 +301,7 @@ test('at 开关关闭：群聊 @bot 不触发（spec「条件全关」场景）�
 test('空文本忽略：仅 @bot 无文本 → 不调 LLM、无出站帧', { timeout: 10000 }, async () => {
   onebotServer.injectEvent(groupEvent(null, 3201, 3202, '只@君', SELF_ID));
   await delay(400);
+  assert.equal((await readMemoryState('g-3201')).memoryActivity, undefined);
 
   assert.ok(
     !llmServer.requests.some((r) => JSON.stringify(r.body).includes('只@君')),

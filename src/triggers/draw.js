@@ -51,6 +51,7 @@ export default {
     }
 
     // 出图要 20-70 秒：先回一句垫住体验（经 ctx.reply：回存 bot 行 + 队列出站）
+    await ctx.activateMemory?.();
     const summary = prompt.length > SUMMARY_LIMIT ? `${prompt.slice(0, SUMMARY_LIMIT)}…` : prompt;
     await ctx.reply(`收到～本鱼在画「${summary}」啦，稍等哦`);
 

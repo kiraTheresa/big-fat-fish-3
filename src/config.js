@@ -130,7 +130,9 @@ export const config = {
   // 离线提炼触发条件二：水位后新增消息条数
   distillBatchSize: num(process.env.DISTILL_BATCH_SIZE, 50),
   // 离线提炼调度器扫描间隔（ms）
-  distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 60000),
+  distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 300000),
+  // 群聊最后一次有效调用后多久退出记忆提炼（默认两小时）
+  distillIdleMs: Math.max(1000, num(process.env.DISTILL_IDLE_MS, 7200000)),
   // LLM 用量 JSONL 落盘根目录
   usageDir: process.env.USAGE_DIR ?? join(process.env.DATA_DIR ?? 'data', 'usage'),
   // ---- 绘图（draw 触发器 / imagegen.js 唯一出口）----

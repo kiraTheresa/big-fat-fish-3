@@ -28,7 +28,7 @@ export class Scheduler {
     throw new Error('调度需为 interval 或有效的 once 时间');
   }
   next(schedule) { return schedule.kind === 'once' ? Date.parse(schedule.at) : this.clock() + schedule.everyMs; }
-  async initialize(defaults = []) {
+  async initialize(defaults = [], previousDefaults = []) {
     const stored = await readJson(this.file, { version: 1, items: defaults.map((input) => ({ ...this.validate(input), id: randomUUID(), nextRunAt: this.next(input.schedule) })) });
     if (stored.version !== 1 || !Array.isArray(stored.items)) throw new Error('任务文件格式不正确');
     const ids = new Set();
@@ -36,6 +36,15 @@ export class Scheduler {
       this.validate(job);
       if (typeof job.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(job.id) || ids.has(job.id) || !Number.isFinite(job.nextRunAt)) throw new Error('任务记录格式不正确');
       ids.add(job.id);
+      // Seeded jobs have no createdAt/updatedAt. Preserve all user-created or
+      // edited jobs, including disabled jobs; only migrate untouched defaults.
+      const previous = previousDefaults.find((item) => item.name === job.name && item.type === job.type
+        && item.schedule.kind === job.schedule.kind && item.schedule.everyMs === job.schedule.everyMs);
+      const replacement = defaults.find((item) => item.name === job.name && item.type === job.type);
+      if (job.createdAt === undefined && job.updatedAt === undefined && previous && replacement
+        && JSON.stringify(job.schedule) !== JSON.stringify(replacement.schedule)) {
+        job = { ...job, schedule: structuredClone(replacement.schedule), nextRunAt: this.next(replacement.schedule) };
+      }
       if (job.lastStatus === 'running') return { ...job, lastStatus: 'interrupted', lastError: '上次进程在任务运行期间停止；本次不重放' };
       return job;
     });

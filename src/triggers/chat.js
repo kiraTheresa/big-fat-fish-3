@@ -100,6 +100,7 @@ export default {
       return;
     }
     cooldowns.set(sessionKey, Date.now());
+    await ctx.activateMemory?.();
 
     const version = getPublishedPrompt();
     const settings = version.config;

@@ -22,6 +22,7 @@ const ENV_KEYS = [
   'DISTILL_SILENCE_MS',
   'DISTILL_BATCH_SIZE',
   'DISTILL_INTERVAL_MS',
+  'DISTILL_IDLE_MS',
   'USAGE_DIR',
 ];
 
@@ -66,7 +67,8 @@ test('默认值：未设置相关 env 时返回全部默认值', async () => {
   assert.equal(config.personaMaxBytes, 4096);
   assert.equal(config.distillSilenceMs, 600000);
   assert.equal(config.distillBatchSize, 50);
-  assert.equal(config.distillIntervalMs, 60000);
+  assert.equal(config.distillIntervalMs, 300000);
+  assert.equal(config.distillIdleMs, 7200000);
   assert.equal(config.usageDir, 'data/usage');
 });
 

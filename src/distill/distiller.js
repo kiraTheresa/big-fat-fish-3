@@ -1,5 +1,5 @@
-// 离线提炼调度器（add-self-evolving-persona spec「离线提炼」）：周期扫描 data/messages
-// 下的会话，双条件判定（静默：末条消息距今 ≥ distillSilenceMs；批量：水位后新增 ≥
+// 离线提炼调度器：周期扫描活跃群聊与私聊；群聊休眠/唤醒和可提炼窗口由 activity.js 管理。
+// 双条件判定（静默：末条消息距今 ≥ distillSilenceMs；批量：水位后新增 ≥
 // distillBatchSize；先到先触发）；触发则以固定模板调 LLM 产出人设补丁
 // { character, memory }，applyPersonaPatch 分文件落盘（character 超限单拒该文件、
 // memory 超限程序化裁剪），至少一文件落盘即推进 distillMark 水位（消息已消化，
@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { chatCompletion } from '../llm.js';
-import { readMessagesSince } from '../store/message-store.js';
+import { activeMemoryGroups, prepareMemoryScan, readMemoryMessages, receiptProgress } from './activity.js';
 import { applyPersonaPatch, getPersona, extractLockedLines, patchKeepsLockedLines } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
 
@@ -184,9 +184,12 @@ export async function distillSession(sessionKey, newMessages) {
         `[distill] 会话 ${sessionKey} 补丁部分落盘（character=${applied.character}, memory=${applied.memory}），水位仍推进`
       );
     }
-    // 推进水位到本批最大 time（秒级，与消息 JSONL 同量纲，严格大于不重复处理）
+    // 保留秒级兼容水位；群聊另按本地接收时间和记录 ID 推进，合并期间发生的新调用。
     const maxTime = newMessages.reduce((max, rec) => Math.max(max, rec.time ?? 0), 0);
-    await updateState(sessionKey, { distillMark: maxTime, distillFails: 0 });
+    await updateState(sessionKey, (current) => ({
+      distillMark: Math.max(current.distillMark ?? 0, maxTime), distillFails: 0,
+      ...receiptProgress(current, newMessages),
+    }));
 
   } catch (err) {
     // 任何异常（LLM 超时/网络等）：水位与文件不动，下轮扫描重试（受退避保护）
@@ -197,8 +200,8 @@ export async function distillSession(sessionKey, newMessages) {
   }
 }
 
-// ---- 单轮扫描：枚举 data/messages 的 *.jsonl 得会话，顺序逐个判定与提炼 ----
-export async function scanOnce() {
+// ---- 单轮扫描：群聊只取活跃集合，私聊从消息目录枚举，顺序逐个判定与提炼 ----
+export async function scanOnce(nowMs = Date.now()) {
   let entries;
   try {
     entries = await readdir(join(config.dataDir, 'messages'));
@@ -207,12 +210,14 @@ export async function scanOnce() {
     logger.warn(`[distill] 消息目录枚举失败: ${err.message}`);
     return;
   }
-  const keys = entries.filter((name) => name.endsWith('.jsonl')).map((name) => name.slice(0, -'.jsonl'.length));
+  const keys = [...await activeMemoryGroups(), ...entries.filter((name) => /^p-[A-Za-z0-9_-]{1,64}\.jsonl$/.test(name)).map((name) => name.slice(0, -'.jsonl'.length))];
   // 顺序逐会话处理（for + await，不并发）：避免多会话同时提炼打爆 LLM 配额与本地 IO
   for (const sessionKey of keys) {
-    const state = await readState(sessionKey);
-    const newMessages = await readMessagesSince(sessionKey, state.distillMark ?? 0, 100);
-    if (!shouldDistill(newMessages, state, Date.now(), config)) continue;
+    const prepared = sessionKey.startsWith('g-') ? await prepareMemoryScan(sessionKey, nowMs) : { state: await readState(sessionKey), closing: false };
+    if (!prepared) continue;
+    const { state, closing } = prepared;
+    const newMessages = await readMemoryMessages(sessionKey, state);
+    if (!newMessages.length || (!closing && !shouldDistill(newMessages, state, nowMs, config))) continue;
     await distillSession(sessionKey, newMessages);
   }
 }

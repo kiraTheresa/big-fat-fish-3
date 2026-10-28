@@ -78,6 +78,19 @@ async function run(event) {
   return replies;
 }
 
+test('记忆活跃计时只由已寻址、已知且有权限的指令刷新', async () => {
+  let activated = 0;
+  const invoke = (event) => command.handle({ event, sessionKey: 'g-activity-command', reply: async () => {}, activateMemory: async () => { activated++; } });
+  await invoke(groupEvent('/help', 901, 9003));
+  await invoke(groupEvent('/unknown', 901, 9003, '成员', true));
+  await invoke(groupEvent('/', 901, 9003, '成员', true));
+  await invoke(groupEvent('/reset', 901, 9003, '成员', true));
+  await invoke(groupEvent('/persona reset', 901, 9003, '成员', true));
+  assert.equal(activated, 0);
+  await invoke(groupEvent('/help', 901, 9003, '成员', true));
+  assert.equal(activated, 1);
+});
+
 const personaFile = (key, name) => join(PERSONA_DIR, key, name);
 const stateFile = (key) => join(DATA_DIR, 'session-state', `${key}.json`);
 const msgFile = (key) => join(DATA_DIR, 'messages', `${key}.jsonl`);

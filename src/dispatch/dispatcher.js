@@ -11,6 +11,7 @@ import { appendEvent } from '../store/event-store.js';
 import { normalizeOneBotEvent } from '../protocol/onebot.js';
 import { logger } from '../utils/logger.js';
 import { canUseBot, observeUser } from '../platform/permissions.js';
+import { markMemoryInvocation } from '../distill/activity.js';
 
 export async function dispatch(input) {
   const normalized = normalizeOneBotEvent(input);
@@ -29,6 +30,7 @@ export async function dispatch(input) {
 
   // 存储钩子（§6.3 旁听者）：打标后、进触发器链前，不 await，写失败只记 WARN
   const snapshot = {
+    receivedAt: Date.now(),
     sessionKey,
     time: event.time,
     message_id: event.message_id,
@@ -46,6 +48,10 @@ export async function dispatch(input) {
   const ctx = {
     event,
     sessionKey,
+    async activateMemory() {
+      try { await markMemoryInvocation(sessionKey, snapshot.receivedAt); }
+      catch (err) { logger.warn(`[distill] 活跃状态保存失败: ${err.code ?? 'storage error'}`); }
+    },
     reply(text) {
       // 出站回复回存（add-aichat-mvp spec，bot-core-design §6.3 预留条款）：
       // 与入站同会话文件追加一行，bot:true 标记（无 message_id，发送前落盘）

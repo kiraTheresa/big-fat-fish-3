@@ -8,6 +8,7 @@ export default {
     return event.raw_message?.trim() === 'ping';
   },
   async handle(ctx) {
+    await ctx.activateMemory?.();
     await ctx.reply('pong');
   },
 };

@@ -641,6 +641,8 @@ test('startDistiller/stopDistiller 冒烟：50ms 周期能触发 scanOnce；stop
   await writeMessages(key, rows);
 
   const patch = { character: '# 大肥鱼\n\n调度器提炼的版本。', memory: '' };
+  const { markMemoryInvocation } = await import('../src/distill/activity.js');
+  await markMemoryInvocation(key, oldTime * 1000, oldTime * 1000);
   llmServer.setReply(JSON.stringify(patch));
 
   const reqBefore = llmServer.requests.length;
