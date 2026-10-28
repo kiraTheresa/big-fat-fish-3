@@ -1,0 +1,14 @@
+{
+  "draw": {
+    "description": "当前用户明确要求画图或生成图片时调用；能力询问、否定、假设或引用不执行。按返回结果报告阶段；simulated:true 仅模拟，没有生成或发送真实图片。",
+    "parameterDescription": "完整图片描述，保留用户指定的主体、风格、构图、文字和限制；只补充相容细节，不添加无关人设元素"
+  },
+  "remember_fact": {
+    "description": "用户明确要求长期记住事实时必须调用此工具，不能只口头说记住。临时要求、查询、引用和行为指令不保存。成功后才确认；sandbox:true 仅保存测试记忆。",
+    "parameterDescription": "要长期记住的事实，明确事实主体及必要的时间、条件；不混淆发言者与被提及的人"
+  },
+  "recall_memory": {
+    "description": "读取当前会话已保存的记忆。仅在需要查看记忆时调用，已在上下文提供的内容无需重复查询。",
+    "parameterDescription": ""
+  }
+}

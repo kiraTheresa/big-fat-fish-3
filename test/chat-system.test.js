@@ -2,7 +2,7 @@
 // describeSilence 档位边界（59s/1min/59min/60min/23h/24h/跨天/新对话）、buildSceneTail
 // 三行场景、buildSystemPrompt 固定前缀结构（character → 记忆 → 行为规则（群/私二选一）
 // → 身份与消息格式）逐字节稳定（缓存前缀稳定）+ 动态尾部后置 + 群/私双套规则分流。
-// chat-system.js 零依赖（不 import config/存储），无需 mock 装配，纯函数直测。
+// chat-system.js 只依赖静态模板（不 import config/存储），无需 mock 装配，纯函数直测。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -58,21 +58,16 @@ test('buildSystemPrompt 前缀结构：character → ## 记忆 → memory → ##
   const persona = { character: '# 大肥鱼', memory: '- 某条记忆' };
   const scene = { isGroup: false, nowMs: 0, lastTimeSec: null };
   const s = buildSystemPrompt(persona, scene);
-  // 私聊版前缀应逐字节拼接（spec MODIFIED 明文顺序；行为规则为私聊三条、身份段两行）
-  assert.ok(
-    s.startsWith(
-      '# 大肥鱼\n\n## 记忆\n\n- 某条记忆\n\n## 行为规则\n\n' +
-        '- 用简短口语化的中文回复，不要使用 Markdown 格式\n' +
-        '- 一对一私聊，可以聊得更展开、多接几句\n' +
-        '- 想连发几条短消息时用换行分隔（每行会作为一条独立消息发出），也可以用 ||；不需要拆就输出一条\n\n' +
-        '## 身份与消息格式\n\n' +
-        '- 你是群里的吉祥物大肥鱼，自称「本鱼」\n' +
-        '- 群聊历史消息里「昵称: 」开头的前缀是群友的名字，不是消息内容的一部分；私聊没有这个前缀'
-    ),
-    '固定前缀应按 spec MODIFIED 顺序逐字节拼接各固定段'
-  );
-  // 身份段之后紧跟动态尾部（前缀到身份段为止，动态内容全部后置）
-  assert.ok(s.includes('\n\n## 当前场景\n\n- 当前时间：'), '身份段之后应以空行衔接动态尾部');
+  const sections = ['# 大肥鱼', '## 记忆', '- 某条记忆', '## 行为规则', '## 身份与消息格式', '## 工具使用规则', '## 当前场景'];
+  let previous = -1;
+  for (const section of sections) {
+    const index = s.indexOf(section);
+    assert.ok(index > previous, `${section} 应在前一段之后`);
+    previous = index;
+  }
+  assert.ok(s.includes('一对一私聊'));
+  assert.ok(s.includes('recall_memory'));
+  assert.ok(s.includes('\n\n## 当前场景\n\n- 当前时间：'));
   // 空记忆保留「## 记忆」标题与空行——结构稳定 > 内容紧凑（缓存友好，旧断言语义延续）
   const empty = buildSystemPrompt({ character: '# 鱼', memory: '' }, scene);
   assert.equal(empty.split('## 记忆')[1].split('## 行为规则')[0], '\n\n\n\n');

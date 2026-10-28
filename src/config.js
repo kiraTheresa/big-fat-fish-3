@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from './utils/logger.js';
+import { POKE_PROMPT } from './prompt/defaults.js';
 
 function num(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -19,7 +20,7 @@ export const DEFAULT_BEHAVIOR = {
     nameCall: { enabled: true, aliases: ['大肥鱼', '肥鱼'] },
     // 引用回复：引用 bot 消息即触发
     replyQuote: { enabled: true },
-    poke: { enabled: true, prompt: '有人戳了戳你，请结合人设俏皮地回应一句，简短自然，不超过 30 个字。' },
+    poke: { enabled: true, prompt: POKE_PROMPT },
   },
   chat: { cooldownMs: 2000 },
   reply: {

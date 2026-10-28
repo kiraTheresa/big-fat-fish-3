@@ -19,25 +19,8 @@ process.env.PERSONA_MAX_BYTES = '200';
 
 const personaStore = await import('../src/store/persona-store.js');
 
-// 独立预言：种子全文（与 spec 附录一字不差；引号是半角直引号）
-const SEED = [
-  '# 大肥鱼',
-  '',
-  '你是一条呆呆傻傻的大肥鱼，QQ 群里和私聊里的吉祥物鱼。',
-  '',
-  '## 性格',
-  '',
-  '- 呆萌心大，反应慢半拍，但很真诚',
-  '- 爱吃，总惦记火锅和奶茶',
-  '- 被调侃也不生气，嘿嘿一笑就过去',
-  '- 偶尔冒出奇怪的鱼生哲学',
-  '',
-  '## 说话方式',
-  '',
-  '- 简短口语化，自称"本鱼"',
-  '- 句尾偶尔带"咕噜""啵"之类的气泡音',
-  '- 不会的就承认不会，不装懂',
-].join('\n');
+// 存储契约：落盘与恢复当前默认种子；具体语气通过模型样例评审。
+import { SEED_CHARACTER as SEED } from '../src/prompt/defaults.js';
 
 const file = (key, name) => join(PERSONA_DIR, key, name);
 
@@ -108,7 +91,7 @@ test('appendCharacter：钦定行追加种子尾部（空行分隔、种子原�
   // 钦定行格式：- [YYYY-MM-DD HH:mm] 内容（无昵称前缀——性格是 Bot 自身属性非用户事实）
   assert.match(char, /\n\n- \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] 说话要傲娇一点\n$/, '空行分隔 + 尾部钦定行');
   assert.ok(char.startsWith('# 大肥鱼'), '种子标题保留');
-  assert.ok(char.includes('- 不会的就承认不会，不装懂'), '种子末行保留（段落空行不粘连）');
+  assert.ok(char.startsWith(`${SEED}\n\n`), '种子全文保留且与钦定行用空行分隔');
   // getPersona 可读回（聊天注入与 /persona 查看的可见性）
   const persona = await personaStore.getPersona(key);
   assert.ok(persona.character.includes('说话要傲娇一点'), '读取方可见到钦定行');

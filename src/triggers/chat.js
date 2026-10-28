@@ -22,6 +22,7 @@ import { config } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { getPublishedPrompt } from '../prompt/store.js';
 import { buildChatRequest } from '../prompt/builder.js';
+import { POKE_SYSTEM_TEMPLATE } from '../prompt/defaults.js';
 import { runToolConversation } from '../prompt/runner.js';
 import { saveRun } from '../prompt/traces.js';
 import { deliverGeneratedImage } from '../tools/deliver-image.js';
@@ -113,7 +114,7 @@ export default {
       getPersona(sessionKey, settings.prompts.seed), readState(sessionKey), readRecentMessages(sessionKey, 1000),
     ]);
     const isGroup = event.message_type === 'group';
-    const systemSuffix = poke ? `\n\n## 戳一戳回复\n${config.behavior.trigger.poke.prompt}\n本轮只回复一句短话，不调用工具，不分段。` : '';
+    const systemSuffix = poke ? '\n\n' + POKE_SYSTEM_TEMPLATE.replace('{{prompt}}', () => config.behavior.trigger.poke.prompt) : '';
     const built = buildChatRequest(settings, { persona, records, state, event, text: content, systemSuffix });
     if (poke) {
       delete built.request.tools;
