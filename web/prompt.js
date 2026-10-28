@@ -36,8 +36,20 @@ const statuses = { running: '运行中', completed: '已完成，待评审', fai
 const button = (action, label, extra = '') => `<button type="button" class="button small ${action === 'publish' ? 'primary' : ''}" data-pp-action="${action}" ${extra}>${label}</button>`;
 const checkbox = (path, label, checked) => `<label class="pp-check"><input type="checkbox" data-pp-field="${path}" ${checked ? 'checked' : ''}>${escape(label)}</label>`;
 const textarea = (path, value, rows = 15) => `<textarea spellcheck="false" class="pp-textarea" rows="${rows}" data-pp-field="${path}">\n${escape(value)}</textarea>`;
+const STYLE_KEY = 'big-fat-fish.prompt-style';
+const styles = {
+  workbench: { label: '工作台', description: '紧凑对齐，专注编辑与比较' },
+  relaxed: { label: '舒展', description: '留出阅读空间，保留轻盈玻璃感' },
+};
+function readStyle() {
+  try {
+    const saved = localStorage.getItem(STYLE_KEY);
+    return Object.hasOwn(styles, saved) ? saved : 'workbench';
+  } catch { return 'workbench'; }
+}
 
 export function createPromptConsole({ api, state: appState, toast }) {
+  let appearance = readStyle();
   let s = {};
   let listeners;
   let timer;
@@ -48,6 +60,15 @@ export function createPromptConsole({ api, state: appState, toast }) {
   const current = () => appState.page === 'prompt' && !!appState.token;
   const setDirty = () => { appState.dirty = true; updateStatus(); };
   const setValue = (path, value) => { const keys = path.split('.'); const last = keys.pop(); let obj = s.config; for (const key of keys) obj = obj[key]; obj[last] = value; };
+  function switchStyle(value) {
+    if (!Object.hasOwn(styles, value)) return;
+    appearance = value;
+    // Keep the same DOM: drafts, raw JSON experiments, selection, details and test runs survive.
+    $('#prompt-console').dataset.promptStyle = value;
+    root.querySelectorAll('[data-pp-style]').forEach((el) => el.setAttribute('aria-pressed', String(el.dataset.ppStyle === value)));
+    $('#pp-style-description').textContent = styles[value].description;
+    try { localStorage.setItem(STYLE_KEY, value); } catch { /* Restricted storage still allows in-memory switching. */ }
+  }
   function editor() {
     const [key, title, hint] = sections.find((v) => v[0] === s.section);
     let body;
@@ -68,7 +89,8 @@ export function createPromptConsole({ api, state: appState, toast }) {
     return changes.length ? `<p class="field-hint">${changes.length} 个字段有变化。发布前检查旧值与新值。</p>${changes.map((d) => `<details class="pp-diff"><summary>${escape(d.path)}</summary><div class="pp-diff-columns"><div><small>已发布</small><pre>${escape(d.before)}</pre></div><div><small>草稿</small><pre>${escape(d.after)}</pre></div></div></details>`).join('')}` : '<p class="field-hint">草稿与已发布配置一致。</p>';
   }
   function shell() {
-    return `<div id="prompt-console">
+    return `<div id="prompt-console" data-prompt-style="${appearance}">
+      <div class="pp-appearance-bar"><p id="pp-style-description">${styles[appearance].description}</p><div class="pp-style-switch" role="group" aria-label="Prompt 页面风格" aria-describedby="pp-style-description">${Object.entries(styles).map(([key, style]) => `<button type="button" data-pp-style="${key}" aria-pressed="${key === appearance}">${style.label}</button>`).join('')}</div></div>
       <section class="panel pp-versionbar"><div><span class="badge">全局配置</span> <strong>已发布 v${s.workspace.published.number}</strong><p id="pp-save-state" class="field-hint"></p></div><div class="pp-row">${button('save', '保存草稿', 'id="pp-save"')}${button('reload', '重新读取')}${button('publish', '发布版本', 'id="pp-publish" disabled')}</div></section>
       <div class="pp-flow" aria-label="发布流程"><span>① 编辑草稿</span><span>→</span><span>② 运行测试</span><span>→</span><span>③ 评审通过</span><span>→</span><span>④ 发布版本</span></div>
       <p id="pp-error" class="notice danger" role="alert" hidden></p>
@@ -201,7 +223,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
       return;
     }
     appState.saving = true; updateStatus();
-    const controls = [...root.querySelectorAll('input,select,textarea,button')];
+    const controls = [...root.querySelectorAll('input,select,textarea,button')].filter((el) => !el.hasAttribute('data-pp-style'));
     const previous = controls.map((el) => el.disabled); controls.forEach((el) => { el.disabled = true; });
     try {
       if (name === 'save') {
@@ -265,6 +287,8 @@ export function createPromptConsole({ api, state: appState, toast }) {
     root.addEventListener('input', onInput, { signal: listeners.signal });
     root.addEventListener('change', onInput, { signal: listeners.signal });
     root.addEventListener('click', (event) => {
+      const styleButton = event.target.closest('[data-pp-style]');
+      if (styleButton) { switchStyle(styleButton.dataset.ppStyle); return; }
       const tab = event.target.closest('[data-pp-section]');
       if (tab && !appState.saving) {
         if (s.invalidJson) { showError(new Error('请先校验并应用配置 JSON，或重新读取以放弃修改。')); return; }

@@ -9,6 +9,8 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ### feat
 
+- Prompt-page workbench and relaxed appearance presets, with a one-click switch that preserves draft/test state and remembers only the browser appearance preference.
+
 - Natural-language drawing and memory tools after the existing wake-up rules, with server-bound scope, argument checks, bounded tool loops and per-turn duplicate protection.
 - Prompt console with layered editing, explainable history filtering, request JSON, isolated session snapshots, real-model tests, manual review, revision-bound publishing and rollback through drafts. Initial persona changes apply only to new/reset sessions.
 
