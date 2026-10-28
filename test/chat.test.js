@@ -298,19 +298,32 @@ test('at 开关关闭：群聊 @bot 不触发（spec「条件全关」场景）�
   }
 });
 
-test('空文本忽略：仅 @bot 无文本 → 不调 LLM、无出站帧', { timeout: 10000 }, async () => {
-  onebotServer.injectEvent(groupEvent(null, 3201, 3202, '只@君', SELF_ID));
-  await delay(400);
-  assert.equal((await readMemoryState('g-3201')).memoryActivity, undefined);
+test('仅 @bot 或 @ 后空白也触发对话、回复及记忆活跃状态', { timeout: 10000 }, async () => {
+  for (const [text, groupId] of [[null, 3201], ['  \n ', 3203]]) {
+    const event = groupEvent(text, groupId, 3202, '只@君', SELF_ID);
+    const baseline = onebotServer.frames.length;
+    onebotServer.injectEvent(event);
+    const frame = await waitNextFrame(baseline, (f) => f.action === 'send_msg' && f.params?.group_id === groupId);
+    assert.deepEqual(frame.params.message, [
+      { type: 'reply', data: { id: String(event.message_id) } },
+      { type: 'text', data: { text: 'MOCK_LLM_REPLY' } },
+    ]);
+    const request = llmServer.requests.at(-1).body;
+    assert.equal(request.messages.at(-1).content, '只@君: （对方 @ 了你，没有附加文字，请简短回应。）');
+    assert.ok((await readMemoryState(`g-${groupId}`)).memoryActivity);
+  }
+});
 
-  assert.ok(
-    !llmServer.requests.some((r) => JSON.stringify(r.body).includes('只@君')),
-    '纯 @bot 无文本不得调 LLM（占位文本不得混入 prompt）'
-  );
-  assert.ok(
-    !onebotServer.frames.some((f) => f.params?.group_id === 3201),
-    '纯 @bot 无文本不得产生出站帧'
-  );
+test('空文本不扩大触发范围：@ 他人、@ 全体、关闭 @ 开关和空私聊仍静默', async () => {
+  const before = llmServer.requests.length;
+  await dispatcher.dispatch(groupEvent(null, 3211, 3212, '路人', 99999));
+  await dispatcher.dispatch(groupEvent(null, 3213, 3212, '路人', 'all'));
+  await dispatcher.dispatch(privateEvent('  ', 3214));
+  const saved = config.behavior.trigger.at.enabled;
+  config.behavior.trigger.at.enabled = false;
+  try { await dispatcher.dispatch(groupEvent(null, 3215, 3212, '路人', SELF_ID)); }
+  finally { config.behavior.trigger.at.enabled = saved; }
+  assert.equal(llmServer.requests.length, before);
 });
 
 test('冷却跳过：同一会话冷却窗口内第二条消息静默（无 LLM 调用、无回复）', { timeout: 10000 }, async () => {

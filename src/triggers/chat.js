@@ -29,6 +29,7 @@ import { appendMessage, readRecentMessages } from '../store/message-store.js';
 import { getPersona } from '../store/persona-store.js';
 import { readState } from '../store/session-state.js';
 import { extractText } from '../utils/extract-text.js';
+import { matchAt } from '../utils/at.js';
 import { extractImages } from '../utils/extract-images.js';
 import { fetchImageAsB64, mimeOfB64 } from '../utils/fetch-image.js';
 import { callApi } from '../connection/onebot.js';
@@ -87,7 +88,10 @@ export default {
   async handle(ctx, { poke = false } = {}) {
     const { event, sessionKey } = ctx;
 
-    const content = poke ? '[戳一戳] 戳了戳你' : extractText(event);
+    const text = extractText(event);
+    // @ 本身就是呼唤；保留纯文本提取语义，在对话入口补充动作描述。
+    const content = poke ? '[戳一戳] 戳了戳你' : text ||
+      (event.message_type === 'group' && matchAt(event) ? '（对方 @ 了你，没有附加文字，请简短回应。）' : '');
     if (content === '') {
       logger.info(`[chat] ${sessionKey} 消息无文本内容，忽略`);
       return;
