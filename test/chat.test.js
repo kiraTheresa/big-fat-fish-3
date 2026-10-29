@@ -154,7 +154,7 @@ test('私聊触发：LLM 收到 [system, user]，回复出站，会话文件含 
   assert.equal(frame.params.message, 'MOCK_LLM_REPLY');
 
   const req = llmServer.requests.at(-1);
-  assert.equal(req.body.model, 'deepseek-chat');
+  assert.equal(req.body.model, 'deepseek-flash');
   assert.deepEqual(req.body.messages, [
     { role: 'system', content: req.body.messages[0].content },
     { role: 'user', content: '你好' },
@@ -516,7 +516,7 @@ test('usage 落盘：LLM 带 usage 记一行 kind:chat（token 数对应）；us
     assert.equal(lines.length, 1, '新会话应恰记一行');
     const rec = JSON.parse(lines[0]);
     assert.equal(rec.kind, 'chat');
-    assert.equal(rec.model, 'deepseek-chat');
+    assert.equal(rec.model, 'deepseek-flash');
     assert.equal(rec.prompt_tokens, 101);
     assert.equal(rec.completion_tokens, 202);
     assert.equal(rec.total_tokens, 303);

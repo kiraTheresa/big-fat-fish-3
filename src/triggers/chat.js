@@ -15,9 +15,9 @@
 //   || 分段连发）→ 存储合并 + 逐条发送；
 //   所有模型请求在统一 gateway 记录成功/失败及用量；
 //   LLM 失败/超时 → 固定兜底文案 + WARN（兜底不走加工链，告警类消息无需拟人延迟）。
-// 识图分流（upgrade-vision）：消息带图（或同会话同用户时间窗内近图）→「在看」提示 →
-//   现拉 base64（不落盘）→ 最后一条 user content 换块数组、模型换 deepseek-flash；
-//   任一步失败回退纯文本路径（看图是增强不是依赖）；DEEPSEEK_VISION_MODEL 空 = 关闭。
+// 图片上下文：消息带图（或同会话同用户时间窗内近图）→ 现拉 base64（不落盘）→
+//   最后一条 user content 换块数组，与文字聊天共用模型，不另发识图提示；
+//   图片路径失败回退纯文本；Prompt 的 context.vision 控制是否附图。
 import { config } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { getPublishedPrompt } from '../prompt/store.js';
@@ -40,10 +40,9 @@ import { chatReplyChain } from './chat-reply-chain.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 
 const FALLBACK_REPLY = 'AI 开小差了，稍后再试～';
-const LOOKING_IMAGE_REPLY = '本鱼凑近看看这张图哦，稍等～';
 
 // 自带图优先；私聊从已落盘的同会话记录取近图，群聊沿用 OneBot 历史查询。
-// 只定 URL 不下载（下载在「在看」提示之后）；无图源 → null。
+// 只定 URL 不下载；无图源 → null。
 async function resolveImageUrl(event, records, state) {
   const own = extractImages(event);
   if (own.length > 0) return own[0].data.url;
@@ -103,7 +102,7 @@ export default {
 
     const version = getPublishedPrompt();
     const settings = version.config;
-    const visionEnabled = !poke && settings.context.vision && config.deepseekVisionModel !== '';
+    const visionEnabled = !poke && settings.context.vision;
     const text = extractText(event);
     // @ 本身就是呼唤；保留纯文本提取语义，在对话入口补充动作描述。
     const content = poke ? '[戳一戳] 戳了戳你' : text ||
@@ -155,7 +154,7 @@ export default {
       },
       onImage: (b64, prompt) => deliverGeneratedImage(ctx, b64, prompt) };
 
-    // ---- 识图分流：图源判定 →「在看」提示 → 现拉 base64（不落盘）----
+    // ---- 图片上下文：图源判定 → 现拉 base64（不落盘）----
     // 任一步失败（无图源/历史查询挂/下载挂）均 visionB64=null，messages 原样走纯文本——
     // 看图是增强不是依赖。入站 raw_message 本就含 [CQ:image] 痕迹（dispatcher 已落盘），
     // 历史保持文字占位；命中近图窗口的追问会重新拉图，图片只附到本轮 user 消息。
@@ -163,7 +162,6 @@ export default {
     if (visionEnabled) {
       const imageUrl = await resolveImageUrl(event, records, state);
       if (imageUrl !== null) {
-        await ctx.reply(LOOKING_IMAGE_REPLY); // 过渡提示先出站，赶在拉图/视觉推理前
         try {
           visionB64 = await fetchImageAsB64(imageUrl, config.visionFetchTimeoutMs);
         } catch (err) {
@@ -174,16 +172,14 @@ export default {
 
     // 视觉路径：最后一条 user 的 content 换块数组（text + image_url data URL）。
     // 图只能放 user 消息（实测 system/assistant 带图 400）；历史保持纯文本。
-    // plainContent 留作 flash 失败时的还原保底
+    // plainContent 留作带图请求失败时的还原保底
     const lastUser = messages.at(-1);
     const plainContent = lastUser.content;
-    let usedModel = config.deepseekModel;
     if (visionB64 !== null) {
       lastUser.content = [
         { type: 'text', text: plainContent },
         { type: 'image_url', image_url: { url: `data:${mimeOfB64(visionB64)};base64,${visionB64}` } },
       ];
-      usedModel = config.deepseekVisionModel;
     }
 
     // 统一出口：存储职责 + 发送职责。与 dispatcher 的 ctx.reply 分道——ctx.reply 留给
@@ -212,12 +208,11 @@ export default {
       let reply;
       if (visionB64 !== null) {
         try {
-          ({ content: reply } = await runToolConversation({ ...built.request, model: usedModel, messages }, settings, { ...toolContext, kind: 'vision' }, { trace }));
+          ({ content: reply } = await runToolConversation({ ...built.request, messages }, settings, { ...toolContext, kind: 'vision' }, { trace }));
         } catch (err) {
           if (err.toolStarted) throw err; // 已执行工具后不能回退重跑，否则可能重复副作用
-          // flash 挂了不整个对话兜底：还原纯文本、换 deepseek-chat 重试一次（分流策略拍板）
-          logger.warn(`[chat] 视觉模型调用失败，回退纯文本: ${err.message}`);
-          usedModel = config.deepseekModel;
+          // 保留一次纯文本回退，同一模型重试，不再按图片切换模型。
+          logger.warn(`[chat] 带图请求失败，回退纯文本: ${err.message}`);
         }
       }
       if (reply === undefined) {

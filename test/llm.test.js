@@ -44,7 +44,7 @@ test('成功：resolve { content, usage }，usage 原样透传，请求携带 Be
   assert.equal(req.method, 'POST');
   assert.equal(req.url, '/chat/completions');
   assert.equal(req.headers.authorization, 'Bearer test-key');
-  assert.equal(req.body.model, 'deepseek-chat');
+  assert.equal(req.body.model, 'deepseek-flash');
   assert.deepEqual(req.body.messages, messages);
 });
 

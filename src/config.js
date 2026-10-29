@@ -103,7 +103,7 @@ export const config = {
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
   // OpenAI 兼容接口地址
   deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
-  deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
+  deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-flash',
   // LLM 调用超时（ms）
   chatTimeoutMs: num(process.env.CHAT_TIMEOUT_MS, 60000),
   // 对话/识图默认流式接收；不兼容的中转可设 false，提炼仍使用完整 JSON。
@@ -112,10 +112,7 @@ export const config = {
   chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
   // 会话冷却启动初值（ms）；运行时使用 behavior.chat.cooldownMs，支持面板热更新
   chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 2000),
-  // ---- 识图（chat 触发器图分流；DeepSeek 视觉款，与上共用同一 Key/BaseUrl）----
-  // 视觉模型（留空 = 识图关闭，同 deepseekApiKey 模式；deepseek-flash 实测可看图，
-  // 单图约 1024 tokens，图只能放 user 消息块——system/assistant 带图 400）
-  deepseekVisionModel: process.env.DEEPSEEK_VISION_MODEL ?? 'deepseek-flash',
+  // ---- 识图（与文字聊天共用模型；是否附图由 Prompt 的 context.vision 控制）----
   // 周围图时间窗（ms）：消息不带图时，同会话同用户该窗口内最新一条图可被识图引用
   visionImageWindowMs: num(process.env.VISION_IMAGE_WINDOW_MS, 120000),
   // 图片现拉超时（ms）：QQ CDN rkey URL 直接 GET（带 UA 防 403，实测可下）

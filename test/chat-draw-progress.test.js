@@ -34,7 +34,7 @@ const mock = createServer(async (req, res) => {
 await new Promise((resolve) => mock.listen(0, '127.0.0.1', resolve));
 Object.assign(process.env, {
   DATA_DIR: root, PERSONA_DIR: join(root, 'personas'), USAGE_DIR: join(root, 'usage'), CONFIG_PATH: join(root, 'absent.json'),
-  DEEPSEEK_API_KEY: 'test-chat', DEEPSEEK_BASE_URL: `http://127.0.0.1:${mock.address().port}`, DEEPSEEK_VISION_MODEL: '', CHAT_STREAM: 'true',
+  DEEPSEEK_API_KEY: 'test-chat', DEEPSEEK_BASE_URL: `http://127.0.0.1:${mock.address().port}`, CHAT_STREAM: 'true',
   IMAGE_API_KEY: 'test-image', IMAGE_API_BASE_URL: `http://127.0.0.1:${mock.address().port}`, IMAGE_TIMEOUT_MS: '3000', CHAT_TIMEOUT_MS: '3000',
   ONEBOT_WS_URL: onebotServer.url, ONEBOT_ACCESS_TOKEN: '', SEND_INTERVAL_MS: '1',
 });

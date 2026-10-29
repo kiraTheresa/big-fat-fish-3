@@ -102,7 +102,6 @@ test('冷却：两秒内聊天与戳一戳共用窗口，两秒后恢复', async
   assert.equal(llm.requests.length, before);
   await new Promise((resolve) => setTimeout(resolve, 2050));
   config.behavior.reply.delay.enabled = false;
-  config.deepseekVisionModel = '';
   await dispatch(message);
   assert.equal(llm.requests.length, before + 1);
   await dispatch(event({ group_id: 30003 }));

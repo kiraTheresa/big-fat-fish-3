@@ -58,7 +58,7 @@ export async function initializeSettings(listener = () => {}) {
 export function getSettings() {
   return {
     revision: current.revision, behavior: structuredClone(current.behavior), policy: structuredClone(current.policy),
-    connection: { wsUrl: safeUrl(config.wsUrl), model: config.deepseekModel, visionModel: config.deepseekVisionModel, imageModel: config.imageModel, imageSize: config.imageSize, imageApiBaseUrl: safeUrl(config.imageApiBaseUrl), deepseekBaseUrl: safeUrl(config.deepseekBaseUrl) },
+    connection: { wsUrl: safeUrl(config.wsUrl), model: config.deepseekModel, imageModel: config.imageModel, imageSize: config.imageSize, imageApiBaseUrl: safeUrl(config.imageApiBaseUrl), deepseekBaseUrl: safeUrl(config.deepseekBaseUrl) },
     capabilities: { chatConfigured: !!config.deepseekApiKey, drawConfigured: !!config.imageApiKey, secretsEditable: false, hotReload: true },
   };
 }

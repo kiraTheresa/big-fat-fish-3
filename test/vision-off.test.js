@@ -1,9 +1,7 @@
-// 识图关闭验证（upgrade-vision）：DEEPSEEK_VISION_MODEL='' → 带图消息仍走纯文本路径——
-// model=deepseek-chat、最后一条 user content 为 string、无「在看」提示帧。
-// 与 draw-off.test.js 同模式（开关用例独立文件：config 是启动快照，一进程一套 env）。
+// Prompt 的 context.vision=false 时仅发送文字，仍使用统一 Flash 模型。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { rm, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startMockServer } from './mock-onebot.js';
 import { startLlmServer } from './llm-server.js';
@@ -40,7 +38,6 @@ process.env.USAGE_DIR = join(DATA_DIR, 'usage');
 process.env.DEEPSEEK_API_KEY = 'test-key';
 process.env.DEEPSEEK_BASE_URL = llmServer.url;
 process.env.CHAT_TIMEOUT_MS = '500';
-process.env.DEEPSEEK_VISION_MODEL = ''; // 关闭识图（本文件唯一变量）
 process.env.CHAT_COOLDOWN_MS = '0';
 process.env.CONFIG_PATH = join(DATA_DIR, 'absent.json');
 
@@ -51,6 +48,15 @@ const { config } = await import('../src/config.js');
 const chat = (await import('../src/triggers/chat.js')).default;
 
 config.behavior.reply.delay.enabled = false;
+// 模拟已发布的关闭识图配置，验证真实配置读取路径。
+const { getPublishedPrompt, initializePrompts } = await import('../src/prompt/store.js');
+const published = getPublishedPrompt();
+published.config.context.vision = false;
+await mkdir(join(DATA_DIR, 'management'), { recursive: true });
+await writeFile(join(DATA_DIR, 'management', 'prompts.json'), JSON.stringify({
+  schema: 1, published, versions: [published], draft: { config: published.config }, tests: [],
+}));
+await initializePrompts();
 
 after(async () => {
   await delay(SEND_INTERVAL_MS * 3);
@@ -75,7 +81,7 @@ for (;;) {
   }
 }
 
-test('识图关闭：带图消息纯文本路径，model=chat、content 为 string、无提示帧', { timeout: 10000 }, async () => {
+test('识图关闭：带图消息纯文本路径，model=flash、content 为 string、无提示帧', { timeout: 10000 }, async () => {
   const mark = onebotServer.frames.length;
   const reqMark = llmServer.requests.length;
   onebotServer.injectEvent({
@@ -95,7 +101,7 @@ test('识图关闭：带图消息纯文本路径，model=chat、content 为 stri
 
   await waitUntil(() => llmServer.requests.length > reqMark);
   const req = llmServer.requests.at(-1);
-  assert.equal(req.body.model, 'deepseek-chat');
+  assert.equal(req.body.model, 'deepseek-flash');
   assert.equal(typeof req.body.messages.at(-1).content, 'string');
   assert.equal(req.body.messages.at(-1).content, '识别');
   assert.equal(
