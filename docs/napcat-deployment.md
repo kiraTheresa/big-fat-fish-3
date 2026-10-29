@@ -1,15 +1,61 @@
-# NapCat 登录与自动连接
+# NapCat 与 Bot 部署
+
+[← 文档目录](README.md)
 
 `docker compose restart napcat` 重启原容器；`docker compose up -d napcat` 在配置变化时可能重建容器。两者都复用本项目 `napcat/` 下的登录数据。保留目录并不代表 QQ 会话永不过期，手机退出设备、服务端失效或安全验证仍可能要求扫码。
 
 ## 首次部署
 
-1. 复制 `.env.example` 为 `.env`，设置非空 `ONEBOT_ACCESS_TOKEN`（可用 `openssl rand -hex 32` 生成），填写准备登录的 `NAPCAT_ACCOUNT`。
-2. 设置固定的 `NAPCAT_HOSTNAME`，之后保持不变。运行 `docker compose up -d napcat`。
-3. 打开 `http://localhost:6099/webui` 完成首次扫码。没有有效登录记录时，指定账号也不能跳过扫码。
-4. Bot 在宿主机使用 `npm start`，或使用 `docker compose up -d --build bot`。二选一，避免两个 Bot 同时处理消息。
+需要 Docker 和 Docker Compose。以下命令都在项目根目录执行；已有配置请保留。
+
+```sh
+cp -n .env.example .env
+cp -n config.example.json config.json
+```
+
+编辑 `.env`，配置项以 [模板](../.env.example) 为准：
+
+| 配置 | 用途 |
+| --- | --- |
+| `NAPCAT_ACCOUNT`、`NAPCAT_HOSTNAME` | 准备登录的 QQ 号和固定设备主机名，部署后保持主机名不变 |
+| `ONEBOT_ACCESS_TOKEN` | Bot 与 NapCat 共用的非空连接令牌，Compose 会同步到 WS 配置 |
+| `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` | 聊天、识图与记忆提炼使用的接口及模型；识图需模型支持图片输入 |
+| `IMAGE_API_KEY`、`IMAGE_API_BASE_URL`、`IMAGE_MODEL` | 独立绘图接口，Key 留空则禁用绘图 |
+| `ADMIN_TOKEN` | 至少 24 字符的随机工作台令牌，留空则不启动管理网站 |
+| `ADMIN_QQ` | 可选，逗号分隔的肥鱼管理员 QQ 初值，用于群聊管理指令 |
+
+可以分别执行 `openssl rand -hex 32` 生成连接令牌和管理令牌。确认 `config.json` 是文件后启动：
+
+```sh
+docker compose up -d --build
+```
+
+打开 [NapCat WebUI](http://localhost:6099/webui)，按页面提示登录 WebUI，再完成 QQ 首次扫码。没有有效 QQ 登录记录时，指定账号也不能跳过扫码。
+
+配置 `ADMIN_TOKEN` 后，打开 [肥鱼工作台](http://127.0.0.1:3210) 并输入该令牌；网页默认只映射到宿主机回环地址。功能操作见 [管理说明](management.md)。
 
 正向连接方向：Bot → NapCat。容器内 Bot 连接 `ws://napcat:3001`；宿主机 Bot 使用 `.env` 的 `ONEBOT_WS_URL`，默认 `ws://localhost:3001`。Bot 已有断线自动重连，默认间隔 5 秒；NapCat 完成 QQ 登录并启动 WS 后即可接通。
+
+## 在宿主机开发
+
+使用 Node.js 22.9+，保留 NapCat 容器，Bot 在容器或宿主机运行二选一。同一数据目录不能启动两个 Bot。
+
+```sh
+docker compose stop bot
+docker compose up -d napcat
+npm ci
+npm run dev
+```
+
+`npm run dev` 监视源码并重启；不需要监视时使用 `npm start`。修改 `.env` 后重新启动进程。开发与测试入口见 [架构文档](architecture.md#本地开发与验证)。
+
+## 更新与排查
+
+修改源码或默认 Prompt 后，运行 `docker compose up -d --build bot` 重建 Bot。只修改 `.env` 时运行 `docker compose up -d bot`；同时修改连接令牌时也需 `docker compose up -d napcat`。单纯 `restart` 不会重新加载容器环境。
+
+`docker compose ps` 查看容器状态，`docker compose logs --tail=100 bot` 查看连接及启动结果。连接成功后可在 QQ 发 `ping` 检查收发链路，再按 [使用指南](usage.md) 测试聊天。只收到 `pong` 不能证明模型接口已正常工作。
+
+Bot 数据默认在 `data/`，QQ 登录数据在 `napcat/`；备份时停止 Bot 并复制完整配置和数据，自定义路径也需一起保存，具体见 [持久化说明](management.md#持久化)。
 
 ## 启动时自动完成的配置
 
