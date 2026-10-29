@@ -4,6 +4,7 @@ import { redactText } from '../utils/logger.js';
 
 // A single loop for production and test requests. No automatic replay after side effects.
 export async function runToolConversation(request, settings, context, { trace = [], completion = chatCompletion, execute = executeTool } = {}) {
+  context = { ...context, memeTurn: context.memeTurn ?? {} };
   const messages = structuredClone(request.messages);
   const allowed = new Set((request.tools ?? []).map((t) => t.function.name));
   const memo = new Map();
@@ -13,11 +14,12 @@ export async function runToolConversation(request, settings, context, { trace = 
   try {
     for (let round = 0; round <= settings.execution.maxToolRounds; round++) {
       const exhausted = round === settings.execution.maxToolRounds || count >= settings.execution.maxToolCalls;
-      const result = await completion(messages, { model: request.model, kind: context.kind ?? 'chat', sessionKey: context.sessionKey, tools: request.tools, toolChoice: exhausted ? 'none' : undefined,
+      const result = await completion(messages, { model: request.model, kind: context.kind ?? 'chat', sessionKey: context.sessionKey, tools: request.tools, toolChoice: exhausted ? 'none' : undefined, allowEmptyContent: context.memeTurn.sent === true,
         onAttempt: (entry) => trace.push({ ...entry, round }) });
       const message = result.message ?? { role: 'assistant', content: result.content };
       const calls = message.tool_calls;
       if (!Array.isArray(calls) || !calls.length) {
+        if (context.memeTurn.sent && (message.content == null || message.content.trim?.() === '')) return { content: '', trace, toolStarted };
         if (typeof message.content !== 'string' || !message.content.trim()) throw new Error('模型未返回可发送的回复');
         return { content: message.content, trace, toolStarted };
       }

@@ -8,6 +8,7 @@ import { readState } from '../store/session-state.js';
 import { chatCompletion } from '../llm.js';
 import { buildMessages, parsePatch } from '../distill/distiller.js';
 import { buildChatRequest } from './builder.js';
+import { TOOL_PARAMETERS } from '../tools/registry.js';
 import { runToolConversation } from './runner.js';
 import { getPromptWorkspace, getPublishedPrompt, validatePromptConfig, recordPromptTest, promptError } from './store.js';
 import { listRuns, readRun, saveRun, sanitizeTrace, saveRunImage, readRunImage } from './traces.js';
@@ -77,7 +78,7 @@ export function createPromptService() {
       if (!msg || !['system', 'user', 'assistant', 'tool'].includes(msg.role) || !(typeof msg.content === 'string' || msg.content === null || Array.isArray(msg.content))) throw promptError('实验消息的 role / content 不正确');
     }
     if (override.tools !== undefined) {
-      if (!Array.isArray(override.tools) || override.tools.length > 3) throw promptError('工具列表不正确');
+      if (!Array.isArray(override.tools) || override.tools.length > Object.keys(TOOL_PARAMETERS).length) throw promptError('工具列表不正确');
       const allowed = new Set((original.tools ?? []).map((t) => t.function.name));
       if (override.tools.some((t) => t?.type !== 'function' || !allowed.has(t.function?.name))) throw promptError('实验 JSON 不能添加未启用的工具');
     }

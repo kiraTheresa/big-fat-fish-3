@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { buildSystemPrompt } from '../triggers/chat-system.js';
 import { toolAvailability, toolDefinitions } from '../tools/registry.js';
 import { chatStreamOptions } from '../utils/chat-stream.js';
+import { historyText } from '../utils/history-text.js';
 
 export function buildChatRequest(settings, { persona, records = [], state = {}, event, text, nowMs = Date.now(), systemSuffix = '' }) {
   const isGroup = event.message_type === 'group';
@@ -10,8 +11,9 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
   const effectivePersona = { character: persona?.character ?? settings.prompts.seed, memory: context.injectMemory ? persona?.memory ?? '' : '' };
   const system = buildSystemPrompt(effectivePersona, { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null }, settings.prompts) + systemSuffix;
   const inspections = previous.map((rec, index) => {
-    const raw = typeof rec.raw_message === 'string' ? rec.raw_message : '';
-    const image = /\[CQ:image[\s,\]]|^\[图片\]/.test(raw) || rec.message?.some?.((s) => s?.type === 'image');
+    const raw = historyText(rec);
+    const originalRaw = typeof rec.raw_message === 'string' ? rec.raw_message : '';
+    const image = /\[CQ:image[\s,\]]|^\[图片\]/.test(originalRaw) || rec.message?.some?.((s) => s?.type === 'image');
     const reason = state.resetAt !== undefined && rec.time < state.resetAt ? '早于会话重置'
       : context.maxAgeMinutes && rec.time * 1000 < nowMs - context.maxAgeMinutes * 60000 ? '超出时间范围'
         : rec.bot && !context.assistant ? '未选择机器人回复'
@@ -19,7 +21,7 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
             : !rec.bot && context.onlySpeaker && String(rec.user_id) !== String(event.user_id) ? '其他发言者'
               : image && !context.image ? '未选择图片相关消息'
                 : !image && !context.text ? '未选择文本消息'
-                  : context.excludeCommands && /^\s*(?:\[CQ:at[^\]]*\]\s*)*\//.test(raw) ? '命令消息' : '';
+                  : context.excludeCommands && /^\s*(?:\[CQ:at[^\]]*\]\s*)*\//.test(originalRaw) ? '命令消息' : '';
     return { index, role: rec.bot ? 'assistant' : 'user', type: image ? 'image-placeholder' : 'text', content: !rec.bot && isGroup ? `${rec.sender?.nickname ?? rec.user_id}: ${raw}` : raw, reason };
   });
   const eligible = inspections.filter((item) => !item.reason);

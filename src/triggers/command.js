@@ -67,6 +67,7 @@ export const COMMANDS = [
       for (const cmd of COMMANDS) {
         lines.push(`/${cmd.name} - ${cmd.summary}${cmd.adminOnly ? '（管理员）' : ''}`);
       }
+      lines.push('/meme help - 收藏、查找和发送当前会话的表情包');
       await ctx.reply(lines.join('\n'));
     },
   },

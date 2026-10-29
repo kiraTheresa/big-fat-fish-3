@@ -6,7 +6,7 @@ export const STANDARD_SEGMENT_TYPES = Object.freeze([
   'forward', 'node', 'xml', 'json',
 ]);
 export const STANDARD_POST_TYPES = Object.freeze(['message', 'notice', 'request', 'meta_event']);
-const PROCESSABLE_SEGMENTS = new Set(['text', 'at', 'reply', 'image']);
+const PROCESSABLE_SEGMENTS = new Set(['text', 'at', 'reply', 'image', 'face', 'mface']);
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validId = (value) => (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
   || (typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value));

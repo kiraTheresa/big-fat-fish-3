@@ -18,6 +18,7 @@ import { chatCompletion } from '../llm.js';
 import { activeMemoryGroups, prepareMemoryScan, readMemoryMessages, receiptProgress } from './activity.js';
 import { applyPersonaPatch, getPersona, extractLockedLines, patchKeepsLockedLines } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
+import { historyText } from '../utils/history-text.js';
 
 // 锁定行判定/校验已搬家 persona-store（store 层，供 applyPersonaPatch 的 memory 兜底
 // 裁剪复用同一谓词；依赖单向 distiller → store）。此处 re-export 保持 distiller 旧
@@ -65,7 +66,7 @@ function budgetHeader(name, bytes, maxBytes, slimmingHint) {
 // 组装提炼 LLM messages：system 固定模板 + user（现有两份文件全文（含预算标注）+
 // 待消化对话逐行）。导出供直测（纯函数，同 shouldDistill 先例）。
 export function buildMessages(persona, newMessages, template = getPromptConfig().prompts.distill) {
-  const dialogue = newMessages.map((rec) => `[${rec.time}] ${speakerOf(rec)}: ${rec.raw_message}`);
+  const dialogue = newMessages.map((rec) => `[${rec.time}] ${speakerOf(rec)}: ${historyText(rec)}`);
   const maxBytes = config.personaMaxBytes;
   const user = [
     ...budgetHeader('character.md', Buffer.byteLength(persona.character, 'utf8'), maxBytes, '压缩合并现有段落、删减次要细节'),

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { atomicWriteJson, readJson, withStorageLock } from '../platform/persistence.js';
-import { defaultPromptConfig } from './defaults.js';
+import { defaultPromptConfig, MEME_TOOL_RULES } from './defaults.js';
 
 let current;
 let loadedDir;
@@ -50,9 +50,33 @@ export async function initializePrompts() {
   const saved = await readJson(file(), null);
   if (saved) {
     if (saved.schema !== 1 || !saved.published || !saved.draft || !Array.isArray(saved.versions)) throw new Error('Prompt 版本文件不正确');
+    // Add new capabilities to pre-meme configurations without replacing user prompts
+    // or re-enabling tools explicitly disabled in a newer configuration.
+    let migrated = false;
+    for (const version of [saved.published, saved.draft, ...saved.versions]) {
+      if (!object(version.config?.tools)) continue; // ordinary validation reports corruption
+      let changed = false;
+      for (const name of ['save_meme', 'search_memes', 'send_meme']) {
+        if (!Object.hasOwn(version.config.tools, name)) {
+          version.config.tools[name] = defaults().tools[name];
+          changed = true;
+        }
+      }
+      if (changed) {
+        version.config.prompts.toolRules += '\n' + MEME_TOOL_RULES;
+        version.hash = configHash(version.config);
+        migrated = true;
+      }
+    }
     validatePromptConfig(saved.published.config);
     validatePromptConfig(saved.draft.config);
     for (const version of saved.versions) validatePromptConfig(version.config);
+    if (migrated) {
+      // Existing draft reviews describe the old tool set; require fresh review.
+      saved.draft.revision = randomUUID();
+      saved.draft.updatedAt = Date.now();
+      await atomicWriteJson(file(), saved);
+    }
     current = saved;
   } else {
     const published = builtin();

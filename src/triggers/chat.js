@@ -139,7 +139,7 @@ export default {
     const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
     let imageAttempts = 0;
     let imageFailed = false;
-    const toolContext = { sessionKey, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
+    const toolContext = { sessionKey, event, memeTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
       onImageAttempt(entry) {
         if (entry.phase === 'error') imageFailed = true;
         if (entry.phase !== 'request') return;
@@ -223,13 +223,13 @@ export default {
       // 出口加工链：LLM 原始输出装入 segments 数组（Task 4 的 split 从这里接管拆分），
       // 各模块按 enabled(config) 自决参与、依序 await 加工（delay 在此吃掉随机时长）
       if (poke) reply = reply.replaceAll('||', ' ').replace(/\s+/g, ' ').trim();
-      let segments = [reply];
+      let segments = reply.trim() ? [reply] : [];
       for (const mod of chatReplyChain) {
         if (poke) continue; // 戳一戳立即发一条短回复，不引用不存在的消息。
-        if (imageAttempts > 0 && mod.name === 'delay') continue; // 绘图已经等待过，结果无需再拟人延迟。
+        if ((imageAttempts > 0 || toolContext.memeTurn.sent) && mod.name === 'delay') continue;
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
-      persistAndSend(reply, segments);
+      if (segments.length) persistAndSend(reply, segments);
       run.status = 'completed';
       run.content = reply;
 

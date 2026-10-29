@@ -9,6 +9,7 @@
 | `group.md` / `private.md` | 各场景的差异规则，后接 `response.md` |
 | `identity.md` | 身份、发言者、历史与记忆的理解边界 |
 | `tool-rules.md` | 工具调用和结果确认规则 |
+| `meme-rules.md` | 表情收藏、候选选择、单次发送和模拟模式规则 |
 | `tools.json` | 工具及参数的描述文字；工具实现和开关仍由程序管理 |
 | `distill.md` | 后台人设与记忆提炼指令 |
 | `scene.md` | 当前时间、场景与静默时长模板 |

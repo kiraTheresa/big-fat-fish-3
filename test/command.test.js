@@ -158,7 +158,8 @@ test('/help：由注册表自动生成，逐行与注册表一致（防手工列
   assert.equal(replies.length, 1);
   const lines = replies[0].split('\n');
   assert.equal(lines[0], '本鱼会的指令：', '沿用现有开头文案');
-  assert.equal(lines.length, COMMANDS.length + 1, '表头一行 + 每个注册表指令一行');
+  assert.equal(lines.length, COMMANDS.length + 2, '表头、注册表与独立表情入口');
+  assert.match(lines.at(-1), /^\/meme help/);
   // 逐行比对注册表（顺序即注册表顺序）：自动生成后 /help 条目与注册表严格一致，
   // 注册表增删指令而 /help 忘改时此处立刻报警（漂移回归）
   for (let i = 0; i < COMMANDS.length; i++) {

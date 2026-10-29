@@ -5,7 +5,7 @@ import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { redactText } from './utils/logger.js';
 import { chatStreamOptions, readChatStream } from './utils/chat-stream.js';
 
-export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system', tools, toolChoice, stream = config.chatStream && kind !== 'distill', onAttempt, onDelta } = {}) {
+export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system', tools, toolChoice, stream = config.chatStream && kind !== 'distill', onAttempt, onDelta, allowEmptyContent = false } = {}) {
   const attempt = await beginUsage({ kind, model, sessionKey });
   let usage = null;
   let httpStatus;
@@ -53,7 +53,8 @@ export async function chatCompletion(messages, { model = config.deepseekModel, k
     }
     const content = message?.content;
     const calls = message?.tool_calls;
-    if (typeof content !== 'string' && !(Array.isArray(calls) && calls.length)) throw new Error('DeepSeek 响应缺少 choices[0].message.content / tool_calls');
+    if (typeof content !== 'string' && !(Array.isArray(calls) && calls.length)
+      && !(allowEmptyContent && message?.role === 'assistant' && content === null)) throw new Error('DeepSeek 响应缺少 choices[0].message.content / tool_calls');
     onAttempt?.({ phase: 'response', message: structuredClone(message), usage, httpStatus, elapsedMs: Date.now() - startedAt });
     return { content, usage, message };
   } catch (error) {

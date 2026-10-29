@@ -9,6 +9,8 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ### feat
 
+- Session-scoped meme collections with explicit command or natural-language saving, local search and native OneBot image/mface/face replay. Preserve animation bytes and native references, deduplicate collections, support rename/disable/re-enable, and confirm sends through the existing queue. Model use is limited to searched candidates and one send attempt per turn; Prompt tests never send memes to QQ.
+
 - Prompt-page workbench and relaxed appearance presets, with a one-click switch that preserves draft/test state and remembers only the browser appearance preference.
 
 - Natural-language drawing and memory tools after the existing wake-up rules, with server-bound scope, argument checks, bounded tool loops and per-turn duplicate protection.
