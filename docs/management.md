@@ -75,7 +75,7 @@ Prompt 工作台提供编辑、测试与评审、检查与发布、运行记录�
 | `data/management/prompts.json` | Prompt 发布版本、草稿和测试评审摘要 |
 | `data/prompt-runs/` | 最近 50 次运行的脱敏请求与测试结果、关联测试图片 |
 | `data/media/generated/` | 绘图原图及提示词、模型、会话等元数据，长期保留 |
-| `data/media/memes/` | 表情包原图及名称、标签，长期保留；见 [媒体文件存储](media-storage.md) |
+| `data/media/memes/` | 表情类型、发送参数、名称与标签，以及可选原图/预览，长期保留；见 [媒体文件存储](media-storage.md) |
 | `data/management/jobs.json` | 任务定义、下一次时间、上次结果 |
 | `data/messages/*.jsonl` | 既有可处理消息及出站文本；保留归一化消息段 |
 | `data/session-state/*.json` | reset / distill 水位 |

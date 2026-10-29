@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -9,7 +9,7 @@ import { pruneObservations } from '../src/platform/maintenance.js';
 
 const root = await mkdtemp(join(tmpdir(), 'fish-media-'));
 process.env.DATA_DIR = root;
-const { initializeMediaStore, mediaPaths, saveGeneratedImage, saveMemeImage } = await import('../src/store/media-store.js');
+const { initializeMediaStore, mediaPaths, saveGeneratedImage, saveMemeImage, saveMeme, readMeme } = await import('../src/store/media-store.js');
 after(async () => { await rm(root, { recursive: true, force: true }); });
 
 test('初始化可重复执行，生成图片与表情包目录独立', async () => {
@@ -68,4 +68,111 @@ test('观察数据清理不会删除媒体；重新初始化保留已有文件',
   await pruneObservations(root, 1, Date.now() + 365 * 86400000);
   await initializeMediaStore();
   assert.deepEqual(await readFile(join(mediaPaths().root, item.path)), IMG_BYTES);
+});
+
+test('商城表情无需图片文件，参数和来源经磁盘完整往返，不下载远程资源', async () => {
+  const data = { emoji_id: '000123', emoji_package_id: 456, key: 'opaque-key', summary: '[开心]',
+    extension: { flag: false, value: [0, null, '动画'] } };
+  const source = { messageId: '123', sessionKey: 'g-456', segmentType: 'image' };
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = () => { throw new Error('存储不得下载'); };
+  try {
+    const saved = await saveMeme({ type: 'mface', data, source, name: '开心' });
+    assert.equal(saved.version, 2);
+    assert.equal(saved.path, null);
+    assert.equal(saved.filename, null);
+    assert.deepEqual(saved.missingParameters, []);
+    assert.deepEqual(await readdir(join(mediaPaths().memes, saved.id)), ['metadata.json']);
+    const loaded = await readMeme(saved.id);
+    assert.deepEqual(loaded, saved);
+    assert.deepEqual(loaded.send, { type: 'mface', data });
+    assert.deepEqual(loaded.source, source);
+    const remote = await saveMeme({ type: 'image', data: { file: 'https://example.invalid/a.gif', sub_type: 1 } });
+    assert.equal(remote.path, null);
+    assert.deepEqual(remote.missingParameters, []);
+  } finally { globalThis.fetch = nativeFetch; }
+});
+
+test('内置 face 保留 ID 原类型与扩展参数，调用后修改输入不影响保存', async () => {
+  const data = { id: 0, resultId: '2', chainCount: 3, raw: { faceText: '示例' } };
+  const source = { messageId: '42' };
+  const saving = saveMeme({ type: 'face', data, source });
+  data.id = 999;
+  data.raw.faceText = '被改动';
+  source.messageId = '99';
+  const saved = await saving;
+  const loaded = await readMeme(saved.id);
+  assert.deepEqual(loaded.send.data, { id: 0, resultId: '2', chainCount: 3, raw: { faceText: '示例' } });
+  assert.deepEqual(loaded.source, { messageId: '42' });
+  assert.deepEqual(loaded.missingParameters, []);
+});
+
+test('自定义动画原图和预览分开保存，保留发送属性而不转码', async () => {
+  const gif = Buffer.from('GIF89a-original-animated-content');
+  const data = { sub_type: 7, summary: '[动画表情]', custom: { name: 'original' } };
+  const saving = saveMeme({ type: 'image', image: gif, preview: IMG_BYTES, data });
+  gif.fill(0);
+  const saved = await saving;
+  const loaded = await readMeme(saved.id);
+  assert.deepEqual(loaded, saved);
+  assert.deepEqual(loaded.send, { type: 'image', data });
+  assert.deepEqual(loaded.missingParameters, []);
+  assert.equal(await readFile(join(mediaPaths().root, loaded.path), 'utf8'), 'GIF89a-original-animated-content');
+  assert.equal(loaded.preview.filename, 'preview.png');
+  assert.deepEqual(await readFile(join(mediaPaths().root, loaded.preview.path)), IMG_BYTES);
+});
+
+test('缺少发送参数仍可保存，预览不能冒充可发送原图；参数缺失明确记录', async () => {
+  const image = await saveMeme({ type: 'image', preview: IMG_BYTES, data: { summary: '[表情]' } });
+  assert.equal(image.path, null);
+  assert.deepEqual((await readMeme(image.id)).missingParameters, ['file']);
+  const market = await saveMeme({ type: 'mface', image: IMG_BYTES, data: { emoji_id: '123' } });
+  assert.deepEqual(market.missingParameters, ['emoji_package_id', 'key']);
+  const face = await saveMeme({ type: 'face', data: { id: '' } });
+  assert.deepEqual(face.missingParameters, ['id']);
+});
+
+test('兼容原图片接口，读取旧 v1 不猜测表情属性，也不改写磁盘', async () => {
+  const saved = await saveMemeImage(IMG_BYTES, { data: { sub_type: 1, summary: '[表情]' } });
+  assert.equal(saved.send.data.sub_type, 1);
+  const file = join(mediaPaths().memes, saved.id, 'metadata.json');
+  const legacy = { version: 1, id: saved.id, kind: 'memes', createdAt: saved.createdAt,
+    filename: saved.filename, mimeType: saved.mimeType, bytes: saved.bytes, sha256: saved.sha256,
+    name: '旧图', tags: ['旧'] };
+  const originalJson = JSON.stringify(legacy);
+  await writeFile(file, originalJson);
+  const loaded = await readMeme(saved.id);
+  assert.equal(loaded.version, 1);
+  assert.deepEqual(loaded.send, { type: 'image', data: {} });
+  assert.deepEqual(loaded.missingParameters, []);
+  assert.equal(await readFile(file, 'utf8'), originalJson);
+});
+
+test('非法类型、不可序列化参数在落盘前拒绝，参数不会静默丢失', async () => {
+  const before = await readdir(mediaPaths().memes);
+  assert.throws(() => saveMeme({ type: 'video' }), /表情类型/);
+  const cycle = {}; cycle.self = cycle;
+  for (const data of [null, [], { value: undefined }, { value: Infinity }, { value: 1n }, { value: new Date() }, cycle]) {
+    assert.throws(() => saveMeme({ type: 'face', data }), /JSON/);
+  }
+  assert.throws(() => saveMeme({ type: 'face', source: [] }), /JSON/);
+  await assert.rejects(saveMeme({ type: 'face', preview: Buffer.from('not an image') }), /仅支持/);
+  assert.deepEqual(await readdir(mediaPaths().memes), before);
+});
+
+test('读取限制为 UUID，缺失返回 null，损坏元数据/缺失文件明确报错', async () => {
+  await assert.rejects(readMeme('../escape'), /无效/);
+  assert.equal(await readMeme('00000000-0000-0000-0000-000000000000'), null);
+  const saved = await saveMemeImage(IMG_BYTES);
+  const file = join(mediaPaths().memes, saved.id, 'metadata.json');
+  const metadata = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, '{bad');
+  await assert.rejects(readMeme(saved.id), SyntaxError);
+  await writeFile(file, JSON.stringify({ ...metadata, filename: '../../escape.png' }));
+  await assert.rejects(readMeme(saved.id), /文件名/);
+  await writeFile(file, JSON.stringify({ ...metadata, send: { type: 'mface', data: {} } }));
+  await assert.rejects(readMeme(saved.id), /发送类型/);
+  await writeFile(file, JSON.stringify(metadata));
+  await rm(join(mediaPaths().root, saved.path));
+  await assert.rejects(readMeme(saved.id), { code: 'ENOENT' });
 });
