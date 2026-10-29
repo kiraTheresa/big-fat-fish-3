@@ -4,6 +4,7 @@ import { configureLogger, logger, readLogs, flushLogs, getLogStats } from '../ut
 import { getConnectionStatus } from '../connection/onebot.js';
 import { getSenderStatus } from '../sender/sender.js';
 import { flushMessageStore } from '../store/message-store.js';
+import { initializeMediaStore } from '../store/media-store.js';
 import { readEvents, getEventStats, flushEventStore } from '../store/event-store.js';
 import { readUsageOverview, flushUsage, getUsageStoreStats } from '../store/usage-store.js';
 import { setUsagePolicy, initializeUsage, readUsageMonitor } from './usage-policy.js';
@@ -24,6 +25,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
   try {
     const startedAt = Date.now();
     configureLogger({ dataDir: config.dataDir, level: config.logLevel, retentionDays: config.retentionDays, secrets: [config.accessToken, config.deepseekApiKey, config.imageApiKey, config.adminToken] });
+    await initializeMediaStore();
     await initializeSettings(setUsagePolicy);
     await initializePermissions();
     await initializeUsage();

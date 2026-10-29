@@ -38,5 +38,5 @@ services:
     env_file:
       - .env            # 其余配置（token / LLM key / 管理白名单等）与宿主机同源
     volumes:
-      - ./data:/app/data            # 全部运行时数据（messages / personas / usage / session-state）
+      - ./data:/app/data            # 全部运行时数据（含 media/generated 原图与 media/memes 表情包）
       - ./config.json:/app/config.json:ro  # 行为开关（CONFIG_PATH 默认 ./config.json）

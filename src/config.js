@@ -90,7 +90,7 @@ export const config = {
   apiTimeoutMs: num(process.env.API_TIMEOUT_MS, 15000),
   // 出站消息限流间隔（ms，全项目仅 sender 一处管理）
   sendIntervalMs: num(process.env.SEND_INTERVAL_MS, 1000),
-  // 数据目录（消息 JSONL 落盘根目录）
+  // 数据目录（消息、平台状态及 media 原图/表情包的持久化根目录）
   dataDir: process.env.DATA_DIR ?? 'data',
   // 本地管理服务：无 token 不启动；密钥仅从环境读取。
   adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',

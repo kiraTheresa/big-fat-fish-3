@@ -2,7 +2,8 @@
 // never included in usage records or logs.
 import { config } from './config.js';
 import { beginUsage, finishUsage } from './platform/usage-policy.js';
-import { redactText } from './utils/logger.js';
+import { logger, redactText } from './utils/logger.js';
+import { saveGeneratedImage } from './store/media-store.js';
 
 export async function generateImage(prompt, { sessionKey = 'system', onAttempt } = {}) {
   const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey });
@@ -36,13 +37,21 @@ export async function generateImage(prompt, { sessionKey = 'system', onAttempt }
     // Image count is generated output, independent of a later download error.
     images = Array.isArray(data.data) ? data.data.filter((entry) => entry?.b64_json || entry?.url).length : 0;
     onAttempt?.({ phase: 'response', name: 'image_api', httpStatus, usage, images, elapsedMs: Date.now() - startedAt });
-    if (typeof item?.b64_json === 'string' && item.b64_json !== '') return { b64: item.b64_json };
-    if (item?.url) {
+    let b64;
+    if (typeof item?.b64_json === 'string' && item.b64_json !== '') b64 = item.b64_json;
+    else if (item?.url) {
       const imgRes = await fetch(item.url, { signal: AbortSignal.timeout(60000) });
       if (!imgRes.ok) throw new Error(`图片下载失败 HTTP ${imgRes.status}`);
-      return { b64: Buffer.from(await imgRes.arrayBuffer()).toString('base64') };
+      b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+    } else throw new Error('Image API 响应缺少 data[0].b64_json/url');
+    let asset = null;
+    try {
+      asset = await saveGeneratedImage(b64, { prompt, sessionKey, model: request.model, size: request.size });
+    } catch (error) {
+      // A disk failure must not discard an already paid-for image or trigger a redraw.
+      logger.warn('[imagegen] 原图本地保存失败，继续发送图片', { code: error.code ?? 'MEDIA_SAVE_FAILED' });
     }
-    throw new Error('Image API 响应缺少 data[0].b64_json/url');
+    return { b64, asset };
   } catch (error) {
     failure = error;
     onAttempt?.({ phase: 'error', name: 'image_api', httpStatus, error: redactText(error.message, [config.imageApiKey]), elapsedMs: Date.now() - startedAt });

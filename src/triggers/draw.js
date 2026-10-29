@@ -9,7 +9,7 @@
 // + 占位回存 → 失败兜底文案。
 // 出站不经 ctx.reply（它只发文本）：与 chat 的 persistAndSend 同模式直接用 sender +
 // appendMessage。OneBot message 数组段原生支持 {type:'image'}，base64:// 前缀直接
-// 透传 NapCat——bot 侧零下载零落盘（b64_json 由 imagegen 直接给出）。
+// 透传 NapCat；imagegen 在返回前将原图和元数据保存至 data/media/generated。
 // 回存占位：图不进对话上下文（JSONL 只存文本），raw_message 记「[图片] prompt」——
 // 后续「刚才画的那张」类追问在 LLM 眼里 bot 曾发过一条与 prompt 相关的图，可接上。
 import { config } from '../config.js';
