@@ -111,6 +111,28 @@ test('锁定行函数搬家兼容：distiller re-export 与 persona-store 同源
 });
 
 // ---- buildMessages 预算反馈直测（提炼三件套之一）----
+test('buildMessages 为旧版或自定义模板补充两文件锁定规则，保留模板和输入原文', () => {
+  const persona = {
+    character: '# 人设\n- [2026-10-25 10:00] 保持耐心',
+    memory: '- [2026-10-25 10:01] 甲: 周五要打球',
+  };
+  const templates = [
+    'memory.md 保留仍然有效的，删除过时错误的，合并重复；每个文件不超过 {maxBytes} 字节。',
+    '自定义提炼要求：只整理明确事实，输出 JSON。',
+  ];
+  for (const template of templates) {
+    const [system, user] = buildMessages(persona, [], template);
+    assert.ok(system.content.startsWith(template.replaceAll('{maxBytes}', String(config.personaMaxBytes)) + '\n\n'), '原模板仅替换容量占位符，不覆盖自定义要求');
+    const preservation = system.content.slice(system.content.indexOf('\n\n') + 2);
+    assert.match(preservation, /同时适用于 character\.md 和 memory\.md/);
+    assert.match(preservation, /优先于模板中的删除、合并、纠错和容量压缩要求/);
+    assert.match(preservation, /以 "- \[" 开头的行.*对应文件中逐行原样保留/);
+    assert.match(preservation, /压缩、去重、纠错和删除仅适用于非锁定内容/);
+    assert.match(preservation, /禁止生成以 "- \[" 开头的新锁定行/);
+    assert.ok(user.content.includes(persona.character) && user.content.includes(persona.memory), '两个文件的锁定原文完整提供给模型');
+  }
+});
+
 test('buildMessages 预算反馈：user 含「实际字节/上限」标注；> 90% 追加「务必净减」警示', () => {
   const maxBytes = config.personaMaxBytes; // 本文件未注入 PERSONA_MAX_BYTES，默认 4096
 
@@ -139,6 +161,7 @@ test('buildMessages 预算反馈：user 含「实际字节/上限」标注；> 9
   assert.ok(warnIdx > tagIdx, '警示应在标注之后');
   assert.ok(warnIdx < bigUser.indexOf(bigChar), '警示应在文件内容之前（紧跟标注）');
   assert.ok(bigUser.includes('不要新增'), '警示应讲清不要新增');
+  assert.ok(bigUser.includes('仅对非锁定内容压缩合并现有段落'), '人设压缩不能改动锁定内容');
   assert.ok(bigUser.indexOf(`现有 memory.md（0/${maxBytes} 字节）：`) > warnIdx, 'memory 段在 character 段之后');
   assert.equal(bigUser.indexOf('务必净减', warnIdx + 1), -1, 'memory 未达 90%：不得重复警示');
 
@@ -153,6 +176,8 @@ test('buildMessages 预算反馈：user 含「实际字节/上限」标注；> 9
   const memWarnIdx = bigMemUser.indexOf('务必净减');
   assert.ok(memTagIdx !== -1 && memWarnIdx > memTagIdx, 'memory 接近上限：警示应紧跟标注');
   assert.ok(memWarnIdx < bigMemUser.indexOf(bigMem), 'memory 警示应在文件内容之前');
+  assert.ok(bigMemUser.includes('仅对非锁定内容合并重复条目、删除过时条目'), '记忆的合并和删除仅限非锁定内容');
+  assert.ok(bigMemUser.includes('锁定行逐行原样保留；无可压缩内容时保持原文'), '全锁定且接近上限时不强迫改写原文');
 });
 
 // ---- 锁定行提取纯函数直测（Task 13）：`- [` 开头行即 /remember 锁定条目 ----

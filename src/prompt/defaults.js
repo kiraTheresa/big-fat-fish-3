@@ -15,6 +15,7 @@ export const GROUP_RULES = [readTemplate('group.md'), response];
 export const PRIVATE_RULES = [readTemplate('private.md'), response];
 export const IDENTITY_LINES = [readTemplate('identity.md')];
 export const DISTILL_SYSTEM_TEMPLATE = readTemplate('distill.md');
+export const DISTILL_PRESERVATION_RULES = readTemplate('distill-preservation.md');
 export const SCENE_TEMPLATE = readTemplate('scene.md');
 export const SYSTEM_TEMPLATE = readTemplate('system.md');
 export const TOOL_RULES = readTemplate('tool-rules.md');

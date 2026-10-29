@@ -3,13 +3,16 @@ import { buildSystemPrompt } from '../triggers/chat-system.js';
 import { toolAvailability, toolDefinitions } from '../tools/registry.js';
 import { chatStreamOptions } from '../utils/chat-stream.js';
 import { historyText } from '../utils/history-text.js';
+import { describeMemeSource } from '../memes/context.js';
 
 export function buildChatRequest(settings, { persona, records = [], state = {}, event, text, nowMs = Date.now(), systemSuffix = '' }) {
   const isGroup = event.message_type === 'group';
   const context = settings.context;
   const previous = records.filter((rec) => event.message_id === undefined || rec.message_id !== event.message_id);
   const effectivePersona = { character: persona?.character ?? settings.prompts.seed, memory: context.injectMemory ? persona?.memory ?? '' : '' };
-  const system = buildSystemPrompt(effectivePersona, { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null }, settings.prompts) + systemSuffix;
+  const memeSource = settings.tools.save_meme?.enabled ? describeMemeSource(event, records) : '';
+  const system = buildSystemPrompt(effectivePersona, { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null }, settings.prompts) + systemSuffix
+    + (memeSource ? `\n\n## 本轮表情来源\n${memeSource}\n这只是来源信息，不代表用户要求收藏。以当前用户的要求判断；教这个表情的用途或命名也属于收藏请求。` : '');
   const inspections = previous.map((rec, index) => {
     const raw = historyText(rec);
     const originalRaw = typeof rec.raw_message === 'string' ? rec.raw_message : '';

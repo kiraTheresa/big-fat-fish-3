@@ -18,6 +18,8 @@ const duration = (seconds) => {
   return `${Math.floor(value / 60)} 分 ${value % 60} 秒`;
 };
 const icons = {
+  images: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+  memes: '<path d="M20 14a8 8 0 1 0-6 6l6-6Z"/><path d="M14 20v-4a2 2 0 0 1 2-2h4M8 10h.01M14 10h.01M8 14c1.5 1.5 3.5 1.5 5 0"/>',
   overview: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
   events: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 14h5"/>',
   config: '<path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
@@ -39,19 +41,25 @@ const pages = {
   overview: ['运行概览', '检查连接、调用和任务状态，进入常用工具。', 'OVERVIEW'],
   events: ['消息收件箱', '所有接收事件都在这里；接收不等于自动处理。', 'INBOX'],
   prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。', 'PROMPT STUDIO'],
+  images: ['绘图作品', '浏览肥鱼画过的作品，查看原图、提示词与来源会话。', 'IMAGES'],
+  memes: ['表情收藏', '浏览已记录的表情，查看收藏状态、使用信息与本地预览。', 'MEMES'],
   config: ['配置与能力', '管理能力开关、调用预算与运行参数。', 'CONFIGURATION'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
   logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
   usage: ['调用与用量', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
 };
+const resolvePage = (page) => page === 'media' ? 'images' : page;
+const initialPage = resolvePage(location.hash.slice(1));
 const state = {
-  token: '', tokenExpiresAt: 0, page: pages[location.hash.slice(1)] ? location.hash.slice(1) : 'overview',
+  token: '', tokenExpiresAt: 0, page: pages[initialPage] ? initialPage : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
   filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { since: '', until: '', kind: '', sessionKey: '' } },
 };
 let promptConsole;
+const mediaGalleries = new Map();
+if (location.hash === '#media') history.replaceState(null, '', '#images');
 let toastTimer;
 let lastFocus;
 const LOGIN_STORAGE_KEY = 'big-fat-fish.admin-session.v1';
@@ -138,6 +146,7 @@ function logout(message = '', { forget = true } = {}) {
   if (forget) clearSavedLogin();
   resetLoginButton();
   promptConsole?.clear();
+  for (const gallery of mediaGalleries.values()) gallery.clear();
   state.token = '';
   state.tokenExpiresAt = 0;
   state.config = null;
@@ -185,6 +194,20 @@ async function api(path, { method = 'GET', body, token = state.token } = {}) {
   return data;
 }
 
+async function fetchMediaFile(key, variant = 'original') {
+  if (expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
+  const token = state.token;
+  if (!token) throw new Error('请先登录。');
+  const response = await fetch(`/api/media/file?${new URLSearchParams({ key, variant })}`, {
+    headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(30000),
+  });
+  if (response.status === 401 && token === state.token) logout('管理令牌已失效，请重新登录。');
+  if (!response.ok) throw new Error(response.status === 404 ? '这张图片已不存在。' : '图片暂时无法读取，请稍后重试。');
+  const blob = await response.blob();
+  if (token !== state.token) throw new Error('登录状态已改变。');
+  return blob;
+}
+
 const query = (values) => {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) if (value !== '' && value !== null && value !== undefined) params.set(key, value);
@@ -216,6 +239,7 @@ function canLeave() {
   return !state.dirty || window.confirm('配置尚未保存。放弃这些修改并离开？');
 }
 function navigate(page) {
+  page = resolvePage(page);
   if (!pages[page] || page === state.page) return;
   if (!canLeave()) return;
   state.page = page;
@@ -230,6 +254,7 @@ async function loadPage({ quiet = false } = {}) {
   if (!state.token) return;
   const sequence = ++state.sequence;
   const page = state.page;
+  for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
   $('#refresh').disabled = true;
   const [title, description, section] = pages[page];
@@ -250,6 +275,7 @@ async function loadPage({ quiet = false } = {}) {
     if (sequence !== state.sequence || !state.token) return;
     $('#content').innerHTML = html;
     if (page === 'prompt') promptConsole.attach($('#content'));
+    if (page === 'images' || page === 'memes') mediaGalleries.get(page)?.attach($('#content'));
     $('#updated-at').textContent = `更新于 ${date(Date.now(), true)}`;
     if (page !== 'overview') api('/status').then((status) => { if (sequence === state.sequence && state.token) updateStatus(status); }).catch(() => {});
   } catch (error) {
@@ -429,7 +455,17 @@ async function renderPrompt(sequence) {
   return promptConsole.render(sequence);
 }
 
-const renderers = { prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+async function renderMedia(page, sequence) {
+  let gallery = mediaGalleries.get(page);
+  if (!gallery) {
+    const { createMediaGallery } = await import('/media.js');
+    if (sequence !== state.sequence || !state.token) return '';
+    gallery = createMediaGallery({ api, fetchFile: fetchMediaFile, toast, kind: page === 'images' ? 'generated' : 'memes' });
+    mediaGalleries.set(page, gallery);
+  }
+  return gallery.render();
+}
+const renderers = { images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;
@@ -620,6 +656,7 @@ $('#auto-refresh').addEventListener('change', (event) => { state.live = event.ta
 const navigationGroups = [
   ['运行排查', ['overview', 'events', 'logs', 'usage']],
   ['开发调试', ['prompt']],
+  ['素材收藏', ['images', 'memes']],
   ['实例管理', ['config', 'jobs', 'users']],
 ];
 $('#navigation').innerHTML = navigationGroups.map(([label, keys]) => `<div class="nav-group"><p class="nav-label">${label}</p>${keys.map((page) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(pages[page][0])}</span></a>`).join('')}</div>`).join('');
@@ -633,7 +670,7 @@ window.addEventListener('storage', (event) => {
   }
 });
 window.addEventListener('hashchange', () => {
-  const next = location.hash.slice(1);
+  const next = resolvePage(location.hash.slice(1));
   if (pages[next] && next !== state.page) navigate(next);
   history.replaceState(null, '', `#${state.page}`);
 });

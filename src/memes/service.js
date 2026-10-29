@@ -1,11 +1,11 @@
-// Collect and replay only explicit, scoped assets. No LLM-supplied paths or URLs reach transport.
+// Explicitly collected assets are shared; message lookup and delivery stay bound to the caller.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { request as requestHttp } from 'node:http';
 import { request as requestHttps } from 'node:https';
-import { collectMeme, getScopedMeme, recordMemeUse } from '../store/meme-library.js';
+import { collectMeme, getSharedMeme, recordMemeUse } from '../store/meme-library.js';
 import { mediaPaths } from '../store/media-store.js';
 import { appendMessage, readRecentMessages } from '../store/message-store.js';
 import { callApi } from '../connection/onebot.js';
@@ -102,7 +102,7 @@ async function resolveSource(ctx) {
   // Outgoing meme history deliberately stores only a small placeholder. Resolve
   // that trusted reference inside the same scope instead of looking up our own
   // message as if the bot's user ID were the private conversation's peer.
-  if (local?.bot && local.memeId) return { event: local, asset: await getScopedMeme(ctx.sessionKey, local.memeId) };
+  if (local?.bot && local.memeId) return { event: local, asset: await getSharedMeme(ctx.sessionKey, local.memeId) };
   if (local) return { event: local, candidates: memeSegments(local) };
   const found = await callApi('get_msg', { message_id: id });
   // A get_msg lookup is global. A guessed message ID must never import another conversation.
@@ -149,7 +149,7 @@ export async function collectFromEvent(ctx, { name = '', tags = [] } = {}, { dow
 
 export async function sendStoredMeme(ctx, id) {
   checkedContext(ctx);
-  const asset = await getScopedMeme(ctx.sessionKey, id);
+  const asset = await getSharedMeme(ctx.sessionKey, id);
   let data;
   if (asset.memeType === 'image') {
     if (!asset.path || !asset.filename) throw new Error('这个表情缺少本地原图，暂时不能发送');

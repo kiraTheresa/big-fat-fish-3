@@ -9,7 +9,9 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ### feat
 
-- Session-scoped meme collections with explicit command or natural-language saving, local search and native OneBot image/mface/face replay. Preserve animation bytes and native references, deduplicate collections, support rename/disable/re-enable, and confirm sends through the existing queue. Model use is limited to searched candidates and one send attempt per turn; Prompt tests never send memes to QQ.
+- Separate read-only generated-picture and meme-collection pages in the management console sidebar, each retaining its own keyword search, filters and pagination, with details and local-original downloads. The legacy `#media` link redirects to `#images`; meme collections use `#memes`. List and image requests require the admin token; GIF bytes are preserved. Native QQ references without local images show a placeholder, and local previews do not reproduce or verify QQ's native animation.
+
+- One shared meme library across groups and private chats, with automatic backup and migration of existing session collections, explicit command or natural-language saving, local search and native OneBot image/mface/face replay. Preserve animation bytes and native references, deduplicate collections, support administrator rename/disable/re-enable, and confirm sends through the existing queue. Model use is limited to searched candidates and one send attempt per turn; Prompt tests never send memes to QQ.
 
 - Prompt-page workbench and relaxed appearance presets, with a one-click switch that preserves draft/test state and remembers only the browser appearance preference.
 
@@ -22,6 +24,10 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 - Count chat, vision, drawing and distillation API attempts, including failures and unknown usage; enforce feature switches and daily request limits, with a reported-token threshold.
 
 ### fix
+
+- Generic requests to send any meme search all usable shared candidates instead of inventing restrictive keywords; explicit topics still require matching results.
+- Treat teaching an attached or quoted meme's purpose, emotion or name as a save request. Give the model structural source context and upgrade only matching legacy default instructions, preserving custom prompts and disabled tools.
+- Apply locked-entry preservation rules to both persona files even with older published distillation prompts. Capacity warnings now only request compression of unlocked content; existing validation and retry backoff remain in place.
 
 - Recover the runtime lock across host/container switches using a renewable shared-filesystem lease; active instances stay exclusive, while crashed owners expire after 30 seconds regardless of hostname or PID reuse.
 

@@ -7,6 +7,8 @@ import { join } from 'node:path';
 
 const WEB_DIR = fileURLToPath(new URL('../../web/', import.meta.url));
 const STATIC = new Map([['/', ['index.html', 'text/html']], ['/index.html', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/prompt.js', ['prompt.js', 'text/javascript']], ['/style.css', ['style.css', 'text/css']], ['/styles.css', ['styles.css', 'text/css']]]);
+STATIC.set('/media.js', ['media.js', 'text/javascript']);
+STATIC.set('/media.css', ['media.css', 'text/css']);
 const hash = (value) => createHash('sha256').update(value).digest();
 function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -32,7 +34,7 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname === '/healthz' && req.method === 'GET') return reply(res, 200, { ok: true });
@@ -67,6 +69,14 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
       }
       for (const key of Object.keys(query)) if (query[key] === '') delete query[key];
       const route = `${req.method} ${url.pathname}`;
+      if (route === 'GET /api/media' && services.media) return reply(res, 200, await services.media.list(query));
+      if (route === 'GET /api/media/file' && services.media) {
+        const file = await services.media.readFile(query);
+        const filename = file.filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        res.writeHead(200, { 'Content-Type': file.mimeType, 'Content-Length': file.bytes.length,
+          'Content-Disposition': `inline; filename="${filename}"` });
+        return res.end(file.bytes);
+      }
       if (url.pathname.startsWith('/api/prompt/') && services.prompt) {
         const action = `${req.method} ${url.pathname.slice('/api/prompt/'.length)}`;
         const prompt = services.prompt;

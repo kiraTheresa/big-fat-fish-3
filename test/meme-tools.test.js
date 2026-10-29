@@ -25,14 +25,14 @@ Object.assign(process.env, { DATA_DIR: root, PERSONA_DIR: join(root, 'personas')
   ONEBOT_WS_URL: wire.url, ONEBOT_ACCESS_TOKEN: '', SEND_INTERVAL_MS: '1', API_TIMEOUT_MS: '1000' });
 const { config } = await import('../src/config.js');
 const { defaultPromptConfig } = await import('../src/prompt/defaults.js');
-const { executeTool, toolDefinitions } = await import('../src/tools/registry.js');
+const { executeTool, toolDefinitions, parseToolArguments } = await import('../src/tools/registry.js');
 const { runToolConversation } = await import('../src/prompt/runner.js');
 const { collectMeme, searchMemes } = await import('../src/store/meme-library.js');
 const store = await import('../src/prompt/store.js');
 const { dispatch } = await import('../src/dispatch/dispatcher.js');
 const { register } = await import('../src/dispatch/registry.js');
 const { drainSender } = await import('../src/sender/sender.js');
-const { readRecentMessages } = await import('../src/store/message-store.js');
+const { appendMessage, readRecentMessages } = await import('../src/store/message-store.js');
 const onebot = await import('../src/connection/onebot.js');
 register((await import('../src/triggers/meme.js')).default);
 register((await import('../src/triggers/chat.js')).default);
@@ -90,7 +90,55 @@ test('命令入口通过 dispatcher 收藏 face，再按精确名称发送；未
   assert.deepEqual(wire.frames.find((f) => f.action === 'send_msg').params.message, [{ type: 'face', data: { id: '66' } }]);
 });
 
-test('工具拒绝猜 ID、跨会话、第二次搜索/发送；失败不标记已发送', async () => {
+test('用途教学的工具链可从当前消息或同会话引用收藏，模型只提交名称且拿不到原生密钥', async () => {
+  const native = { type: 'mface', data: { emoji_id: 'teach-1', emoji_package_id: 'teach-pack', key: 'teaching-native-secret' } };
+  await appendMessage({ sessionKey: 'g-904', message_id: 90401, message_type: 'group', group_id: 904, user_id: 51, message: [native] });
+  const cases = [
+    { input: '这个表情包失落的时候用它', extra: [{ type: 'reply', data: { id: '90401' } }], group: 904, description: '失落 难过 沮丧' },
+    { input: '以后加班用这个', extra: [{ type: 'face', data: { id: '35' } }], group: 905, description: '加班 疲惫' },
+  ];
+  for (const [index, value] of cases.entries()) {
+    replies.push((body) => {
+      const schema = body.tools.find((entry) => entry.function.name === 'save_meme').function;
+      assert.match(schema.description, /教用途、情绪或名字/);
+      assert.deepEqual(Object.keys(schema.parameters.properties), ['description']);
+      assert.equal(schema.parameters.additionalProperties, false);
+      assert.ok(!JSON.stringify(body).includes('teaching-native-secret'));
+      return tool('save_meme', { description: value.description }, `teaching-${index}`);
+    }, (body) => {
+      const output = JSON.parse(body.messages.at(-1).content);
+      assert.equal(output.ok, true);
+      assert.deepEqual(output.missingParameters, []);
+      assert.ok(!JSON.stringify(output).includes('teaching-native-secret'));
+      return { role: 'assistant', content: '收下啦，按这个用途来用。' };
+    });
+    await dispatch(event(value.input, value.extra, value.group));
+    await drainSender();
+    const found = await searchMemes(`g-${value.group}`, value.description);
+    assert.equal(found.filter((item) => item.name === value.description).length, 1);
+  }
+});
+
+test('用途教学不放开工具素材边界：拒绝模型指定来源、无素材、多个素材及跨会话', async () => {
+  const before = (await searchMemes('g-906', '失落')).map((item) => item.id);
+  for (const extra of [{ sessionKey: 'g-999' }, { messageId: '90401' }, { url: 'https://example.com/meme.gif' }, { data: { id: '1' } }]) {
+    assert.throws(() => parseToolArguments('save_meme', JSON.stringify({ description: '失落', ...extra })), /参数不符合/);
+  }
+  const face = { type: 'face', data: { id: '36' } };
+  for (const value of [
+    { event: event('以后失落用这个', [], 906), sessionKey: 'g-906', error: /附上一个表情/ },
+    { event: event('以后失落用这个', [face, face], 906), sessionKey: 'g-906', error: /一次只能/ },
+    { event: event('以后失落用这个', [face], 906), sessionKey: 'g-999', error: /有效会话/ },
+  ]) {
+    const ctx = { sessionKey: value.sessionKey, event: value.event, actorId: '42', memeTurn: {}, mode: 'live' };
+    await assert.rejects(executeTool('save_meme', { description: '失落' }, ctx, settings), value.error);
+    await assert.rejects(executeTool('save_meme', { description: '再试一次' }, ctx, settings), /已经尝试收藏/);
+  }
+  assert.deepEqual((await searchMemes('g-906', '失落')).map((item) => item.id), before);
+  assert.deepEqual((await searchMemes('g-999', '失落')).map((item) => item.id), before);
+});
+
+test('工具拒绝猜 ID、错误调用上下文及第二次搜索/发送；共享收藏可跨会话选用', async () => {
   const { asset } = await collectMeme('g-902', { type: 'face', data: { id: '1' }, name: '开心' });
   const ctx = { sessionKey: 'g-902', event: event('发个表情', [], 902), actorId: '42', memeTurn: {}, mode: 'live' };
   await assert.rejects(executeTool('send_meme', { id: asset.id }, ctx, settings), /候选/);
@@ -101,8 +149,33 @@ test('工具拒绝猜 ID、跨会话、第二次搜索/发送；失败不标记�
   assert.equal(failed.ok, false); assert.ok(!ctx.memeTurn.sent);
   await assert.rejects(executeTool('send_meme', { id: asset.id }, ctx, settings), /已经尝试/);
   const outsider = { ...ctx, sessionKey: 'g-903', event: event('发个表情', [], 903), memeTurn: {} };
-  assert.deepEqual((await executeTool('search_memes', { query: '开心' }, outsider, settings)).items, []);
   await assert.rejects(executeTool('send_meme', { id: asset.id }, outsider, settings), /候选/);
+  assert.ok((await executeTool('search_memes', { query: '开心' }, outsider, settings)).items.some((item) => item.id === asset.id));
+  const mismatched = { ...outsider, event: event('发个表情', [], 999), memeTurn: { candidates: new Set([asset.id]) } };
+  await assert.rejects(executeTool('send_meme', { id: asset.id }, mismatched, settings), /有效会话/);
+  const sharedSend = await executeTool('send_meme', { id: asset.id }, outsider, settings);
+  assert.equal(sharedSend.ok, true);
+  assert.equal(wire.frames.filter((frame) => frame.action === 'send_msg').at(-1).params.group_id, 903);
+});
+
+test('完整链路：私聊收藏后群聊“发个表情包”，搜索全部候选再发到唤醒它的群', async () => {
+  const { asset } = await collectMeme('p-42', { type: 'mface', name: '私聊教的肥鱼娘',
+    data: { emoji_id: 'shared-girl', emoji_package_id: 'shared-pack', key: 'shared-native-secret' } });
+  wire.frames.length = 0;
+  replies.push(tool('search_memes', { query: '全部' }, 'shared-search'), (body) => {
+    const output = JSON.parse(body.messages.at(-1).content);
+    assert.ok(output.items.some((item) => item.id === asset.id));
+    assert.ok(!JSON.stringify(output).includes('shared-native-secret'));
+    assert.ok(!JSON.stringify(output).includes('p-42'));
+    return tool('send_meme', { id: asset.id }, 'shared-send');
+  }, { role: 'assistant', content: null });
+  await dispatch(event('肥鱼出来发个表情包', [], 907));
+  await drainSender();
+  const frames = wire.frames.filter((frame) => frame.action === 'send_msg');
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].params.group_id, 907);
+  assert.equal(frames[0].params.user_id, undefined);
+  assert.deepEqual(frames[0].params.message, [{ type: 'mface', data: asset.send.data }]);
 });
 
 test('Prompt 两种测试模式均不会收藏或发往 QQ；开关关闭立即拒绝', async () => {

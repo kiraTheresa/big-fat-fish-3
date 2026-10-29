@@ -110,9 +110,18 @@ test('缺原图和缺商城参数可暂存但不能发；拒绝歧义与不匹�
   assert.deepEqual(previewOnly.asset.missingParameters, ['emoji_id', 'emoji_package_id', 'key']);
 });
 
-test('发送隔离会话；失败不写成功占位，sender Promise 返回确认结果', async () => {
+test('私聊收藏可发送到当前群；目标仍由事件绑定，失败不写成功占位', async () => {
   const { asset } = await collectFromEvent(privateContext([face('103')]), { name: '测试表情' });
-  await assert.rejects(sendStoredMeme(group([]), asset.id));
+  const shared = await sendStoredMeme(group([]), asset.id);
+  assert.equal(shared.ok, true);
+  const sent = wire.frames.filter((frame) => frame.action === 'send_msg').at(-1);
+  assert.equal(sent.params.group_id, 123);
+  assert.equal(sent.params.user_id, undefined);
+  assert.deepEqual(sent.params.message, [face('103')]);
+  assert.equal((await readRecentMessages('g-123', 100)).at(-1).memeId, asset.id);
+  const count = wire.frames.length;
+  await assert.rejects(sendStoredMeme({ ...group([]), sessionKey: 'g-999' }, asset.id), /有效会话/);
+  assert.equal(wire.frames.length, count);
   const before = await readRecentMessages('p-456', 100);
   await drainSender();
   wire.failNextCall(1400, 'mock send failure');

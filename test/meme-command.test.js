@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemeTrigger } from '../src/triggers/meme.js';
+import { config } from '../src/config.js';
 
 const id = '12345678-1234-1234-1234-123456789abc';
 function fixture(text, { group = false, at = false, enabled = true, manage = false, ...dependencies } = {}) {
@@ -51,13 +52,14 @@ test('收藏必须带说明；成功显示 ID，重复和不完整分别说明',
   }
 });
 
-test('列表限制到当前会话且显示停用标记；名称发送必须唯一精确匹配', async () => {
+test('共享列表保留调用上下文且显示停用标记；名称发送必须唯一精确匹配', async () => {
   const list = fixture('/meme list 累', { search: async (session, query, opts) => {
     assert.equal(session, 'p-2'); assert.equal(query, '累'); assert.equal(opts.limit, 10); assert.equal(opts.includeUnavailable, true);
     return [{ id, name: '躺平', enabled: false }];
   } });
   await list.run();
   assert.match(list.replies[0], /已停用/);
+  assert.match(list.replies[0], /共享表情/);
   const send = fixture('/meme send 躺平');
   await send.run();
   assert.deepEqual(send.calls.at(-1), ['send', 'p-2', id]);
@@ -88,11 +90,15 @@ test('工具开关同样约束指令，关闭后不调用服务但仍能查看�
   assert.match(help.replies[0], /save/);
 });
 
-test('管理操作要求权限与完整 UUID，按会话修改且不删除素材', async () => {
+test('共享库管理在群聊和私聊都要求管理员与完整 UUID，不删除素材', async () => {
   const no = fixture(`/meme disable ${id}`, { group: true, at: true });
   await no.run();
   assert.match(no.replies[0], /管理员/);
   assert.deepEqual(no.calls, []);
+  const privateNo = fixture(`/meme disable ${id}`);
+  await privateNo.run();
+  assert.match(privateNo.replies[0], /管理员/);
+  assert.deepEqual(privateNo.calls, []);
   const yes = fixture(`/meme disable ${id}`, { manage: true });
   await yes.run();
   assert.deepEqual(yes.calls[0], ['update', 'p-2', id, { enabled: false }]);
@@ -103,4 +109,23 @@ test('管理操作要求权限与完整 UUID，按会话修改且不删除素材
   await invalid.run();
   assert.match(invalid.replies[0], /完整表情 ID/);
   assert.deepEqual(invalid.calls, []);
+});
+
+test('默认权限实现不再把私聊身份当作共享表情管理员', async () => {
+  const original = config.adminQq;
+  const replies = [];
+  const updates = [];
+  const ctx = { sessionKey: 'p-2', event: { message_type: 'private', user_id: 2,
+    message: [{ type: 'text', data: { text: `/meme disable ${id}` } }] }, reply: async (text) => replies.push(text) };
+  const trigger = createMemeTrigger({ settings: () => ({ tools: { save_meme: { enabled: true } } }),
+    update: async (...args) => updates.push(args) });
+  try {
+    config.adminQq = [];
+    await trigger.handle(ctx);
+    assert.match(replies.at(-1), /只有肥鱼管理员/);
+    assert.equal(updates.length, 0);
+    config.adminQq = ['2'];
+    await trigger.handle(ctx);
+    assert.deepEqual(updates, [['p-2', id, { enabled: false }]]);
+  } finally { config.adminQq = original; }
 });

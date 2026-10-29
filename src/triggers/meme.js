@@ -1,7 +1,7 @@
 // Explicit collection and library controls. Group commands retain the normal @ gate.
 import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
-import { canManageSession } from '../platform/permissions.js';
+import { getRole } from '../platform/permissions.js';
 import { getPromptConfig } from '../prompt/store.js';
 import { logger } from '../utils/logger.js';
 import { collectFromEvent, sendStoredMeme } from '../memes/service.js';
@@ -10,11 +10,11 @@ import { searchMemes, updateMeme } from '../store/meme-library.js';
 const HELP = [
   '本鱼的表情包：',
   '/meme save 名称或含义 — 附一张表情或引用它，教本鱼收藏',
-  '/meme list [关键词] — 看当前会话的收藏和 ID',
+  '/meme list [关键词] — 看肥鱼共享收藏和 ID',
   '/meme send 名称或ID — 发一个已收藏的表情',
   '/meme rename ID 新名称 — 修改名称/含义',
   '/meme disable ID / enable ID — 停用/恢复',
-  '群聊需 @ 本鱼；修改和停用需管理员。各会话的收藏独立。',
+  '群聊需 @ 本鱼；群聊和私聊共用收藏，改名、停用和恢复需肥鱼管理员。',
 ].join('\n');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 class CommandError extends Error {}
@@ -23,7 +23,8 @@ const requireId = (id) => { if (!UUID.test(id)) throw new CommandError('请从 /
 
 // Dependency injection keeps command behavior testable without a real QQ account.
 export function createMemeTrigger({ collect = collectFromEvent, send = sendStoredMeme,
-  search = searchMemes, update = updateMeme, settings = getPromptConfig, canManage = canManageSession } = {}) {
+  search = searchMemes, update = updateMeme, settings = getPromptConfig,
+  canManage = (event) => getRole(event.user_id) === 'admin' } = {}) {
   return {
     name: 'meme',
     match(event) { return /^\/(meme|表情)(\s|$)/.test(extractText(event)); },
@@ -47,9 +48,9 @@ export function createMemeTrigger({ collect = collectFromEvent, send = sendStore
         if (action === 'list') {
           if (args.length > 300) throw new CommandError('关键词请控制在 300 字以内。');
           const items = await search(ctx.sessionKey, args, { limit: 10, includeUnavailable: true });
-          await ctx.reply(items.length ? ['当前会话的表情（最多 10 个，可加关键词查找）：', ...items.map((item) =>
+          await ctx.reply(items.length ? ['肥鱼的共享表情（最多 10 个，可加关键词查找）：', ...items.map((item) =>
             `${item.name || '未命名'}${item.enabled === false ? '〔已停用〕' : item.missingParameters?.length ? '〔信息不完整〕' : ''}\n${item.id}`)].join('\n')
-            : '当前会话还没有匹配的表情。引用一张表情，用 /meme save 名称 教本鱼收藏。');
+            : '共享表情库还没有匹配的表情。引用一张表情，用 /meme save 名称 教本鱼收藏。');
           return;
         }
         if (action === 'send') {
@@ -65,7 +66,7 @@ export function createMemeTrigger({ collect = collectFromEvent, send = sendStore
           // The actual sticker is the successful response; no redundant success text.
           return;
         }
-        if (!canManage(ctx.event)) throw new CommandError('群聊中的修改、停用和恢复只有管理员可以操作。');
+        if (!canManage(ctx.event)) throw new CommandError('共享表情库的改名、停用和恢复只有肥鱼管理员可以操作。');
         const id = requireId(parts[0] ?? '');
         if (action === 'rename') {
           const name = requireText(parts.slice(1).join(' '), '用法：/meme rename ID 新名称或含义');
@@ -80,7 +81,7 @@ export function createMemeTrigger({ collect = collectFromEvent, send = sendStore
         if (error instanceof CommandError) { await ctx.reply(error.message); return; }
         logger.warn('[meme] 表情指令失败', { action, code: error.code ?? 'MEME_COMMAND_FAILED' });
         await ctx.reply(action === 'save' ? '没能收藏：请附一张表情或引用当前会话里的表情，再试一次。原图或表情参数不完整时可能无法保存。'
-          : '这次表情操作没有完成，请确认 ID 属于当前会话且表情仍可用。');
+          : '这次表情操作没有完成，请确认 ID 在共享表情库中且表情仍可用。');
       }
     },
   };

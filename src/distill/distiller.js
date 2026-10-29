@@ -29,6 +29,7 @@ export { extractLockedLines, patchKeepsLockedLines };
 // memory 条目式、输出纯 JSON、各自上限内）。{maxBytes} 占位符在调用时以
 // config.personaMaxBytes 替换——调用时读取而非模块加载时固化，保证测试注入生效。
 import { getPromptConfig } from '../prompt/store.js';
+import { DISTILL_PRESERVATION_RULES } from '../prompt/defaults.js';
 
 // 待消化对话里 bot 行的统一昵称（入站行用 sender.nickname ?? user_id，同 chat.js 约定）
 const BOT_SPEAKER = '大肥鱼';
@@ -49,8 +50,8 @@ function speakerOf(rec) {
 // LLM 只看 system 模板时只知道抽象上限 {maxBytes}，不知道当前文件已经多满——群
 // g-741883823 的 character.md 曾涨到 4060/4096（99%），每轮补丁稳定超限被拒、水位
 // 卡死、调度器 60s 一次真调 LLM 烧钱死循环。故把「实际字节/上限」写进 user（预算
-// 每会话动态、system 模板保持全局静态），任一文件 > 90% 上限时再追加「务必净减」
-// 硬指令，让模型明确知道这次必须压到上限以下且比现有内容更短。
+// 每会话动态、system 模板保持全局静态），任一文件 > 90% 上限时再追加压缩提示。
+// 压缩仅限非锁定内容；全锁定文件不能为了净减字节而破坏保留约束。
 const BUDGET_WARN_RATIO = 0.9;
 
 // 单文件标注行（+ 近上限压缩警示行）：警示紧跟标注、位于文件内容之前
@@ -58,7 +59,7 @@ function budgetHeader(name, bytes, maxBytes, slimmingHint) {
   const lines = [`现有 ${name}（${bytes}/${maxBytes} 字节）：`];
   if (bytes > maxBytes * BUDGET_WARN_RATIO) {
     const pct = Math.floor((bytes / maxBytes) * 100);
-    lines.push(`⚠ 该文件已用 ${pct}%，接近上限：本次输出必须更精简——${slimmingHint}，务必净减字节，不要新增。`);
+    lines.push(`⚠ 该文件已用 ${pct}%，接近上限：仅对非锁定内容${slimmingHint}，有可压缩内容时务必净减字节，不要新增。锁定行逐行原样保留；无可压缩内容时保持原文。`);
   }
   return lines;
 }
@@ -81,7 +82,8 @@ export function buildMessages(persona, newMessages, template = getPromptConfig()
   return [
     {
       role: 'system',
-      content: template.replaceAll('{maxBytes}', String(config.personaMaxBytes)),
+      // Published and custom templates can predate the storage preservation contract.
+      content: `${template.replaceAll('{maxBytes}', String(config.personaMaxBytes))}\n\n${DISTILL_PRESERVATION_RULES}`,
     },
     { role: 'user', content: user },
   ];
