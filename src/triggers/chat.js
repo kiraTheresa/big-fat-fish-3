@@ -138,7 +138,21 @@ export default {
     const messages = built.request.messages;
     const trace = [];
     const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
+    let imageAttempts = 0;
+    let imageFailed = false;
     const toolContext = { sessionKey, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
+      onImageAttempt(entry) {
+        if (entry.phase === 'error') imageFailed = true;
+        if (entry.phase !== 'request') return;
+        // The gateway emits request only after usage admission. Reused tool results
+        // do not reach it, so progress always corresponds to an actual attempt.
+        imageAttempts++;
+        const progress = imageAttempts === 1 ? '收到～本鱼在画啦，生成图片需要一点时间，稍等哦'
+          : imageFailed ? '刚才那次没画成，本鱼再试一次，稍等哦'
+            : `本鱼开始画第 ${imageAttempts} 张图啦，稍等哦`;
+        imageFailed = false;
+        ctx.reply(progress);
+      },
       onImage: (b64, prompt) => deliverGeneratedImage(ctx, b64, prompt) };
 
     // ---- 识图分流：图源判定 →「在看」提示 → 现拉 base64（不落盘）----
@@ -217,6 +231,7 @@ export default {
       let segments = [reply];
       for (const mod of chatReplyChain) {
         if (poke) continue; // 戳一戳立即发一条短回复，不引用不存在的消息。
+        if (imageAttempts > 0 && mod.name === 'delay') continue; // 绘图已经等待过，结果无需再拟人延迟。
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
       persistAndSend(reply, segments);

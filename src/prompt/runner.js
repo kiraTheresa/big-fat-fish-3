@@ -42,7 +42,10 @@ export async function runToolConversation(request, settings, context, { trace = 
             if (count >= settings.execution.maxToolCalls) throw new Error('本轮工具次数已达上限');
             count++;
             toolStarted = true;
-            try { output = await execute(name, args, { ...context, onImageAttempt: (entry) => trace.push({ ...entry, round }) }, settings); }
+            try { output = await execute(name, args, { ...context, onImageAttempt: (entry) => {
+              trace.push({ ...entry, round });
+              context.onImageAttempt?.(entry);
+            } }, settings); }
             catch (error) { output = { ok: false, error: redactText(error.message) }; }
             // Cache failures too: a timed-out side effect may already have completed upstream.
             if (name !== 'recall_memory') memo.set(key, output);
