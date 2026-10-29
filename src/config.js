@@ -116,7 +116,7 @@ export const config = {
   // 视觉模型（留空 = 识图关闭，同 deepseekApiKey 模式；deepseek-flash 实测可看图，
   // 单图约 1024 tokens，图只能放 user 消息块——system/assistant 带图 400）
   deepseekVisionModel: process.env.DEEPSEEK_VISION_MODEL ?? 'deepseek-flash',
-  // 周围图时间窗（ms）：@ 消息不带图时，群聊同用户该窗口内最新一条图可被识图引用
+  // 周围图时间窗（ms）：消息不带图时，同会话同用户该窗口内最新一条图可被识图引用
   visionImageWindowMs: num(process.env.VISION_IMAGE_WINDOW_MS, 120000),
   // 图片现拉超时（ms）：QQ CDN rkey URL 直接 GET（带 UA 防 403，实测可下）
   visionFetchTimeoutMs: num(process.env.VISION_FETCH_TIMEOUT_MS, 30000),

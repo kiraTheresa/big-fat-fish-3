@@ -69,7 +69,8 @@ const chat = (await import('../src/triggers/chat.js')).default;
 config.behavior.reply.delay.enabled = false;
 
 after(async () => {
-  await delay(SEND_INTERVAL_MS * 3); // 等发送队列的间隔定时器自然落定
+  const { drainSender } = await import('../src/sender/sender.js');
+  assert.equal(await drainSender(5000), true, '关闭 mock 前应发完所有回复');
   onebot.stopConnection();
   await onebotServer.close();
   await llmServer.close();
@@ -103,7 +104,7 @@ function privateEvent({ text, userId, imageUrls = [] }) {
   ++messageSeq;
   const message = [];
   for (const url of imageUrls) message.push({ type: 'image', data: { file: 'x.png', url } });
-  message.push({ type: 'text', data: { text } });
+  if (text !== null) message.push({ type: 'text', data: { text } });
   return {
     post_type: 'message',
     message_type: 'private',
@@ -112,7 +113,7 @@ function privateEvent({ text, userId, imageUrls = [] }) {
     time: 1760005000 + messageSeq,
     message_id: -600000 + messageSeq,
     message,
-    raw_message: `${imageUrls.map(() => '[CQ:image,file=x.png]').join('')}${text}`,
+    raw_message: `${imageUrls.map(() => '[CQ:image,file=x.png]').join('')}${text ?? ''}`,
     sender: { nickname: `私聊${userId}`, card: '', role: '' },
   };
 }
@@ -369,4 +370,67 @@ test('私聊带图：vision 路径，text 块无私聊前缀', { timeout: 10000 
   await onebotServer.waitForFrame(
     onlyNew(mark, (f) => f.action === 'send_msg' && f.params?.message_type === 'private' && f.params?.user_id === 3008)
   );
+  await onebotServer.waitForFrame(onlyNew(mark, isReplySend));
+});
+
+test('私聊纯图片：没有 text 段也发送图片给视觉模型', async () => {
+  const mark = llmServer.requests.length;
+  await dispatcher.dispatch(privateEvent({ text: null, userId: 3010, imageUrls: [`${imageServer.url}/img`] }));
+  assert.equal(llmServer.requests.length, mark + 1);
+  const request = llmServer.requests.at(-1).body;
+  assert.equal(request.model, 'deepseek-flash');
+  assert.match(request.messages.at(-1).content[0].text, /图片/);
+  assert.equal(request.messages.at(-1).content[1].image_url.url, `data:image/png;base64,${IMG_BYTES.toString('base64')}`);
+});
+
+test('私聊先发图再发文字：从本地会话历史取最近图片，无需 OneBot 私聊历史 API', async () => {
+  const { appendMessage } = await import('../src/store/message-store.js');
+  const event = privateEvent({ text: '刚发的图是什么', userId: 3011 });
+  const sessionKey = 'p-3011';
+  // 不等待写入，模拟 dispatcher 接收图片后紧接着收到文字。
+  appendMessage({ ...historyImageMsg({ userId: '3011', time: event.time - 1, messageId: -9011 }), sessionKey, message_type: 'private' });
+  const mark = onebotServer.frames.length;
+  await dispatcher.dispatch(event);
+  const request = llmServer.requests.at(-1).body;
+  assert.equal(request.model, 'deepseek-flash');
+  assert.equal(request.messages.at(-1).content[0].text, event.raw_message);
+  assert.equal(request.messages.at(-1).content[1].image_url.url, `data:image/png;base64,${IMG_BYTES.toString('base64')}`);
+  assert.ok(!onebotServer.frames.slice(mark).some((f) => /history/.test(f.action)));
+});
+
+test('私聊近图边界：排除过期、未来、无时间、他人、机器人、重置前及其他会话图片', async (t) => {
+  const { appendMessage } = await import('../src/store/message-store.js');
+  const { updateState } = await import('../src/store/session-state.js');
+  let userId = 3020;
+  for (const kind of ['expired', 'future', 'missing-time', 'other-user', 'bot', 'reset', 'other-session']) {
+    await t.test(kind, async () => {
+      const event = privateEvent({ text: `看图边界 ${kind}`, userId: userId++ });
+      const sessionKey = `p-${event.user_id}`;
+      const record = { ...historyImageMsg({ userId: event.user_id, time: event.time - 1, messageId: -event.user_id }), sessionKey, message_type: 'private' };
+      if (kind === 'expired') record.time = event.time - config.visionImageWindowMs / 1000 - 1;
+      if (kind === 'future') record.time = event.time + 1;
+      if (kind === 'missing-time') delete record.time;
+      if (kind === 'other-user') record.user_id = 99999;
+      if (kind === 'bot') record.bot = true;
+      if (kind === 'reset') await updateState(sessionKey, { resetAt: event.time });
+      if (kind === 'other-session') record.sessionKey = 'p-99999';
+      await appendMessage(record);
+      await dispatcher.dispatch(event);
+      assert.equal(llmServer.requests.at(-1).body.model, 'deepseek-chat');
+      assert.equal(typeof llmServer.requests.at(-1).body.messages.at(-1).content, 'string');
+    });
+  }
+});
+
+test('私聊图源优先级：当前图片优先，其次最近的历史图片', async () => {
+  const { appendMessage } = await import('../src/store/message-store.js');
+  for (const own of [true, false]) {
+    const event = privateEvent({ text: '看这张', userId: own ? 3040 : 3041, imageUrls: own ? [`${imageServer.url}/img`] : [] });
+    const snapshot = (time, url, messageId) => ({ sessionKey: `p-${event.user_id}`, message_type: 'private',
+      ...historyImageMsg({ userId: event.user_id, time, messageId }), message: [{ type: 'image', data: { url } }] });
+    await appendMessage(snapshot(event.time - 2, 'http://127.0.0.1:1/img', -9040));
+    if (!own) await appendMessage(snapshot(event.time - 1, `${imageServer.url}/img`, -9041));
+    await dispatcher.dispatch(event);
+    assert.equal(llmServer.requests.at(-1).body.model, 'deepseek-flash');
+  }
 });

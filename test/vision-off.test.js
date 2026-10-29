@@ -105,3 +105,14 @@ test('识图关闭：带图消息纯文本路径，model=chat、content 为 stri
     -1
   );
 });
+
+test('识图关闭：私聊纯图片仍静默，不调用文本模型猜图', async () => {
+  const mark = llmServer.requests.length;
+  await dispatcher.dispatch({
+    post_type: 'message', message_type: 'private', user_id: 4002, self_id: SELF_ID,
+    time: 1760006001, message_id: -800002,
+    message: [{ type: 'image', data: { file: 'x.png', url: `${imageServer.url}/img` } }],
+    raw_message: '[CQ:image,file=x.png]', sender: { nickname: '纯图' },
+  });
+  assert.equal(llmServer.requests.length, mark);
+});

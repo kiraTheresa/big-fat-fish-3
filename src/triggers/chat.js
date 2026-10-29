@@ -5,7 +5,7 @@
 //   - 未配置 DEEPSEEK_API_KEY → 恒不触发（不吞私聊消息）；
 //   - 私聊 → 全量触发（ping 等更早注册的触发器靠「命中即停」优先）；
 //   - 群聊 → 入口条件组合器（chat-conditions.js）：任一开关开启且命中的条件模块即触发。
-// handle：提取 text 段为内容（空则忽略）→ 会话冷却检查 → 并行读 persona 与会话状态 →
+// handle：提取 text 段为内容（纯图启用识图时补充输入，其余空内容忽略）→ 会话冷却检查 → 并行读 persona 与会话状态 →
 //   读 JSONL 上下文（bot 行→assistant，入站→user，当前消息按 message_id 去重；/reset
 //   水位 resetAt 之前的行入站与 bot 同滤）→ system 组装（chat-system.js：character →
 //   ## 记忆 → memory → ## 行为规则 固定前缀 + ## 当前场景 动态尾部，前缀逐字节稳定
@@ -15,7 +15,7 @@
 //   || 分段连发）→ 存储合并 + 逐条发送；
 //   所有模型请求在统一 gateway 记录成功/失败及用量；
 //   LLM 失败/超时 → 固定兜底文案 + WARN（兜底不走加工链，告警类消息无需拟人延迟）。
-// 识图分流（upgrade-vision）：消息带图（或群聊同用户时间窗内近图）→「在看」提示 →
+// 识图分流（upgrade-vision）：消息带图（或同会话同用户时间窗内近图）→「在看」提示 →
 //   现拉 base64（不落盘）→ 最后一条 user content 换块数组、模型换 deepseek-flash；
 //   任一步失败回退纯文本路径（看图是增强不是依赖）；DEEPSEEK_VISION_MODEL 空 = 关闭。
 import { config } from '../config.js';
@@ -42,14 +42,26 @@ import { sendGroup, sendPrivate } from '../sender/sender.js';
 const FALLBACK_REPLY = 'AI 开小差了，稍后再试～';
 const LOOKING_IMAGE_REPLY = '本鱼凑近看看这张图哦，稍等～';
 
-// 识图图源判定：@ 消息自带图优先（段内 URL 直接可用，取第一张——单次一张边界）；
-// 无图时群聊查同用户时间窗内最新近图（get_group_msg_history，实测 NapCat
-// params { group_id, count }、响应 data.messages[]；私聊历史查询暂不支持——
-// get_friend_msg_history 未实测，列入已知行为）。只定 URL 不下载（下载在「在看」
-// 提示之后）；无图源 → null。
-async function resolveImageUrl(event) {
+// 自带图优先；私聊从已落盘的同会话记录取近图，群聊沿用 OneBot 历史查询。
+// 只定 URL 不下载（下载在「在看」提示之后）；无图源 → null。
+async function resolveImageUrl(event, records, state) {
   const own = extractImages(event);
   if (own.length > 0) return own[0].data.url;
+  if (event.message_type === 'private') {
+    const windowSec = config.visionImageWindowMs / 1000;
+    for (let i = records.length - 1; i >= 0; i--) {
+      const msg = records[i];
+      if (msg.bot || msg.message_type !== 'private') continue;
+      if (String(msg.message_id) === String(event.message_id)) continue;
+      if (String(msg.user_id) !== String(event.user_id)) continue;
+      const age = event.time - msg.time;
+      if (!Number.isFinite(age) || age < 0 || age > windowSec) continue;
+      if (state.resetAt !== undefined && msg.time < state.resetAt) continue;
+      const seg = extractImages(msg)[0];
+      if (seg !== undefined) return seg.data.url;
+    }
+    return null;
+  }
   if (event.message_type !== 'group') return null;
   let history;
   try {
@@ -89,9 +101,13 @@ export default {
   async handle(ctx, { poke = false } = {}) {
     const { event, sessionKey } = ctx;
 
+    const version = getPublishedPrompt();
+    const settings = version.config;
+    const visionEnabled = !poke && settings.context.vision && config.deepseekVisionModel !== '';
     const text = extractText(event);
     // @ 本身就是呼唤；保留纯文本提取语义，在对话入口补充动作描述。
     const content = poke ? '[戳一戳] 戳了戳你' : text ||
+      (visionEnabled && extractImages(event).length > 0 ? '（对方发来了一张图片，没有附加文字，请根据图片内容简短回应。）' : '') ||
       (event.message_type === 'group' && matchAt(event) ? '（对方 @ 了你，没有附加文字，请简短回应。）' : '');
     if (content === '') {
       logger.info(`[chat] ${sessionKey} 消息无文本内容，忽略`);
@@ -108,8 +124,6 @@ export default {
     cooldowns.set(sessionKey, Date.now());
     await ctx.activateMemory?.();
 
-    const version = getPublishedPrompt();
-    const settings = version.config;
     const [persona, state, records] = await Promise.all([
       getPersona(sessionKey, settings.prompts.seed), readState(sessionKey), readRecentMessages(sessionKey, 1000),
     ]);
@@ -130,10 +144,10 @@ export default {
     // ---- 识图分流：图源判定 →「在看」提示 → 现拉 base64（不落盘）----
     // 任一步失败（无图源/历史查询挂/下载挂）均 visionB64=null，messages 原样走纯文本——
     // 看图是增强不是依赖。入站 raw_message 本就含 [CQ:image] 痕迹（dispatcher 已落盘），
-    // 后续上下文天然知道「发过图」；图本身不进上下文（边界纪律），追问靠首答文字自洽
+    // 历史保持文字占位；命中近图窗口的追问会重新拉图，图片只附到本轮 user 消息。
     let visionB64 = null;
-    if (!poke && settings.context.vision && config.deepseekVisionModel !== '') {
-      const imageUrl = await resolveImageUrl(event);
+    if (visionEnabled) {
+      const imageUrl = await resolveImageUrl(event, records, state);
       if (imageUrl !== null) {
         await ctx.reply(LOOKING_IMAGE_REPLY); // 过渡提示先出站，赶在拉图/视觉推理前
         try {
