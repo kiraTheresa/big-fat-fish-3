@@ -106,6 +106,8 @@ export const config = {
   deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
   // LLM 调用超时（ms）
   chatTimeoutMs: num(process.env.CHAT_TIMEOUT_MS, 60000),
+  // 对话/识图默认流式接收；不兼容的中转可设 false，提炼仍使用完整 JSON。
+  chatStream: process.env.CHAT_STREAM !== 'false',
   // 每次对话携带的历史条数（会话 JSONL 尾部）
   chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
   // 会话冷却启动初值（ms）；运行时使用 behavior.chat.cooldownMs，支持面板热更新

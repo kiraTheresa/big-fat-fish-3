@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { buildSystemPrompt } from '../triggers/chat-system.js';
 import { toolAvailability, toolDefinitions } from '../tools/registry.js';
+import { chatStreamOptions } from '../utils/chat-stream.js';
 
 export function buildChatRequest(settings, { persona, records = [], state = {}, event, text, nowMs = Date.now(), systemSuffix = '' }) {
   const isGroup = event.message_type === 'group';
@@ -37,7 +38,7 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
   const messages = [{ role: 'system', content: system }, ...kept, { role: 'user', content: isGroup ? `${speaker}: ${text}` : text }];
   const tools = toolDefinitions(settings, String(event.user_id));
   return {
-    request: { model: config.deepseekModel, messages, ...(tools.length ? { tools } : {}) },
+    request: { model: config.deepseekModel, messages, ...chatStreamOptions(config.chatStream), ...(tools.length ? { tools } : {}) },
     inspections, summary: { candidates: inspections.length, filtered: count, limited: limited.length, sent: kept.length, systemBytes: Buffer.byteLength(system), historyBytes: kept.reduce((n, m) => n + Buffer.byteLength(m.content), 0), budgetBytes: context.budgetBytes, candidateLimit: 1000, budgetMeaning: 'system + 历史文字的字节粗算；不含本轮输入、图片、工具定义及协议开销，不是 token 上限' },
     availability: toolAvailability(settings, String(event.user_id)),
   };

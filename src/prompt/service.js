@@ -72,7 +72,7 @@ export function createPromptService() {
     return sanitizeTrace({ ...prepared.built, snapshotId: value.snapshotId, target: prepared.target });
   }
   function overrideRequest(override, original) {
-    if (!override || typeof override !== 'object' || Array.isArray(override) || Object.keys(override).some((k) => !['model', 'messages', 'tools'].includes(k)) || override.model !== original.model || !Array.isArray(override.messages) || !override.messages.length || override.messages.length > 220 || JSON.stringify(override).length > 250000) throw promptError('实验 JSON 仅接受当前 model、messages 和已声明的 tools');
+    if (!override || typeof override !== 'object' || Array.isArray(override) || Object.keys(override).some((k) => !['model', 'messages', 'tools', 'stream', 'stream_options'].includes(k)) || override.model !== original.model || override.stream !== original.stream || JSON.stringify(override.stream_options) !== JSON.stringify(original.stream_options) || !Array.isArray(override.messages) || !override.messages.length || override.messages.length > 220 || JSON.stringify(override).length > 250000) throw promptError('实验 JSON 仅接受当前 model、messages、已声明的 tools 和原有流式选项');
     for (const msg of override.messages) {
       if (!msg || !['system', 'user', 'assistant', 'tool'].includes(msg.role) || !(typeof msg.content === 'string' || msg.content === null || Array.isArray(msg.content))) throw promptError('实验消息的 role / content 不正确');
     }

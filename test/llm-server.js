@@ -44,6 +44,16 @@ export async function startLlmServer() {
         res.end(JSON.stringify({ error: 'mock llm down once' }));
         return;
       }
+      if (mode.kind === 'stream') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        mode.write(res, body);
+        return;
+      }
+      if (body?.stream) {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: 'assistant', content: mode.content }, finish_reason: 'stop' }], ...(mode.usage !== null ? { usage: mode.usage } : {}) })}\n\ndata: [DONE]\n\n`);
+        return;
+      }
       // kind === 'ok'：usage 为 null 时响应整体不含 usage 字段（缺 usage 容错用例）
       const payload = { choices: [{ message: { role: 'assistant', content: mode.content } }] };
       if (mode.usage !== null) payload.usage = mode.usage;
@@ -58,6 +68,9 @@ export async function startLlmServer() {
     port: server.address().port,
     url: `http://127.0.0.1:${server.address().port}`,
     requests,
+    setStream(write) {
+      mode = { kind: 'stream', write };
+    },
     setReply(content, usage = DEFAULT_USAGE) {
       mode = { kind: 'ok', content, usage };
     },

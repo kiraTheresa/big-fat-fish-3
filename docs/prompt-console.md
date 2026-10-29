@@ -97,6 +97,10 @@
 
 默认最多 3 轮工具、4 次执行，可在限定范围内编辑。相同副作用调用在一轮对话内复用结果，包含失败结果；工具已执行后发生模型错误不回退重跑。进程重启不重放未完成测试。这不是跨进程、跨入站消息的“恰好一次”投递保证。
 
+聊天和识图默认以 SSE 流式接收，合并文本、reasoning 与工具参数；收到正常结束标记并通过既有完整参数校验后才执行工具。QQ 最终文字仍按原分段规则发送，不逐 token 发消息。流中断、输出截断或格式错误按调用失败处理，不拿部分参数执行工具，也不自动重发该请求。提炼仍使用完整 JSON 响应。
+
+流式协议依据 [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)；兼容 usage 随结束帧返回或独立返回，收到的用量即使随后断流也保留记账。运行 trace 中的 `stream` 事件记录 `first_delta`、`first_content` 和 `first_tool_call` 相对请求开始的毫秒数，`response` 仍包含完整结果与总耗时。控制台预览包含实际流式选项，实验 JSON 保留这些选项。若中转不接受流式请求，可配置 `CHAT_STREAM=false` 后重启；如果它忽略 stream 并返回普通 JSON，则直接使用同一响应。
+
 ## 测试与观察
 
 - 测试消息不发送给 QQ；remember / recall 在隔离的内存副本上读写。
