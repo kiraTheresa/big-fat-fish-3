@@ -46,7 +46,7 @@ const pages = {
   usage: ['调用与用量', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
 };
 const state = {
-  token: '', page: pages[location.hash.slice(1)] ? location.hash.slice(1) : 'overview',
+  token: '', tokenExpiresAt: 0, page: pages[location.hash.slice(1)] ? location.hash.slice(1) : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
   filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { since: '', until: '', kind: '', sessionKey: '' } },
@@ -54,6 +54,75 @@ const state = {
 let promptConsole;
 let toastTimer;
 let lastFocus;
+const LOGIN_STORAGE_KEY = 'big-fat-fish.admin-session.v1';
+const LOGIN_DURATION_MS = 30 * 60 * 1000;
+const LOGIN_EXPIRED_MESSAGE = '登录已超过 30 分钟，请重新输入管理令牌。';
+let loginAttempt = 0;
+let loginTimer;
+
+function clearSavedLogin() {
+  try { localStorage.removeItem(LOGIN_STORAGE_KEY); } catch { /* Storage may be disabled. */ }
+}
+
+function readSavedLogin() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOGIN_STORAGE_KEY));
+    if (typeof saved?.token === 'string' && saved.token.trim()
+      && Number.isFinite(saved.expiresAt) && saved.expiresAt > Date.now()
+      && saved.expiresAt <= Date.now() + LOGIN_DURATION_MS) return saved;
+  } catch { /* Invalid or unavailable storage must not prevent manual login. */ }
+  clearSavedLogin();
+  return null;
+}
+
+function expireLogin() {
+  if (!state.token || !state.tokenExpiresAt || Date.now() < state.tokenExpiresAt) return false;
+  logout(LOGIN_EXPIRED_MESSAGE);
+  return true;
+}
+
+function resetLoginButton() {
+  $('.login-submit').disabled = false;
+  $('.login-submit').innerHTML = '进入工作台 <span aria-hidden="true">↗</span>';
+}
+
+async function login(token, expiresAt = null) {
+  const attempt = ++loginAttempt;
+  $('.login-submit').disabled = true;
+  $('.login-submit').textContent = expiresAt ? '正在恢复登录…' : '连接管理服务…';
+  $('#login-error').hidden = true;
+  try {
+    const status = await api('/status', { token });
+    if (attempt !== loginAttempt) return;
+    const deadline = expiresAt ?? Date.now() + LOGIN_DURATION_MS;
+    if (deadline <= Date.now()) { logout(LOGIN_EXPIRED_MESSAGE); return; }
+    // Restoring a login keeps its original deadline; only manual login starts a new period.
+    if (expiresAt === null) {
+      try { localStorage.setItem(LOGIN_STORAGE_KEY, JSON.stringify({ token, expiresAt: deadline })); }
+      catch { clearSavedLogin(); toast('浏览器无法保存登录状态，刷新后需重新输入令牌。', true); }
+    }
+    state.token = token;
+    state.tokenExpiresAt = deadline;
+    clearTimeout(loginTimer);
+    loginTimer = setTimeout(expireLogin, deadline - Date.now());
+    $('#admin-token').value = '';
+    $('#login').hidden = true;
+    $('#app').hidden = false;
+    updateStatus(status);
+    await loadPage();
+    if (attempt === loginAttempt && state.token) $('#content').focus();
+  } catch (error) {
+    if (attempt !== loginAttempt) return;
+    if (error.status === 401) clearSavedLogin();
+    $('#login-error').textContent = error.message;
+    $('#login-error').hidden = false;
+  } finally { if (attempt === loginAttempt) resetLoginButton(); }
+}
+
+async function restoreLogin() {
+  const saved = readSavedLogin();
+  if (saved) await login(saved.token, saved.expiresAt);
+}
 
 function toast(message, error = false) {
   clearTimeout(toastTimer);
@@ -63,9 +132,14 @@ function toast(message, error = false) {
   toastTimer = setTimeout(() => { $('#toast').hidden = true; }, error ? 7000 : 3500);
 }
 
-function logout(message = '') {
+function logout(message = '', { forget = true } = {}) {
+  loginAttempt++;
+  clearTimeout(loginTimer);
+  if (forget) clearSavedLogin();
+  resetLoginButton();
   promptConsole?.clear();
   state.token = '';
+  state.tokenExpiresAt = 0;
   state.config = null;
   state.dirty = false;
   state.sequence++;
@@ -88,6 +162,7 @@ function logout(message = '') {
 }
 
 async function api(path, { method = 'GET', body, token = state.token } = {}) {
+  if (token === state.token && expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
   let response;
   try {
     response = await fetch(`/api${path}`, {
@@ -525,25 +600,8 @@ document.addEventListener('change', (event) => {
 });
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = $('.login-submit');
   const token = $('#admin-token').value.trim();
-  if (!token) return;
-  button.disabled = true;
-  button.textContent = '连接管理服务…';
-  $('#login-error').hidden = true;
-  try {
-    const status = await api('/status', { token });
-    state.token = token;
-    $('#admin-token').value = '';
-    $('#login').hidden = true;
-    $('#app').hidden = false;
-    updateStatus(status);
-    await loadPage();
-    $('#content').focus();
-  } catch (error) {
-    $('#login-error').textContent = error.message;
-    $('#login-error').hidden = false;
-  } finally { button.disabled = false; button.innerHTML = '进入工作台 <span aria-hidden="true">↗</span>'; }
+  if (token && !$('.login-submit').disabled) await login(token);
 });
 $('#toggle-token').addEventListener('click', () => {
   const show = $('#admin-token').type === 'password';
@@ -566,6 +624,14 @@ const navigationGroups = [
 ];
 $('#navigation').innerHTML = navigationGroups.map(([label, keys]) => `<div class="nav-group"><p class="nav-label">${label}</p>${keys.map((page) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(pages[page][0])}</span></a>`).join('')}</div>`).join('');
 window.addEventListener('beforeunload', (event) => { if (state.dirty || state.saving) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('focus', expireLogin);
+window.addEventListener('pageshow', expireLogin);
+document.addEventListener('visibilitychange', expireLogin);
+window.addEventListener('storage', (event) => {
+  if ((event.key === LOGIN_STORAGE_KEY || event.key === null) && (state.token || $('.login-submit').disabled)) {
+    logout('登录状态已在其他页面更改，请重新登录。', { forget: false });
+  }
+});
 window.addEventListener('hashchange', () => {
   const next = location.hash.slice(1);
   if (pages[next] && next !== state.page) navigate(next);
@@ -574,3 +640,4 @@ window.addEventListener('hashchange', () => {
 setInterval(() => {
   if (state.token && state.live && !state.loading && !state.dirty && !document.hidden && !$('#detail-dialog').open && !state.cursor && ['overview', 'events', 'logs', 'usage'].includes(state.page) && !$('#content').contains(document.activeElement)) loadPage({ quiet: true });
 }, 20000);
+restoreLogin();

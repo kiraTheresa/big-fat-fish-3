@@ -22,7 +22,7 @@
         <form id="login-form">
           <label for="admin-token">管理令牌</label>
           <div class="token-input"><input id="admin-token" name="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="输入 ADMIN_TOKEN"><button type="button" id="toggle-token" class="text-button" aria-label="显示管理令牌" aria-pressed="false">显示</button></div>
-          <p class="field-hint">使用启动时配置的 ADMIN_TOKEN。令牌仅在当前页面内存中保留。</p>
+          <p class="field-hint">使用启动时配置的 ADMIN_TOKEN。当前浏览器记住登录 30 分钟，期间刷新无需重新输入；退出后立即清除。</p>
           <p id="login-error" class="form-error" role="alert" hidden></p>
           <button type="submit" class="button primary login-submit">进入工作台 <span aria-hidden="true">↗</span></button>
         </form>
