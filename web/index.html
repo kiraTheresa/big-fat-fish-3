@@ -4,51 +4,49 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light">
-    <meta name="theme-color" content="#e9f3f0">
+    <meta name="theme-color" content="#f4f5f7">
     <meta name="description" content="大肥鱼本地管理台：查看消息、管理配置与权限、调度任务和观察用量。">
-    <title>大肥鱼 · 管理台</title>
+    <title>大肥鱼 · 开发工作台</title>
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/media.css">
     <script type="module" src="/app.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#content">跳到主要内容</a>
-    <div class="ambient ambient-a" aria-hidden="true"></div>
-    <div class="ambient ambient-b" aria-hidden="true"></div>
-    <div class="ambient ambient-c" aria-hidden="true"></div>
 
     <section id="login" class="login-view" aria-labelledby="login-title">
       <div class="login-card glass">
         <div class="brand-mark large" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div>
         <p class="eyebrow">BIG FAT FISH / CONSOLE</p>
-        <h1 id="login-title">你好，饲养员。</h1>
-        <p class="login-intro">消息、能力与每一次运行，<br>都在这里照看。</p>
+        <h1 id="login-title">登录工作台</h1>
+        <p class="login-intro">调试 Prompt、检查运行状态、管理实例配置。</p>
         <form id="login-form">
           <label for="admin-token">管理令牌</label>
           <div class="token-input"><input id="admin-token" name="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="输入 ADMIN_TOKEN"><button type="button" id="toggle-token" class="text-button" aria-label="显示管理令牌" aria-pressed="false">显示</button></div>
-          <p class="field-hint">使用启动时配置的 ADMIN_TOKEN。令牌仅在当前页面内存中保留。</p>
+          <p class="field-hint">使用启动时配置的 ADMIN_TOKEN。当前浏览器记住登录 30 分钟，期间刷新无需重新输入；退出后立即清除。</p>
           <p id="login-error" class="form-error" role="alert" hidden></p>
-          <button type="submit" class="button primary login-submit">进入管理台 <span aria-hidden="true">↗</span></button>
+          <button type="submit" class="button primary login-submit">进入工作台 <span aria-hidden="true">↗</span></button>
         </form>
         <div class="login-footer"><span class="status-dot neutral"></span>本地管理 · 登录后读取运行数据</div>
       </div>
-      <p class="login-caption">一点秩序，一池自在。</p>
+      <p class="login-caption">BIG FAT FISH · 本地开发与调试</p>
     </section>
 
     <div id="app" class="app-shell" hidden>
       <aside class="sidebar glass" aria-label="管理导航">
-        <a class="brand" href="#overview" data-page="overview"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span><span><strong>大肥鱼</strong><small>管理台</small></span></a>
-        <p class="nav-label">工作空间</p>
+        <a class="brand" href="#overview" data-page="overview"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span><span><strong>大肥鱼</strong><small>开发工作台</small></span></a>
+
         <nav id="navigation" aria-label="页面"></nav>
-        <div class="sidebar-bottom"><div class="local-note"><span class="status-dot neutral"></span><span>本地实例<small>BIG FAT FISH</small></span></div><button id="logout" class="button subtle logout-button" type="button">退出管理台</button></div>
+        <div class="sidebar-bottom"><div class="local-note"><span class="status-dot neutral"></span><span>本地实例<small>BIG FAT FISH</small></span></div><button id="logout" class="button subtle logout-button" type="button">退出登录</button></div>
       </aside>
       <div class="workspace">
         <header class="page-header">
-          <div><p class="eyebrow" id="page-eyebrow">WORKSPACE / OVERVIEW</p><h1 id="page-title">运行概览</h1><p class="page-description" id="page-description">照看大肥鱼的每一次运行。</p></div>
+          <div><p class="eyebrow" id="page-eyebrow">WORKSPACE / OVERVIEW</p><h1 id="page-title">运行概览</h1><p class="page-description" id="page-description">检查连接、调用和任务状态，进入常用工具。</p></div>
           <div class="header-actions"><span id="connection-status" class="pill"><span class="status-dot neutral"></span>读取连接状态</span><button id="refresh" class="icon-button glass" type="button" aria-label="刷新当前页面" title="刷新当前页面"></button></div>
         </header>
         <div class="view-toolbar"><span id="updated-at" class="muted">等待更新</span><label id="live-control" class="live-control"><input type="checkbox" id="auto-refresh">每 20 秒更新</label></div>
         <main id="content" tabindex="-1" aria-live="polite" aria-busy="false"></main>
-        <footer class="workspace-footer"><span>BIG FAT FISH</span><span>一个小小的控制室。</span></footer>
+        <footer class="workspace-footer"><span>BIG FAT FISH</span><span>开发工作台 · 配置变更请检查生效范围</span></footer>
       </div>
     </div>
     <div id="toast" class="toast" role="status" hidden></div>

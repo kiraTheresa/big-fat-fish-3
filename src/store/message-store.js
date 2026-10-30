@@ -4,6 +4,7 @@
 // 纪律（§6.3）：旁听者——只被分发层 fire-and-forget 调用，任何读写失败仅记 WARN、
 // 绝不向上抛。dataDir 在调用时读取（而非模块加载时求值），保证测试 env 注入生效。
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -21,7 +22,7 @@ const isSafeSessionKey = (key) => typeof key === 'string' && /^[gp]-[A-Za-z0-9_-
 export function appendMessage(snapshot) {
   if (!isSafeSessionKey(snapshot?.sessionKey)) return Promise.resolve();
   let stored;
-  try { stored = structuredClone(snapshot); }
+  try { stored = { ...structuredClone(snapshot), receivedAt: snapshot.receivedAt ?? Date.now(), recordId: randomUUID() }; }
   catch (err) { logger.warn(`消息存储失败: ${err.message}`); return Promise.resolve(); }
   writeChain = writeChain.then(() => appendOne(stored));
   return writeChain;
@@ -66,7 +67,8 @@ export async function readRecentMessages(sessionKey, limit) {
 // Task 6 的 /status 先行使用）。项目数据量小，直接全读后过滤（无需尾部动态扩读）：
 // JSONL 追加写天然按时间升序，过滤 rec.time > sinceTime（严格大于，水位本身不重复
 // 处理）后取尾部 limit 条即得。文件不存在返回 []；损坏行跳过；读失败仅记 WARN。
-export async function readMessagesSince(sessionKey, sinceTime, limit) {
+// include 在截取前过滤；oldest 供群聊活跃窗口按最早未处理消息分批，避免丢掉积压。
+export async function readMessagesSince(sessionKey, sinceTime, limit, include = () => true, { oldest = false } = {}) {
   if (!isSafeSessionKey(sessionKey) || !Number.isFinite(limit) || limit <= 0) return [];
   await writeChain;
   try {
@@ -81,9 +83,8 @@ export async function readMessagesSince(sessionKey, sinceTime, limit) {
         // 损坏行跳过：不因单行坏数据丢掉整个水位区间
       }
     }
-    const filtered = records.filter((rec) => (rec.time ?? 0) > sinceTime);
-    // limit ≤ 0 时 slice(-0) 会误返回全量，显式归一为 []
-    return limit > 0 ? filtered.slice(-limit) : [];
+    const filtered = records.filter((rec) => (rec.time ?? 0) > sinceTime && include(rec));
+    return oldest ? filtered.slice(0, limit) : filtered.slice(-limit);
   } catch (err) {
     if (err.code === 'ENOENT') return [];
     logger.warn(`消息读取失败: ${err.message}`);

@@ -1,9 +1,11 @@
 # NapCat 协议清单（OneBot 11）
 
-> 版本：v1.1 · 2026-10-26
-> 本次仅对照代码更新项目配置约定、权限说明与 §4.6 使用记录；通用协议清单保留 2026-10-24 的资料快照，未重新核验上游全部接口。
-> 定位：Bot 核心与 NapCat 对接的唯一协议参考。传输层、事件、API 均以本清单为准；字段级权威定义见文末来源链接。
+> 整理日期：2026-10-29；原资料版本 v1.1 · 2026-10-26。
+> §4.6 按当前代码更新；通用协议清单保留 2026-10-24 的资料快照，未重新核验上游全部接口。
+> 定位：协议资料参考。当前接收和处理范围以 [OneBot 接收契约](onebot-reception.md) 与实现为准；字段级权威定义见文末来源链接。
 > 本项目传输层结论：**采用并推荐「正向 WebSocket」**（详见第 2 节标注）。
+
+[← 文档目录](README.md)
 
 ---
 
@@ -61,7 +63,7 @@ NapCat 支持同时开启多个网络服务，每种服务在配置文件 `napca
 
 1. **单连接全双工**：一条连接同时承担「事件下发」与「API 调用」，事件响应路径最短，天然契合本项目 `connection → dispatch → triggers → sender` 的单向数据流；
 2. **连接方向友好**：Bot 主动连 NapCat，Bot 侧无需暴露任何监听端口，Docker 网络内 `ws://napcat:3001` 直连即可；
-3. **调用模型同 RPC**：请求带 `echo`、响应原样携带 `echo` 返回，与现有 [onebot.js](src/connection/onebot.js) 的 echo 匹配实现完全一致；
+3. **调用模型同 RPC**：请求带 `echo`、响应原样携带 `echo` 返回，与现有 [onebot.js](../src/connection/onebot.js) 的 echo 匹配实现完全一致；
 4. **心跳保活**：内置 `heartInterval` 心跳与 `lifecycle.connect` 事件，便于连接层判断链路健康。
 
 对比说明：HTTP 服务端/客户端把「收事件」和「调 API」拆成两条链路，且 HTTP POST 模式还需要处理签名，对常驻 Bot 是额外复杂度；反向 WS 与正向 WS 能力等价，只是连接方向相反，适合 NapCat 无法被主动连接的场景——本项目两者同处一个 Docker 网络，无此需求。
@@ -131,7 +133,7 @@ OneBot 11 的「快速操作」（如消息事件回包直接带 `reply`）是 H
 | `token` | 与 `ONEBOT_ACCESS_TOKEN` 一致，文档不记录值 | Bot 配置非空时以 Bearer 头携带 |
 | `enableForcePushEvent` / `debug` | `true` / `false` | 强制事件推送开关 / raw 数据上报（调试用） |
 
-容器端口：`6099`（WebUI，扫码与网络配置）、`3001`（正向 WS）。Bot 侧连接代码见 [onebot.js](src/connection/onebot.js)（`callApi` 带 echo 匹配、15s 超时、断线 5s 重连）。
+容器端口：`6099`（WebUI，扫码与网络配置）、`3001`（正向 WS）。Bot 侧连接代码见 [onebot.js](../src/connection/onebot.js)（`callApi` 带 echo 匹配、15s 超时、断线 5s 重连）。
 
 ---
 
@@ -273,7 +275,7 @@ sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`
 
 ### 4.1 调用方式
 
-统一通过 [onebot.js](src/connection/onebot.js) 的 `callApi(action, params)`：发送 `{action, params, echo}` 帧，按 `echo` 匹配响应；`retcode === 0` 时 resolve `data`，否则 reject（携带 `wording`）。以下清单按三组划分：OneBot 11 标准（NapCat 全量实现）、go-cqhttp 兼容扩展、NapCat 私有扩展。
+统一通过 [onebot.js](../src/connection/onebot.js) 的 `callApi(action, params)`：发送 `{action, params, echo}` 帧，按 `echo` 匹配响应；`retcode === 0` 时 resolve `data`，否则 reject（携带 `wording`）。以下清单按三组划分：OneBot 11 标准（NapCat 全量实现）、go-cqhttp 兼容扩展、NapCat 私有扩展。
 
 ### 4.2 OneBot 11 标准 API
 
@@ -422,13 +424,14 @@ sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`
 
 | API | 状态 | 用途 |
 |---|---|---|
-| `send_msg` | **已使用**，由 sender 统一调用 | ping、指令、聊天及绘图的群聊／私聊发送，支持文本与消息段数组 |
+| `send_msg` | **已使用**，由 sender 统一调用 | ping、指令、聊天、戳一戳、绘图及表情的群聊／私聊发送，支持文本与消息段数组 |
 | `get_group_msg_history` | **已使用**，由 chat 查询 | 识图开启且当前消息无图时，查询最近 20 条群消息，再筛同用户与时间窗内的图片 |
+| `get_msg` | **已使用**，由表情服务查询 | 从引用消息中提取待收藏的表情，按会话和来源规则校验 |
 | `send_group_msg` / `send_private_msg` | 当前未直接调用 | 发送统一使用 `send_msg` |
 | `get_group_list` / `get_group_member_info` | 规划候选，尚未接入 | 后续管理或推送配置可能使用，具体用途待业务确定 |
 | `get_login_info` | 尚未接入 | 可用于后续启动自检 |
 
-当前只处理 `message` 事件；协议支持某类事件或消息段，不代表 Bot 已有对应处理逻辑。无文本消息目前不会进入模型调用，`notice`、`request` 和 `meta_event` 被分发器忽略。
+当前接收 message、notice、request、meta_event 与未知扩展，先入事件收件箱再判断业务资格。符合条件的文字、图片、表情消息和发给机器人的戳一戳可进入处理；私聊纯图片在开启识图时可调用模型。其余类型只收件，心跳还用于健康快照；申请不自动批准。详细限制见 [OneBot 接收契约](onebot-reception.md)，不能把协议接口清单当成 Bot 功能清单。
 
 ---
 
@@ -458,4 +461,4 @@ sender：`user_id`、`nickname`、`card`（群名片）、`sex`、`age`、`area`
 | OneBot 11 标准 - 正向 WS | https://github.com/botuniverse/onebot-11/blob/master/communication/ws.md | 2.3 节帧格式与 retcode 对照 |
 | go-cqhttp API 文档 | https://docs.go-cqhttp.org/api | 4.3 节兼容扩展对照 |
 
-> 提示：NapCat 版本迭代较快，扩展 API 以官方文档与 Apifox 为准；OneBot 11 标准部分长期稳定。本文与架构文档（qq-chatbot-architecture.md）配套使用。
+> 提示：扩展 API 以官方文档与 Apifox 为准，通用清单保留资料快照日期。项目结构见 [架构与开发](architecture.md)，配置与登录见 [部署文档](napcat-deployment.md)。

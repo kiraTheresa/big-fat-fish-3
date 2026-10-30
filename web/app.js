@@ -18,6 +18,8 @@ const duration = (seconds) => {
   return `${Math.floor(value / 60)} 分 ${value % 60} 秒`;
 };
 const icons = {
+  images: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+  memes: '<path d="M20 14a8 8 0 1 0-6 6l6-6Z"/><path d="M14 20v-4a2 2 0 0 1 2-2h4M8 10h.01M14 10h.01M8 14c1.5 1.5 3.5 1.5 5 0"/>',
   overview: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
   events: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 14h5"/>',
   config: '<path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
@@ -36,22 +38,99 @@ const icons = {
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.events}</svg>`;
 const pages = {
-  overview: ['运行概览', '照看大肥鱼的每一次运行。', 'OVERVIEW'],
+  overview: ['运行概览', '检查连接、调用和任务状态，进入常用工具。', 'OVERVIEW'],
   events: ['消息收件箱', '所有接收事件都在这里；接收不等于自动处理。', 'INBOX'],
-  config: ['配置与能力', '让每项能力按你的节奏工作。', 'CONFIGURATION'],
+  prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。', 'PROMPT STUDIO'],
+  images: ['绘图作品', '浏览肥鱼画过的作品，查看原图、提示词与来源会话。', 'IMAGES'],
+  memes: ['表情收藏', '浏览已记录的表情，查看收藏状态、使用信息与本地预览。', 'MEMES'],
+  config: ['配置与能力', '管理能力开关、调用预算与运行参数。', 'CONFIGURATION'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
-  logs: ['运行日志', '从每一个线索，理解运行现场。', 'LOGS'],
-  usage: ['用量观察', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
+  logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
+  usage: ['调用与用量', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
 };
+const resolvePage = (page) => page === 'media' ? 'images' : page;
+const initialPage = resolvePage(location.hash.slice(1));
 const state = {
-  token: '', page: pages[location.hash.slice(1)] ? location.hash.slice(1) : 'overview',
+  token: '', tokenExpiresAt: 0, page: pages[initialPage] ? initialPage : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
   filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { since: '', until: '', kind: '', sessionKey: '' } },
 };
+let promptConsole;
+const mediaGalleries = new Map();
+if (location.hash === '#media') history.replaceState(null, '', '#images');
 let toastTimer;
 let lastFocus;
+const LOGIN_STORAGE_KEY = 'big-fat-fish.admin-session.v1';
+const LOGIN_DURATION_MS = 30 * 60 * 1000;
+const LOGIN_EXPIRED_MESSAGE = '登录已超过 30 分钟，请重新输入管理令牌。';
+let loginAttempt = 0;
+let loginTimer;
+
+function clearSavedLogin() {
+  try { localStorage.removeItem(LOGIN_STORAGE_KEY); } catch { /* Storage may be disabled. */ }
+}
+
+function readSavedLogin() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOGIN_STORAGE_KEY));
+    if (typeof saved?.token === 'string' && saved.token.trim()
+      && Number.isFinite(saved.expiresAt) && saved.expiresAt > Date.now()
+      && saved.expiresAt <= Date.now() + LOGIN_DURATION_MS) return saved;
+  } catch { /* Invalid or unavailable storage must not prevent manual login. */ }
+  clearSavedLogin();
+  return null;
+}
+
+function expireLogin() {
+  if (!state.token || !state.tokenExpiresAt || Date.now() < state.tokenExpiresAt) return false;
+  logout(LOGIN_EXPIRED_MESSAGE);
+  return true;
+}
+
+function resetLoginButton() {
+  $('.login-submit').disabled = false;
+  $('.login-submit').innerHTML = '进入工作台 <span aria-hidden="true">↗</span>';
+}
+
+async function login(token, expiresAt = null) {
+  const attempt = ++loginAttempt;
+  $('.login-submit').disabled = true;
+  $('.login-submit').textContent = expiresAt ? '正在恢复登录…' : '连接管理服务…';
+  $('#login-error').hidden = true;
+  try {
+    const status = await api('/status', { token });
+    if (attempt !== loginAttempt) return;
+    const deadline = expiresAt ?? Date.now() + LOGIN_DURATION_MS;
+    if (deadline <= Date.now()) { logout(LOGIN_EXPIRED_MESSAGE); return; }
+    // Restoring a login keeps its original deadline; only manual login starts a new period.
+    if (expiresAt === null) {
+      try { localStorage.setItem(LOGIN_STORAGE_KEY, JSON.stringify({ token, expiresAt: deadline })); }
+      catch { clearSavedLogin(); toast('浏览器无法保存登录状态，刷新后需重新输入令牌。', true); }
+    }
+    state.token = token;
+    state.tokenExpiresAt = deadline;
+    clearTimeout(loginTimer);
+    loginTimer = setTimeout(expireLogin, deadline - Date.now());
+    $('#admin-token').value = '';
+    $('#login').hidden = true;
+    $('#app').hidden = false;
+    updateStatus(status);
+    await loadPage();
+    if (attempt === loginAttempt && state.token) $('#content').focus();
+  } catch (error) {
+    if (attempt !== loginAttempt) return;
+    if (error.status === 401) clearSavedLogin();
+    $('#login-error').textContent = error.message;
+    $('#login-error').hidden = false;
+  } finally { if (attempt === loginAttempt) resetLoginButton(); }
+}
+
+async function restoreLogin() {
+  const saved = readSavedLogin();
+  if (saved) await login(saved.token, saved.expiresAt);
+}
 
 function toast(message, error = false) {
   clearTimeout(toastTimer);
@@ -61,8 +140,15 @@ function toast(message, error = false) {
   toastTimer = setTimeout(() => { $('#toast').hidden = true; }, error ? 7000 : 3500);
 }
 
-function logout(message = '') {
+function logout(message = '', { forget = true } = {}) {
+  loginAttempt++;
+  clearTimeout(loginTimer);
+  if (forget) clearSavedLogin();
+  resetLoginButton();
+  promptConsole?.clear();
+  for (const gallery of mediaGalleries.values()) gallery.clear();
   state.token = '';
+  state.tokenExpiresAt = 0;
   state.config = null;
   state.dirty = false;
   state.sequence++;
@@ -85,6 +171,7 @@ function logout(message = '') {
 }
 
 async function api(path, { method = 'GET', body, token = state.token } = {}) {
+  if (token === state.token && expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
   let response;
   try {
     response = await fetch(`/api${path}`, {
@@ -105,6 +192,20 @@ async function api(path, { method = 'GET', body, token = state.token } = {}) {
     throw error;
   }
   return data;
+}
+
+async function fetchMediaFile(key, variant = 'original') {
+  if (expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
+  const token = state.token;
+  if (!token) throw new Error('请先登录。');
+  const response = await fetch(`/api/media/file?${new URLSearchParams({ key, variant })}`, {
+    headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(30000),
+  });
+  if (response.status === 401 && token === state.token) logout('管理令牌已失效，请重新登录。');
+  if (!response.ok) throw new Error(response.status === 404 ? '这张图片已不存在。' : '图片暂时无法读取，请稍后重试。');
+  const blob = await response.blob();
+  if (token !== state.token) throw new Error('登录状态已改变。');
+  return blob;
 }
 
 const query = (values) => {
@@ -138,6 +239,7 @@ function canLeave() {
   return !state.dirty || window.confirm('配置尚未保存。放弃这些修改并离开？');
 }
 function navigate(page) {
+  page = resolvePage(page);
   if (!pages[page] || page === state.page) return;
   if (!canLeave()) return;
   state.page = page;
@@ -152,6 +254,7 @@ async function loadPage({ quiet = false } = {}) {
   if (!state.token) return;
   const sequence = ++state.sequence;
   const page = state.page;
+  for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
   $('#refresh').disabled = true;
   const [title, description, section] = pages[page];
@@ -171,6 +274,8 @@ async function loadPage({ quiet = false } = {}) {
     const html = await renderers[page](sequence);
     if (sequence !== state.sequence || !state.token) return;
     $('#content').innerHTML = html;
+    if (page === 'prompt') promptConsole.attach($('#content'));
+    if (page === 'images' || page === 'memes') mediaGalleries.get(page)?.attach($('#content'));
     $('#updated-at').textContent = `更新于 ${date(Date.now(), true)}`;
     if (page !== 'overview') api('/status').then((status) => { if (sequence === state.sequence && state.token) updateStatus(status); }).catch(() => {});
   } catch (error) {
@@ -202,7 +307,7 @@ function eventTypeBadge(type) {
   return pill(labels[type] || type, { notice: 'blue', request: 'violet', meta_event: 'neutral', message_sent: 'neutral', unknown: 'warning' }[type] || '');
 }
 function recentEvents(items) {
-  if (!items.length) return empty('收件箱还很安静', 'QQ 接收的消息、通知和其他事件会出现在这里。');
+  if (!items.length) return empty('暂无接收事件', 'QQ 接收的消息、通知和其他事件会出现在这里。');
   return `<div class="event-list">${items.slice(0, 6).map((row) => {
     const info = eventInfo(row);
     return `<div class="event-row"><span class="event-icon">${icon(info.postType === 'meta_event' ? 'pulse' : 'events')}</span><div class="event-text"><strong>${e(info.text || `${info.type} · ${info.types.join(' / ') || '事件已接收'}`)}</strong><p>${e(info.session)} · ${e(info.sender)}</p></div><time>${e(date(info.time, true))}</time></div>`;
@@ -221,9 +326,9 @@ async function renderOverview(sequence) {
   const jobs = Array.isArray(status.scheduler?.jobs) ? status.scheduler.jobs.length : status.scheduler?.jobs ?? 0;
   const failed = usage.failures ?? 0;
   const storage = status.storage || {};
-  return `${persistenceError ? `<div class="notice error">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">YOUR LITTLE CONTROL ROOM</p><h2>${connection.connected ? '大肥鱼，在线游弋。' : '控制台就绪，等待 QQ 连接。'}</h2><p>${connection.connected ? '消息接收、运行状态与用量，尽在眼前。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="status-illustration" aria-hidden="true">${icon(connection.connected ? 'check' : 'pulse')}</div></section>
+  return `${persistenceError ? `<div class="notice error">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可查看消息接收与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">检查日志</button></div></section>
     <div class="metrics-grid">${metric('运行时间', duration(status.uptimeSeconds), `启动于 ${date(status.startedAt)}`, 'pulse')}${metric('今日调用', usageNumber(usage.calls), ledgerAvailable ? `下次重置 ${date(status.usage?.resetAt)}` : '用量账本当前不可读取', 'usage', '次')}${metric('今日 Token', usageNumber(usage.totalTokens), ledgerAvailable ? `${number(usage.unknownUsageCalls)} 次调用未返回完整用量` : '暂时无法汇总已知用量', 'config')}${metric('计划任务', number(jobs), status.scheduler?.running ? '调度器正在运行' : '调度器未运行', 'jobs', '项')}</div>
-    <div class="overview-grid"><section class="panel">${panelHead('最近收到', '从最新事件，看看发生了什么。', pageLink('events', '全部事件'))}${events ? recentEvents(events.items || []) : '<div class="notice error">事件列表暂时无法读取，请到消息收件箱重试。</div>'}</section>
+    <div class="overview-grid"><section class="panel">${panelHead('最近收到', '最近 6 条接收事件，按时间倒序。', pageLink('events', '全部事件'))}${events ? recentEvents(events.items || []) : '<div class="notice error">事件列表暂时无法读取，请到消息收件箱重试。</div>'}</section>
     <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>日志已写入</dt><dd>${e(number(status.logStats?.written))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看日志</button></div></section></div><div class="summary-strip"><span>本次进程接收<strong>${e(number(status.events?.received))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
 }
 
@@ -267,10 +372,12 @@ async function renderConfig(sequence) {
   const connection = result.connection || {};
   const toggle = (name, title, description, fallback = true) => toggleField(name, title, description, getPath({ behavior: b, policy: p }, name, fallback));
   return `<form id="config-form"><div class="config-layout"><section class="panel">${panelHead('对话行为', '保存后应用于后续消息；正在执行的请求保持原流程。')}
-    <div class="form-section"><h3>什么时候回应</h3>${toggle('behavior.trigger.at.enabled', '被 @ 时回应', '群消息提及 Bot 时触发。')}${toggle('behavior.trigger.nameCall.enabled', '被叫名字时回应', '命中下面的任意别名时触发。')}${toggle('behavior.trigger.replyQuote.enabled', '被引用时回应', '用户引用 Bot 的消息时触发。')}<div class="form-field full"><label for="aliases">呼唤别名</label><input id="aliases" name="aliases" value="${e((getPath(b, 'trigger.nameCall.aliases', [])).join('，'))}" placeholder="大肥鱼，肥鱼"><p class="field-hint">使用中文或英文逗号分隔。</p></div></div>
+    <div class="form-section"><h3>什么时候回应</h3>${toggle('behavior.trigger.at.enabled', '被 @ 时回应', '群消息提及 Bot 时触发。')}${toggle('behavior.trigger.nameCall.enabled', '被叫名字时回应', '命中下面的任意别名时触发。')}${toggle('behavior.trigger.replyQuote.enabled', '被引用时回应', '用户引用 Bot 的消息时触发。')}${toggle('behavior.trigger.poke.enabled', '被戳一戳时回应', '群聊和私聊被戳时，结合人设回复一句短话。')}<div class="form-field full"><label for="aliases">呼唤别名</label><input id="aliases" name="aliases" value="${e((getPath(b, 'trigger.nameCall.aliases', [])).join('，'))}" placeholder="大肥鱼，肥鱼"><p class="field-hint">使用中文或英文逗号分隔。</p></div></div>
+    <div class="form-section"><h3>戳一戳短回复</h3><div class="form-field"><label for="poke-prompt">回复提示词</label><textarea id="poke-prompt" name="behavior.trigger.poke.prompt" rows="3" maxlength="2000" required>${e(getPath(b, 'trigger.poke.prompt', ''))}</textarea><p class="field-hint">沿用当前人设与对话上下文，立即发送一条文字回复。</p></div></div>
+    <div class="form-section"><h3>对话冷却</h3>${numberField('behavior.chat.cooldownMs', '冷却时间 / 毫秒', getPath(b, 'chat.cooldownMs', 2000), '2000 毫秒 = 2 秒。同一会话从开始响应计时，聊天与戳一戳共用；0 表示关闭。', { max: 60000 })}</div>
     <div class="form-section"><h3>如何回复</h3>${toggle('behavior.reply.delay.enabled', '随机回复延迟', '为回复保留一点自然的停顿。')}<div class="form-grid">${numberField('behavior.reply.delay.minMs', '最短延迟 / 毫秒', getPath(b, 'reply.delay.minMs', 2000), '范围为 0–60,000 毫秒。', { max: 60000 })}${numberField('behavior.reply.delay.maxMs', '最长延迟 / 毫秒', getPath(b, 'reply.delay.maxMs', 8000), '不得小于最短延迟，最多 60,000。', { max: 60000 })}</div>${toggle('behavior.reply.split.enabled', '分段发送回复', '使用分隔符将模型回复拆成多条消息。')}<div class="form-field"><label for="separator">回复分隔符</label><textarea id="separator" name="separator" rows="2" maxlength="20">
 ${e(getPath(b, 'reply.split.separator', '||'))}</textarea><p class="field-hint">支持换行，最多 20 字符；留空则仅按换行分段。</p></div>${toggle('behavior.reply.quote.enabled', '引用原消息', '回复时带上触发消息的引用。')}</div>
-    <div class="form-section"><h3>上下文</h3><p class="section-description">控制人设、记忆和历史消息的总大小。</p>${numberField('behavior.context.budgetBytes', '上下文字节预算', getPath(b, 'context.budgetBytes', 12000), '超出预算后裁剪较早的历史消息。', { min: 512, max: 1000000 })}</div></section>
+    <div class="form-section"><h3>上下文</h3><p class="section-description">历史筛选与字节预算由 Prompt 发布版本统一管理。</p>${pageLink('prompt', '前往 Prompt 工作台')}</div></section>
     <section class="panel">${panelHead('能力与额度', '关闭能力后，对应消息仍会接收并记录。')}${toggle('policy.features.chat', '文字对话', '允许调用聊天模型。')}${toggle('policy.features.vision', '图片理解', '允许已有识图流程处理图片。')}${toggle('policy.features.draw', '绘图', '对所有未被封禁的用户开放。')}${toggle('policy.features.distill', '记忆提炼', '允许离线整理对话记忆。')}<div class="form-section"><h3>每日用量上限</h3><p class="section-description">0 表示不限额。按北京时间自然日计数。</p><div class="form-grid">${numberField('policy.limits.maxCallsPerDay', '最多调用 / 次', getPath(p, 'limits.maxCallsPerDay', 0), '新调用达到上限后停止。', { max: 1000000 })}${numberField('policy.limits.maxTokensPerDay', '最多 Token', getPath(p, 'limits.maxTokensPerDay', 0), '按已知用量判断，不含上游未回传用量。', { max: 1000000000 })}</div></div>
     <div class="form-section"><h3>连接信息</h3><p class="section-description">连接、模型与密钥由环境变量管理。</p><dl class="key-values"><div><dt>QQ 地址</dt><dd class="mono">${e(connection.wsUrl || '—')}</dd></div><div><dt>对话模型</dt><dd class="mono">${e(connection.model || connection.deepseekModel || '—')}</dd></div><div><dt>绘图模型</dt><dd class="mono">${e(connection.imageModel || '—')}</dd></div></dl><p class="field-hint">对话接口：${result.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${result.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}</p><p class="field-hint">修改环境变量后需要重启 Bot。管理台不显示密钥。</p></div>
     <div class="form-section"><h3>配置版本</h3><p class="field-hint mono">${e(result.revision ?? '—')}</p></div></section></div><div class="save-bar"><p id="save-state">所有配置已同步</p><div><button type="button" class="button" data-action="reload-config">重新读取</button><button type="submit" id="save-config" class="button primary" disabled>保存配置 ${icon('check')}</button></div></div><p id="config-error" class="form-error" role="alert" hidden></p></form>`;
@@ -340,7 +447,25 @@ async function renderUsage(sequence) {
     <div class="usage-grid"><section class="panel">${panelHead('按能力分布', '调用次数与已知 Token。')}${usageBars(groupEntries(result.byKind, 'kind'), kindNames)}</section><section class="panel">${panelHead('活跃会话', '按调用次数排序，最多显示 8 个会话。')}${usageBars(groupEntries(result.bySession, 'sessionKey'))}</section></div>
     <section class="panel">${panelHead('调用明细', `统计覆盖全部匹配记录，下方显示最新 ${state.rows.length} 条。`)}${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>能力 / 模型</th><th>会话</th><th>结果</th><th>Token</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => `<tr><td class="mono">${e(date(row.time ?? row.timestamp))}</td><td><span class="cell-main">${e(kindNames[row.kind] || row.kind || '—')}</span><span class="cell-sub mono">${e(row.model || '—')}</span></td><td class="mono">${e(row.sessionKey || '—')}</td><td>${row.success === false || ['failed', 'failure', 'error', 'interrupted'].includes(row.status) ? pill('失败', 'danger') : row.success === true || row.status === 'success' ? pill('成功') : pill('已记录', 'neutral')}</td><td class="mono">${row.total_tokens === undefined && row.totalTokens === undefined ? '未返回' : e(number(row.total_tokens ?? row.totalTokens))}</td><td class="cell-actions"><button type="button" class="button small" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有模型调用', '调用发生后可在此追踪结果与用量。', 'usage')}</section>`;
 }
-const renderers = { overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+async function renderPrompt(sequence) {
+  if (!promptConsole) {
+    const { createPromptConsole } = await import('/prompt.js');
+    promptConsole = createPromptConsole({ api, state, toast });
+  }
+  return promptConsole.render(sequence);
+}
+
+async function renderMedia(page, sequence) {
+  let gallery = mediaGalleries.get(page);
+  if (!gallery) {
+    const { createMediaGallery } = await import('/media.js');
+    if (sequence !== state.sequence || !state.token) return '';
+    gallery = createMediaGallery({ api, fetchFile: fetchMediaFile, toast, kind: page === 'images' ? 'generated' : 'memes' });
+    mediaGalleries.set(page, gallery);
+  }
+  return gallery.render();
+}
+const renderers = { images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;
@@ -511,25 +636,8 @@ document.addEventListener('change', (event) => {
 });
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = $('.login-submit');
   const token = $('#admin-token').value.trim();
-  if (!token) return;
-  button.disabled = true;
-  button.textContent = '连接管理服务…';
-  $('#login-error').hidden = true;
-  try {
-    const status = await api('/status', { token });
-    state.token = token;
-    $('#admin-token').value = '';
-    $('#login').hidden = true;
-    $('#app').hidden = false;
-    updateStatus(status);
-    await loadPage();
-    $('#content').focus();
-  } catch (error) {
-    $('#login-error').textContent = error.message;
-    $('#login-error').hidden = false;
-  } finally { button.disabled = false; button.innerHTML = '进入管理台 <span aria-hidden="true">↗</span>'; }
+  if (token && !$('.login-submit').disabled) await login(token);
 });
 $('#toggle-token').addEventListener('click', () => {
   const show = $('#admin-token').type === 'password';
@@ -545,13 +653,28 @@ $('#close-dialog').addEventListener('click', closeDialog);
 $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) event.preventDefault(); });
 $('#detail-dialog').addEventListener('close', () => { if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
-$('#navigation').innerHTML = Object.entries(pages).map(([page, [title]]) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(title)}</span></a>`).join('');
+const navigationGroups = [
+  ['运行排查', ['overview', 'events', 'logs', 'usage']],
+  ['开发调试', ['prompt']],
+  ['素材收藏', ['images', 'memes']],
+  ['实例管理', ['config', 'jobs', 'users']],
+];
+$('#navigation').innerHTML = navigationGroups.map(([label, keys]) => `<div class="nav-group"><p class="nav-label">${label}</p>${keys.map((page) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(pages[page][0])}</span></a>`).join('')}</div>`).join('');
 window.addEventListener('beforeunload', (event) => { if (state.dirty || state.saving) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('focus', expireLogin);
+window.addEventListener('pageshow', expireLogin);
+document.addEventListener('visibilitychange', expireLogin);
+window.addEventListener('storage', (event) => {
+  if ((event.key === LOGIN_STORAGE_KEY || event.key === null) && (state.token || $('.login-submit').disabled)) {
+    logout('登录状态已在其他页面更改，请重新登录。', { forget: false });
+  }
+});
 window.addEventListener('hashchange', () => {
-  const next = location.hash.slice(1);
+  const next = resolvePage(location.hash.slice(1));
   if (pages[next] && next !== state.page) navigate(next);
   history.replaceState(null, '', `#${state.page}`);
 });
 setInterval(() => {
   if (state.token && state.live && !state.loading && !state.dirty && !document.hidden && !$('#detail-dialog').open && !state.cursor && ['overview', 'events', 'logs', 'usage'].includes(state.page) && !$('#content').contains(document.activeElement)) loadPage({ quiet: true });
 }, 20000);
+restoreLogin();

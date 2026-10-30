@@ -1,5 +1,5 @@
 // L2 分发层：协议归一 → 完整事件收件箱 → 消息历史 → 既有触发器链。
-// 新消息段、通知、请求、元事件只接收和保存，不执行新业务。
+// 除发给机器人的戳一戳外，新消息段、通知、请求、元事件只接收和保存。
 // 打标 sessionKey（群 g-{group_id}、私 p-{user_id}）并构造 ctx；
 // 把入站快照以 fire-and-forget 方式交给存储钩子（不 await，失败不影响主管道）；
 // 按注册顺序匹配触发器，命中即停，全不中静默；match/handle 异常捕获记 ERROR。
@@ -11,6 +11,7 @@ import { appendEvent } from '../store/event-store.js';
 import { normalizeOneBotEvent } from '../protocol/onebot.js';
 import { logger } from '../utils/logger.js';
 import { canUseBot, observeUser } from '../platform/permissions.js';
+import { markMemoryInvocation } from '../distill/activity.js';
 
 export async function dispatch(input) {
   const normalized = normalizeOneBotEvent(input);
@@ -29,6 +30,7 @@ export async function dispatch(input) {
 
   // 存储钩子（§6.3 旁听者）：打标后、进触发器链前，不 await，写失败只记 WARN
   const snapshot = {
+    receivedAt: Date.now(),
     sessionKey,
     time: event.time,
     message_id: event.message_id,
@@ -40,12 +42,16 @@ export async function dispatch(input) {
     sender: event.sender,
   };
   if (event.group_id !== undefined) snapshot.group_id = event.group_id;
-  appendMessage(snapshot);
+  if (event.post_type === 'message') appendMessage(snapshot);
 
   // ctx：触发器可用的全部能力——出站只经 reply() 走发送层，禁止直接触碰连接层
   const ctx = {
     event,
     sessionKey,
+    async activateMemory() {
+      try { await markMemoryInvocation(sessionKey, snapshot.receivedAt); }
+      catch (err) { logger.warn(`[distill] 活跃状态保存失败: ${err.code ?? 'storage error'}`); }
+    },
     reply(text) {
       // 出站回复回存（add-aichat-mvp spec，bot-core-design §6.3 预留条款）：
       // 与入站同会话文件追加一行，bot:true 标记（无 message_id，发送前落盘）

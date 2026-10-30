@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const root = await mkdtemp(join(tmpdir(), 'fish-usage-policy-'));
+process.env.DATA_DIR = root;
 process.env.USAGE_DIR = join(root, 'initial');
 process.env.CONFIG_PATH = join(root, 'absent.json');
 process.env.DEEPSEEK_API_KEY = 'usage-secret-key';

@@ -1,5 +1,5 @@
-// 离线提炼调度器（add-self-evolving-persona spec「离线提炼」）：周期扫描 data/messages
-// 下的会话，双条件判定（静默：末条消息距今 ≥ distillSilenceMs；批量：水位后新增 ≥
+// 离线提炼调度器：周期扫描活跃群聊与私聊；群聊休眠/唤醒和可提炼窗口由 activity.js 管理。
+// 双条件判定（静默：末条消息距今 ≥ distillSilenceMs；批量：水位后新增 ≥
 // distillBatchSize；先到先触发）；触发则以固定模板调 LLM 产出人设补丁
 // { character, memory }，applyPersonaPatch 分文件落盘（character 超限单拒该文件、
 // memory 超限程序化裁剪），至少一文件落盘即推进 distillMark 水位（消息已消化，
@@ -15,9 +15,10 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { chatCompletion } from '../llm.js';
-import { readMessagesSince } from '../store/message-store.js';
+import { activeMemoryGroups, prepareMemoryScan, readMemoryMessages, receiptProgress } from './activity.js';
 import { applyPersonaPatch, getPersona, extractLockedLines, patchKeepsLockedLines } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
+import { historyText } from '../utils/history-text.js';
 
 // 锁定行判定/校验已搬家 persona-store（store 层，供 applyPersonaPatch 的 memory 兜底
 // 裁剪复用同一谓词；依赖单向 distiller → store）。此处 re-export 保持 distiller 旧
@@ -27,14 +28,8 @@ export { extractLockedLines, patchKeepsLockedLines };
 // 提炼 system 模板（spec 设计决策：增量演化不推翻核心设定、分级标准去粗取精、
 // memory 条目式、输出纯 JSON、各自上限内）。{maxBytes} 占位符在调用时以
 // config.personaMaxBytes 替换——调用时读取而非模块加载时固化，保证测试注入生效。
-const DISTILL_SYSTEM_TEMPLATE = [
-  '你是 QQ 机器人人设文件的维护者。规则：',
-  '① character.md 在现有基础上增量演化——只写说话风格、口头禅、梗、性格，不包含行为底线规则（简短回复、不刷屏、|| 分段等由系统层注入，写进会重复冲突）；核心设定（呆萌大肥鱼、真诚、吉祥物定位）不许推翻；文中以 "- [" 开头的行是用户 /character 钦定的设定，必须逐行原样保留；',
-  '② 值得记进 memory.md 的只有三类：用户的偏好（爱吃什么、喜欢什么）、身份事实（名字、职业、重要关系）、约定（说过要做什么）；闲聊情绪、临时话题、客套话不值得记，一律不写入；',
-  '③ memory.md 为条目式——每条一行、以 "- " 开头；保留仍然有效的，删除过时错误的，合并重复；',
-  '④ 每个文件不超过 {maxBytes} 字节；',
-  '⑤ 只输出 JSON，不要 markdown 围栏，格式 {"character": "完整文件内容", "memory": "完整文件内容"}',
-].join('\n');
+import { getPromptConfig } from '../prompt/store.js';
+import { DISTILL_PRESERVATION_RULES } from '../prompt/defaults.js';
 
 // 待消化对话里 bot 行的统一昵称（入站行用 sender.nickname ?? user_id，同 chat.js 约定）
 const BOT_SPEAKER = '大肥鱼';
@@ -55,8 +50,8 @@ function speakerOf(rec) {
 // LLM 只看 system 模板时只知道抽象上限 {maxBytes}，不知道当前文件已经多满——群
 // g-741883823 的 character.md 曾涨到 4060/4096（99%），每轮补丁稳定超限被拒、水位
 // 卡死、调度器 60s 一次真调 LLM 烧钱死循环。故把「实际字节/上限」写进 user（预算
-// 每会话动态、system 模板保持全局静态），任一文件 > 90% 上限时再追加「务必净减」
-// 硬指令，让模型明确知道这次必须压到上限以下且比现有内容更短。
+// 每会话动态、system 模板保持全局静态），任一文件 > 90% 上限时再追加压缩提示。
+// 压缩仅限非锁定内容；全锁定文件不能为了净减字节而破坏保留约束。
 const BUDGET_WARN_RATIO = 0.9;
 
 // 单文件标注行（+ 近上限压缩警示行）：警示紧跟标注、位于文件内容之前
@@ -64,15 +59,15 @@ function budgetHeader(name, bytes, maxBytes, slimmingHint) {
   const lines = [`现有 ${name}（${bytes}/${maxBytes} 字节）：`];
   if (bytes > maxBytes * BUDGET_WARN_RATIO) {
     const pct = Math.floor((bytes / maxBytes) * 100);
-    lines.push(`⚠ 该文件已用 ${pct}%，接近上限：本次输出必须更精简——${slimmingHint}，务必净减字节，不要新增。`);
+    lines.push(`⚠ 该文件已用 ${pct}%，接近上限：仅对非锁定内容${slimmingHint}，有可压缩内容时务必净减字节，不要新增。锁定行逐行原样保留；无可压缩内容时保持原文。`);
   }
   return lines;
 }
 
 // 组装提炼 LLM messages：system 固定模板 + user（现有两份文件全文（含预算标注）+
 // 待消化对话逐行）。导出供直测（纯函数，同 shouldDistill 先例）。
-export function buildMessages(persona, newMessages) {
-  const dialogue = newMessages.map((rec) => `[${rec.time}] ${speakerOf(rec)}: ${rec.raw_message}`);
+export function buildMessages(persona, newMessages, template = getPromptConfig().prompts.distill) {
+  const dialogue = newMessages.map((rec) => `[${rec.time}] ${speakerOf(rec)}: ${historyText(rec)}`);
   const maxBytes = config.personaMaxBytes;
   const user = [
     ...budgetHeader('character.md', Buffer.byteLength(persona.character, 'utf8'), maxBytes, '压缩合并现有段落、删减次要细节'),
@@ -87,7 +82,8 @@ export function buildMessages(persona, newMessages) {
   return [
     {
       role: 'system',
-      content: DISTILL_SYSTEM_TEMPLATE.replaceAll('{maxBytes}', String(config.personaMaxBytes)),
+      // Published and custom templates can predate the storage preservation contract.
+      content: `${template.replaceAll('{maxBytes}', String(config.personaMaxBytes))}\n\n${DISTILL_PRESERVATION_RULES}`,
     },
     { role: 'user', content: user },
   ];
@@ -95,7 +91,7 @@ export function buildMessages(persona, newMessages) {
 
 // 解析 LLM 输出为人设补丁：strip 可能的 ```json 围栏 → JSON.parse → 形状校验
 // （对象且 character/memory 均为 string）。任何一步不符返回 null（调用方 WARN 跳过）。
-function parsePatch(content) {
+export function parsePatch(content) {
   let parsed;
   try {
     const stripped = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
@@ -191,9 +187,12 @@ export async function distillSession(sessionKey, newMessages) {
         `[distill] 会话 ${sessionKey} 补丁部分落盘（character=${applied.character}, memory=${applied.memory}），水位仍推进`
       );
     }
-    // 推进水位到本批最大 time（秒级，与消息 JSONL 同量纲，严格大于不重复处理）
+    // 保留秒级兼容水位；群聊另按本地接收时间和记录 ID 推进，合并期间发生的新调用。
     const maxTime = newMessages.reduce((max, rec) => Math.max(max, rec.time ?? 0), 0);
-    await updateState(sessionKey, { distillMark: maxTime, distillFails: 0 });
+    await updateState(sessionKey, (current) => ({
+      distillMark: Math.max(current.distillMark ?? 0, maxTime), distillFails: 0,
+      ...receiptProgress(current, newMessages),
+    }));
 
   } catch (err) {
     // 任何异常（LLM 超时/网络等）：水位与文件不动，下轮扫描重试（受退避保护）
@@ -204,8 +203,8 @@ export async function distillSession(sessionKey, newMessages) {
   }
 }
 
-// ---- 单轮扫描：枚举 data/messages 的 *.jsonl 得会话，顺序逐个判定与提炼 ----
-export async function scanOnce() {
+// ---- 单轮扫描：群聊只取活跃集合，私聊从消息目录枚举，顺序逐个判定与提炼 ----
+export async function scanOnce(nowMs = Date.now()) {
   let entries;
   try {
     entries = await readdir(join(config.dataDir, 'messages'));
@@ -214,12 +213,14 @@ export async function scanOnce() {
     logger.warn(`[distill] 消息目录枚举失败: ${err.message}`);
     return;
   }
-  const keys = entries.filter((name) => name.endsWith('.jsonl')).map((name) => name.slice(0, -'.jsonl'.length));
+  const keys = [...await activeMemoryGroups(), ...entries.filter((name) => /^p-[A-Za-z0-9_-]{1,64}\.jsonl$/.test(name)).map((name) => name.slice(0, -'.jsonl'.length))];
   // 顺序逐会话处理（for + await，不并发）：避免多会话同时提炼打爆 LLM 配额与本地 IO
   for (const sessionKey of keys) {
-    const state = await readState(sessionKey);
-    const newMessages = await readMessagesSince(sessionKey, state.distillMark ?? 0, 100);
-    if (!shouldDistill(newMessages, state, Date.now(), config)) continue;
+    const prepared = sessionKey.startsWith('g-') ? await prepareMemoryScan(sessionKey, nowMs) : { state: await readState(sessionKey), closing: false };
+    if (!prepared) continue;
+    const { state, closing } = prepared;
+    const newMessages = await readMemoryMessages(sessionKey, state);
+    if (!newMessages.length || (!closing && !shouldDistill(newMessages, state, nowMs, config))) continue;
     await distillSession(sessionKey, newMessages);
   }
 }

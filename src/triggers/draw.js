@@ -9,14 +9,13 @@
 // + 占位回存 → 失败兜底文案。
 // 出站不经 ctx.reply（它只发文本）：与 chat 的 persistAndSend 同模式直接用 sender +
 // appendMessage。OneBot message 数组段原生支持 {type:'image'}，base64:// 前缀直接
-// 透传 NapCat——bot 侧零下载零落盘（b64_json 由 imagegen 直接给出）。
+// 透传 NapCat；imagegen 在返回前将原图和元数据保存至 data/media/generated。
 // 回存占位：图不进对话上下文（JSONL 只存文本），raw_message 记「[图片] prompt」——
 // 后续「刚才画的那张」类追问在 LLM 眼里 bot 曾发过一条与 prompt 相关的图，可接上。
 import { config } from '../config.js';
 import { matchAt } from '../utils/at.js';
 import { extractText } from '../utils/extract-text.js';
-import { appendMessage } from '../store/message-store.js';
-import { sendGroup, sendPrivate } from '../sender/sender.js';
+import { deliverGeneratedImage } from '../tools/deliver-image.js';
 import { generateImage } from '../imagegen.js';
 import { logger } from '../utils/logger.js';
 
@@ -52,29 +51,14 @@ export default {
     }
 
     // 出图要 20-70 秒：先回一句垫住体验（经 ctx.reply：回存 bot 行 + 队列出站）
+    await ctx.activateMemory?.();
     const summary = prompt.length > SUMMARY_LIMIT ? `${prompt.slice(0, SUMMARY_LIMIT)}…` : prompt;
     await ctx.reply(`收到～本鱼在画「${summary}」啦，稍等哦`);
 
     try {
       const { b64 } = await generateImage(prompt, { sessionKey });
 
-      // 占位回存：图不进上下文，占位文本让后续追问可接上（行形状与 dispatcher 的
-      // ctx.reply bot 行一致：秒级 time、bot:true、无 message_id）
-      appendMessage({
-        sessionKey,
-        time: Math.floor(Date.now() / 1000),
-        message_type: event.message_type,
-        ...(event.group_id !== undefined ? { group_id: event.group_id } : {}),
-        user_id: event.user_id,
-        raw_message: `[图片] ${prompt}`,
-        bot: true,
-      });
-
-      // 图片段出站：OneBot 数组消息段，base64:// 前缀直接透传 NapCat（每条独立过
-      // sender 1s 队列节流）
-      const segments = [{ type: 'image', data: { file: `base64://${b64}` } }];
-      if (event.message_type === 'group') sendGroup(event.group_id, segments);
-      else sendPrivate(event.user_id, segments);
+      deliverGeneratedImage(ctx, b64, prompt);
     } catch (err) {
       logger.warn(`[draw] 生成失败（${sessionKey}）: ${err.message}`);
       await ctx.reply(err.name === 'UsageLimitError' ? `本鱼暂时不能画图：${err.message}。` : DRAW_FAIL_REPLY);

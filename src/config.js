@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from './utils/logger.js';
+import { POKE_PROMPT } from './prompt/defaults.js';
 
 function num(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -19,7 +20,9 @@ export const DEFAULT_BEHAVIOR = {
     nameCall: { enabled: true, aliases: ['大肥鱼', '肥鱼'] },
     // 引用回复：引用 bot 消息即触发
     replyQuote: { enabled: true },
+    poke: { enabled: true, prompt: POKE_PROMPT },
   },
+  chat: { cooldownMs: 2000 },
   reply: {
     // 随机延迟：模拟人的打字节奏
     delay: { enabled: true, minMs: 2000, maxMs: 8000 },
@@ -87,7 +90,7 @@ export const config = {
   apiTimeoutMs: num(process.env.API_TIMEOUT_MS, 15000),
   // 出站消息限流间隔（ms，全项目仅 sender 一处管理）
   sendIntervalMs: num(process.env.SEND_INTERVAL_MS, 1000),
-  // 数据目录（消息 JSONL 落盘根目录）
+  // 数据目录（消息、平台状态及 media 原图/表情包的持久化根目录）
   dataDir: process.env.DATA_DIR ?? 'data',
   // 本地管理服务：无 token 不启动；密钥仅从环境读取。
   adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',
@@ -100,18 +103,17 @@ export const config = {
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
   // OpenAI 兼容接口地址
   deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
-  deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
+  deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-flash',
   // LLM 调用超时（ms）
   chatTimeoutMs: num(process.env.CHAT_TIMEOUT_MS, 60000),
+  // 对话/识图默认流式接收；不兼容的中转可设 false，提炼仍使用完整 JSON。
+  chatStream: process.env.CHAT_STREAM !== 'false',
   // 每次对话携带的历史条数（会话 JSONL 尾部）
   chatContextLines: num(process.env.CHAT_CONTEXT_LINES, 20),
-  // 会话级冷却（ms）：窗口内后续消息静默跳过，防刷防刷量
-  chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 5000),
-  // ---- 识图（chat 触发器图分流；DeepSeek 视觉款，与上共用同一 Key/BaseUrl）----
-  // 视觉模型（留空 = 识图关闭，同 deepseekApiKey 模式；deepseek-flash 实测可看图，
-  // 单图约 1024 tokens，图只能放 user 消息块——system/assistant 带图 400）
-  deepseekVisionModel: process.env.DEEPSEEK_VISION_MODEL ?? 'deepseek-flash',
-  // 周围图时间窗（ms）：@ 消息不带图时，群聊同用户该窗口内最新一条图可被识图引用
+  // 会话冷却启动初值（ms）；运行时使用 behavior.chat.cooldownMs，支持面板热更新
+  chatCooldownMs: num(process.env.CHAT_COOLDOWN_MS, 2000),
+  // ---- 识图（与文字聊天共用模型；是否附图由 Prompt 的 context.vision 控制）----
+  // 周围图时间窗（ms）：消息不带图时，同会话同用户该窗口内最新一条图可被识图引用
   visionImageWindowMs: num(process.env.VISION_IMAGE_WINDOW_MS, 120000),
   // 图片现拉超时（ms）：QQ CDN rkey URL 直接 GET（带 UA 防 403，实测可下）
   visionFetchTimeoutMs: num(process.env.VISION_FETCH_TIMEOUT_MS, 30000),
@@ -130,7 +132,9 @@ export const config = {
   // 离线提炼触发条件二：水位后新增消息条数
   distillBatchSize: num(process.env.DISTILL_BATCH_SIZE, 50),
   // 离线提炼调度器扫描间隔（ms）
-  distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 60000),
+  distillIntervalMs: num(process.env.DISTILL_INTERVAL_MS, 300000),
+  // 群聊最后一次有效调用后多久退出记忆提炼（默认两小时）
+  distillIdleMs: Math.max(1000, num(process.env.DISTILL_IDLE_MS, 7200000)),
   // LLM 用量 JSONL 落盘根目录
   usageDir: process.env.USAGE_DIR ?? join(process.env.DATA_DIR ?? 'data', 'usage'),
   // ---- 绘图（draw 触发器 / imagegen.js 唯一出口）----
@@ -146,5 +150,5 @@ export const config = {
   // 绘图超时（ms）：实测 GPT Image 2.5 出图 20-70s，给足余量
   imageTimeoutMs: num(process.env.IMAGE_TIMEOUT_MS, 120000),
   // ---- 行为开关（config.json 层，字段说明见 config.example.json）----
-  behavior: deepMerge(DEFAULT_BEHAVIOR, loadBehaviorConfig()),
+  behavior: deepMerge({ ...DEFAULT_BEHAVIOR, chat: { cooldownMs: num(process.env.CHAT_COOLDOWN_MS, 2000) } }, loadBehaviorConfig()),
 };

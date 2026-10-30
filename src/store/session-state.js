@@ -1,5 +1,5 @@
 // 会话状态存储（add-self-evolving-persona spec「会话状态」）：按会话读写
-// {dataDir}/session-state/{sessionKey}.json，内容 { resetAt?: number, distillMark?: number }。
+// {dataDir}/session-state/{sessionKey}.json：重置/提炼水位、失败退避及群聊 memoryActivity。
 // resetAt 供 chat 触发器过滤历史水位，distillMark 供 distiller 记录提炼水位。
 // 纪律（同 message-store）：update 走「读-合-写」且经 writeChain 串行化，防并发更新
 // 以过期底稿互相覆盖丢键；任何失败仅记 WARN、绝不向上抛（调用方拿 {} / false 兜底）。
@@ -25,7 +25,7 @@ async function updateOne(sessionKey, patch) {
     const current = await readState(sessionKey); // 文件不存在/损坏均已兜底 {}
     const dir = join(config.dataDir, 'session-state');
     await mkdir(dir, { recursive: true });
-    await atomicWriteJson(join(dir, `${sessionKey}.json`), { ...current, ...patch });
+    await atomicWriteJson(join(dir, `${sessionKey}.json`), { ...current, ...(typeof patch === 'function' ? patch(current) : patch) });
     return true;
   } catch (err) {
     logger.warn(`会话状态写入失败(${sessionKey}): ${err.message}`);

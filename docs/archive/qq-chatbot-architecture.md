@@ -1,9 +1,11 @@
 # QQ Chat Bot 架构方向文档
 
-> 2026-10-26 实现更新：完整 OneBot 接收与本地管理平台已落地。配置、持久化、权限、调度、日志、用量和监控的当前契约以 [管理与公共服务](docs/management.md) 为准；本文后续技术选型和路线图保留规划背景。
+> **历史归档 · 2026-10-26**：保留当时的设计、阶段范围和验证记录；文中的“当前”“规划”“未实现”均指当时状态。最新功能见 [项目首页](../../README.md)，现行结构见 [架构与开发](../architecture.md)，运行契约见 [管理文档](../management.md)。
+
+> 2026-10-26 实现更新：完整 OneBot 接收与本地管理平台已落地。配置、持久化、权限、调度、日志、用量和监控的当前契约以 [管理与公共服务](../management.md) 为准；本文后续技术选型和路线图保留规划背景。
 
 > 文档版本：v0.4 · 2026-10-26；实现基线：`c167cca`（`0.11.0`）。
-> 定位：说明项目目标、当前架构与阶段边界。具体消息流见 [Bot 核心设计](bot-core-design.md)，功能演进见 [CHANGELOG](CHANGELOG.md)。标为“规划”的能力尚未实现。
+> 定位：说明项目目标、当前架构与阶段边界。具体消息流见 [Bot 核心设计](bot-core-design.md)，功能演进见 [CHANGELOG](../../CHANGELOG.md)。标为“规划”的能力尚未实现。
 
 ## 1. 项目目的
 
@@ -95,7 +97,7 @@ big-fat-fish-3/
 
 ## 6. 协议与配置
 
-接入使用 OneBot 11 正向 WebSocket。项目还使用 NapCat 的 `get_group_msg_history` 扩展查询近期群图片。接口清单见 [napcat-protocol.md](napcat-protocol.md)，实际使用范围以该文档 §4.6 和代码为准。
+接入使用 OneBot 11 正向 WebSocket。项目还使用 NapCat 的 `get_group_msg_history` 扩展查询近期群图片。接口清单见 [napcat-protocol.md](../napcat-protocol.md)，实际使用范围以该文档 §4.6 和代码为准。
 
 | 配置入口 | 当前职责 | 生效方式 |
 |---|---|---|
@@ -110,7 +112,7 @@ big-fat-fish-3/
 
 当前 Compose 包含 NapCat 和 Bot，NapCat 映射 `3001`（OneBot WS）和 `6099`（WebUI）。可用 `docker compose up -d --build` 启动两者；也可只启动 NapCat，再在宿主机从项目根目录通过 `npm start` 启动 Bot，开发时使用 `npm run dev`。两种 Bot 运行方式二选一；`npm test` 运行本地模拟测试。
 
-NapCat 登录态与配置由 `napcat/` 挂卷保存，启动时固定本地设备标识、选择账号快速登录并自动同步 WS 配置，详见 [NapCat 部署说明](napcat-deployment.md)。QQ 要求手机验证时仍需人工授权。Bot 默认将数据写到本地 `data/`。`DATA_DIR`、`PERSONA_DIR` 和 `USAGE_DIR` 是独立配置，迁移数据时需一起核对。
+NapCat 登录态与配置由 `napcat/` 挂卷保存，启动时固定本地设备标识、选择账号快速登录并自动同步 WS 配置，详见 [NapCat 部署说明](../napcat-deployment.md)。QQ 要求手机验证时仍需人工授权。Bot 默认将数据写到本地 `data/`。`DATA_DIR`、`PERSONA_DIR` 和 `USAGE_DIR` 是独立配置，迁移数据时需一起核对。
 
 当前没有管理 API、面板容器、通用定时任务服务或持久化发送队列。
 

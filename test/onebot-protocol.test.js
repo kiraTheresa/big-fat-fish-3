@@ -79,3 +79,16 @@ test('malformed envelopes and unsafe routing IDs cannot enter triggers or create
   assert.equal(normalizeOneBotEvent({ ...group('text'), user_id: {} }).processable, false);
   assert.equal(getEventSessionKey({ group_id: '../escape', user_id: '../../secret' }), null);
 });
+
+test('戳一戳仅放行他人戳机器人；通知保持原样且不开放其他通知', () => {
+  const raw = { post_type: 'notice', notice_type: 'notify', sub_type: 'poke', self_id: 789, user_id: 456, target_id: '789', group_id: 123 };
+  const result = normalizeOneBotEvent(raw);
+  assert.equal(result.processable, true);
+  assert.equal(result.sessionKey, 'g-123');
+  assert.deepEqual(result.event, raw);
+  assert.equal(normalizeOneBotEvent({ ...raw, group_id: undefined }).sessionKey, 'p-456');
+  for (const patch of [{ target_id: 456 }, { user_id: 789 }, { self_id: undefined }, { user_id: null },
+    { target_id: undefined }, { group_id: '../unsafe' }, { notice_type: 'friend_add' }, { sub_type: 'honor' }]) {
+    assert.equal(normalizeOneBotEvent({ ...raw, ...patch }).processable, false);
+  }
+});

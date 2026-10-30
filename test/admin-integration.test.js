@@ -29,6 +29,9 @@ test('静态页面、真实 API 与完整新事件收件闭环', async () => {
   assert.equal(status.connection.connected, false);
   assert.equal(status.usage.today.calls, 0);
   assert.equal(status.scheduler.jobs, 2);
+  const jobs = (await (await request('/api/jobs')).json()).items;
+  assert.equal(jobs.find((job) => job.type === 'distill').schedule.everyMs, 300000);
+  assert.equal(jobs.find((job) => job.type === 'maintenance').schedule.everyMs, 21600000);
   await dispatch({ post_type: 'request', request_type: 'friend', user_id: 123, flag: 'never-auto-approve', comment: 'hello' });
   await dispatch({ post_type: 'message', message_type: 'private', user_id: 123, message_id: 1, time: 1800000000, message: [{ type: 'record', data: { file: 'voice.silk' } }] });
   const inbox = await (await request('/api/events')).json();

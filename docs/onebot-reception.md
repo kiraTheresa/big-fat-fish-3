@@ -13,9 +13,13 @@
 - `message_sent`：NapCat 等实现的已发送消息扩展，只收件，避免自我回复和重复 bot 历史。
 - 其他实现扩展：不靠枚举丢弃，原样保留，默认只收件。
 
-标准定义的 20 种段类型全部可接收：`text`、`face`、`image`、`record`、`video`、`at`、`rps`、`dice`、`shake`、`poke`、`anonymous`、`share`、`contact`、`location`、`music`、`reply`、`forward`、`node`、`xml`、`json`。标准中部分段只标记为发送用途，本项目依然保留实现可能上报的这些段。`file`、`mface` 等非标准扩展也保留；不下载媒体，不展开转发、不执行 XML/JSON 内容。
+标准定义的 20 种段类型全部可接收：`text`、`face`、`image`、`record`、`video`、`at`、`rps`、`dice`、`shake`、`poke`、`anonymous`、`share`、`contact`、`location`、`music`、`reply`、`forward`、`node`、`xml`、`json`。标准中部分段只标记为发送用途，本项目依然保留实现可能上报的这些段。`file`、`mface` 等非标准扩展也保留；接收层本身不下载媒体，不展开转发、不执行 XML/JSON 内容。
 
-原有业务只处理由 `text`、`at`、`reply`、`image` 组成的消息；任意新增段出现时，整条消息目前仅进入收件箱，混合文本也不会触发回复。群系统提示仅收件。新类型不进入 LLM 会话历史，避免在后续聊天中被隐式处理。纯文本、已有识图、绘图、指令及引用处理保持原有触发器边界。
+除戳一戳外，业务可处理由 `text`、`at`、`reply`、`image`、`face`、`mface` 组成的消息。`face` 与 `mface` 已为表情收藏开放触发资格，混合文字和原生表情可以进入指令或聊天处理；仍须通过原有唤醒规则、权限和冷却检查，收到表情不等于立即回复或自动收藏。表情指令在群聊中仍要求 @ 本鱼。纯内置/商城表情没有文字时，聊天入口也可能静默忽略。
+
+上述类型以外的任意段出现时，整条消息仍仅进入收件箱，混合文本也不会触发回复或进入业务会话历史；群系统提示仅收件。明确收藏请求可以由表情服务下载允许来源的原图，或保存原生表情引用；发送已收藏表情使用对应消息类型，不改变接收层原样保存事件的职责。具体流程见 [肥鱼表情包](memes.md)。
+
+发给机器人的 `notice/notify/poke` 通知可进入戳一戳触发器；必须有合法的用户、目标与机器人 ID（群聊还须有合法群 ID），且操作者不是机器人自身。开关关闭、无聊天密钥、封禁或冷却中不回复；受理时以文字占位进入会话历史，原始通知仍完整存入收件箱。
 
 ## 消息归一化与容错
 
@@ -26,7 +30,7 @@
 ## 持久化与接口
 
 - `DATA_DIR/events/YYYY-MM-DD.jsonl`：按 UTC 接收日期分文件的完整事件收件箱，串行追加。记录含 `id`、毫秒 `receivedAt`、`postType`、`eventType`、`subType`、`sessionKey`、`messageTypes`、`handling`、`issues`、原始 `event` 及可选 `segments`。
-- `handling` 为 `trigger_eligible`、`received_only` 或 `malformed`。`trigger_eligible` 仅表示可交给原有触发器，不代表实际命中、通过权限或已回复。
+- `handling` 包括 `trigger_eligible`、`received_only`、`malformed` 及权限阻断时的 `blocked`。`trigger_eligible` 仅表示可交给原有触发器，不代表实际命中、通过权限或已回复。
 - `readEvents({limit=50,postType,sessionKey,before})` 返回 `{items,nextCursor}`，最新在前；`before` 是稳定的事件 UUID 游标，跨日期分页，单页最多 200 条。坏行跳过；流式读取只保留一页，磁盘扫描仍与保留文件长度相关。指向已清理记录的游标返回空页。
 - `getEventStats()` 返回本次进程的保存成功/失败数量、分类/会话计数和最后保存时间；`scope: 'process'` 表示重启后计数重新开始，不伪称历史总数。
 - `flushEventStore()` / `flushMessageStore()` 等待各自已提交写入结束，供优雅停机。

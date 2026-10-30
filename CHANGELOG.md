@@ -7,7 +7,27 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.30.0] - 2026-10-30
+
+Public beta release candidate; publication is pending. This consolidates development commits 0.12.0–0.29.0 and release preparation into one release entry. Earlier numbered entries are historical behavior, not current instructions. See [release notes](docs/releases/0.30.0.md) for setup, upgrade steps and verification limits.
+
 ### feat
+
+- Poke replies and standalone mentions, private image-only messages and recent-image follow-ups. Chat and vision share the configured model, receive streaming responses, and send completed replies to QQ. Drawing reports progress and archives generated originals.
+- Group memory distillation sleeps after two hours without an accepted invocation by default; durable activity windows resume on the next invocation.
+- Default Prompt bodies live in `prompts/`; published configuration and existing personas retain precedence.
+- Management login is remembered for a fixed 30 minutes in the browser, with expiry, logout and unauthorized-response cleanup.
+
+- Separate read-only generated-picture and meme-collection pages in the management console sidebar, each retaining its own keyword search, filters and pagination, with details and local-original downloads. The legacy `#media` link redirects to `#images`; meme collections use `#memes`. List and image requests require the admin token; GIF bytes are preserved. Native QQ references without local images show a placeholder, and local previews do not reproduce or verify QQ's native animation.
+
+- One shared meme library across groups and private chats, with automatic backup and migration of existing session collections, explicit command or natural-language saving, local search and native OneBot image/mface/face replay. Preserve animation bytes and native references, deduplicate collections, support administrator rename/disable/re-enable, and confirm sends through the existing queue. Model use is limited to searched candidates and one send attempt per turn; Prompt tests never send memes to QQ.
+
+- Prompt-page workbench and relaxed appearance presets, with a one-click switch that preserves draft/test state and remembers only the browser appearance preference.
+
+- Natural-language drawing and memory tools after the existing wake-up rules, with server-bound scope, argument checks, bounded tool loops and per-turn duplicate protection.
+- Prompt console with layered editing, explainable history filtering, request JSON, isolated session snapshots, real-model tests, manual review, revision-bound publishing and rollback through drafts. Initial persona changes apply only to new/reset sessions.
 
 - Receive and persist all OneBot 11 standard event families and message segments, including CQ strings and unknown extensions. Newly supported types are receipt-only.
 - Local management console with a liquid-glass interface: runtime health, event inbox, validated live configuration, QQ roles, durable jobs, structured logs and model usage. Admin APIs require a separate token.
@@ -15,6 +35,12 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 - Count chat, vision, drawing and distillation API attempts, including failures and unknown usage; enforce feature switches and daily request limits, with a reported-token threshold.
 
 ### fix
+
+- Align package and lockfile versions with the changelog-backed `/version`; reconcile deployment, tools, storage, permission and verification documentation for the public beta.
+
+- Generic requests to send any meme search all usable shared candidates instead of inventing restrictive keywords; explicit topics still require matching results.
+- Treat teaching an attached or quoted meme's purpose, emotion or name as a save request. Give the model structural source context and upgrade only matching legacy default instructions, preserving custom prompts and disabled tools.
+- Apply locked-entry preservation rules to both persona files even with older published distillation prompts. Capacity warnings now only request compression of unlocked content; existing validation and retry backoff remain in place.
 
 - Recover the runtime lock across host/container switches using a renewable shared-filesystem lease; active instances stay exclusive, while crashed owners expire after 30 seconds regardless of hostname or PID reuse.
 

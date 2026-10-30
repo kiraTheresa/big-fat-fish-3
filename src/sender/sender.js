@@ -16,16 +16,19 @@ let failed = 0;
 export function getSenderStatus() { return { queued: queue.length, draining, sent, failed }; }
 
 export function sendGroup(groupId, message) {
-  enqueue({ message_type: 'group', group_id: groupId, message });
+  return enqueue({ message_type: 'group', group_id: groupId, message });
 }
 
 export function sendPrivate(userId, message) {
-  enqueue({ message_type: 'private', user_id: userId, message });
+  return enqueue({ message_type: 'private', user_id: userId, message });
 }
 
 function enqueue(params) {
-  queue.push(params);
-  drain();
+  // Always resolve: existing fire-and-forget callers must not create unhandled rejections.
+  return new Promise((resolve) => {
+    queue.push({ params, resolve });
+    drain();
+  });
 }
 
 async function drain() {
@@ -33,17 +36,23 @@ async function drain() {
   draining = true;
   try {
     while (queue.length > 0) {
-      const params = queue.shift();
+      const { params, resolve } = queue.shift();
       try {
         const data = await callApi('send_msg', params);
+        if (!Number.isSafeInteger(data?.message_id)
+          && !(typeof data?.message_id === 'string' && /^-?\d{1,20}$/.test(data.message_id))) {
+          throw new Error('OneBot 发送响应缺少有效消息 ID，发送结果未知');
+        }
         logger.info(`发送确认: message_id=${data?.message_id}`);
         // callApi resolve 即 retcode=0 路径：仅成功确认的出站 id 入集（replyQuote 的
         // 「引用 bot 消息」判定依据）；失败重发会拿到新 id，各按各的确认入集
         recordBotMessageId(data?.message_id);
         sent++;
+        resolve({ ok: true, messageId: data?.message_id ?? null });
       } catch (err) {
         failed++;
         logger.warn(`发送失败: ${err.message}`); // 单条失败不阻断队列
+        resolve({ ok: false, error: err.message });
       }
       await delay(config.sendIntervalMs); // 固定间隔：两条出站帧之间至少间隔 sendIntervalMs
     }

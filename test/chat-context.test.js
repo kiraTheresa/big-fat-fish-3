@@ -115,9 +115,10 @@ async function writeHistory(sessionKey, rows) {
 // 二读同源）；场景三行里时间串数字宽度恒定、静默锚点距今几十秒恒落「刚刚还在聊」档——
 // handle 实际组装的 system 与此处预估**字节数**相等（分内数字不同不影响字节数）
 async function estimateSystemBytes(sessionKey, lastTimeSec) {
+  const { getPromptConfig } = await import('../src/prompt/store.js');
   const persona = await getPersona(sessionKey);
   return Buffer.byteLength(
-    buildSystemPrompt(persona, { isGroup: false, nowMs: Date.now(), lastTimeSec }),
+    buildSystemPrompt(persona, { isGroup: false, nowMs: Date.now(), lastTimeSec }, getPromptConfig().prompts),
     'utf8'
   );
 }

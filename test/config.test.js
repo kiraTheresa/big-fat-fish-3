@@ -22,6 +22,7 @@ const ENV_KEYS = [
   'DISTILL_SILENCE_MS',
   'DISTILL_BATCH_SIZE',
   'DISTILL_INTERVAL_MS',
+  'DISTILL_IDLE_MS',
   'USAGE_DIR',
 ];
 
@@ -56,17 +57,18 @@ test('默认值：未设置相关 env 时返回全部默认值', async () => {
   // AIChat（add-aichat-mvp spec）
   assert.equal(config.deepseekApiKey, '');
   assert.equal(config.deepseekBaseUrl, 'https://api.deepseek.com');
-  assert.equal(config.deepseekModel, 'deepseek-chat');
+  assert.equal(config.deepseekModel, 'deepseek-flash');
   assert.equal(config.chatTimeoutMs, 60000);
   assert.equal(config.chatContextLines, 20);
-  assert.equal(config.chatCooldownMs, 5000);
+  assert.equal(config.chatCooldownMs, 2000);
   // 自进化人设（add-self-evolving-persona spec）
   assert.deepEqual(config.adminQq, []);
   assert.equal(config.personaDir, 'data/personas');
   assert.equal(config.personaMaxBytes, 4096);
   assert.equal(config.distillSilenceMs, 600000);
   assert.equal(config.distillBatchSize, 50);
-  assert.equal(config.distillIntervalMs, 60000);
+  assert.equal(config.distillIntervalMs, 300000);
+  assert.equal(config.distillIdleMs, 7200000);
   assert.equal(config.usageDir, 'data/usage');
 });
 

@@ -6,22 +6,35 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 
-function harness(responder = () => ({})) {
+function harness(responder = () => ({}), { signedIn = true, storage = new Map(), now = 1800000000000, storageDisabled = false } = {}) {
   const nodes = new Map();
   const calls = [];
+  const timers = new Map();
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  let timerId = 0;
   const node = (selector) => {
     if (!nodes.has(selector)) nodes.set(selector, {
       innerHTML: '', textContent: '', hidden: false, value: '', disabled: false, open: false, name: '',
-      classList: { toggle() {} }, addEventListener() {}, setAttribute() {}, removeAttribute() {},
+      listeners: new Map(),
+      classList: { toggle() {} }, addEventListener(event, callback) { this.listeners.set(event, callback); }, setAttribute() {}, removeAttribute() {},
       focus() {}, contains() { return false; }, close() { this.open = false; }, showModal() { this.open = true; },
     });
     return nodes.get(selector);
   };
   const context = vm.createContext({
-    document: { querySelector: node, querySelectorAll() { return []; }, addEventListener() {}, title: '' },
-    window: { addEventListener() {}, confirm() { return true; } },
+    document: { querySelector: node, querySelectorAll() { return []; }, addEventListener(event, callback) { documentListeners.set(event, callback); }, title: '' },
+    window: { addEventListener(event, callback) { windowListeners.set(event, callback); }, confirm() { return true; } },
     location: { hash: '' }, history: { replaceState() {} },
-    setInterval() {}, setTimeout() {}, clearTimeout() {},
+    Date: class extends Date { static now() { return now; } },
+    localStorage: {
+      getItem(key) { if (storageDisabled) throw new Error('storage disabled'); return storage.get(key) ?? null; },
+      setItem(key, value) { if (storageDisabled) throw new Error('storage disabled'); storage.set(key, value); },
+      removeItem(key) { if (storageDisabled) throw new Error('storage disabled'); storage.delete(key); },
+    },
+    setInterval() {},
+    setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, at: now + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
     AbortSignal, URLSearchParams, Intl, structuredClone,
     fetch: async (url, options) => {
       calls.push({ url, options });
@@ -29,10 +42,17 @@ function harness(responder = () => ({})) {
       return { ok: (response.status ?? 200) < 400, status: response.status ?? 200, json: async () => response.body ?? response };
     },
   });
-  vm.runInContext(source, context);
+  node('#app').hidden = true;
+  const ready = vm.runInContext(source, context);
   const run = (expression) => vm.runInContext(expression, context);
-  run("state.token='ephemeral-test-token'; state.sequence=1");
-  return { run, nodes, node, context, calls };
+  if (signedIn) run("state.token='ephemeral-test-token'; state.sequence=1");
+  const advance = (ms, fireTimers = true) => {
+    now += ms;
+    if (fireTimers) for (const [id, timer] of timers) {
+      if (timer.at <= now) { timers.delete(id); timer.callback(); }
+    }
+  };
+  return { run, nodes, node, context, calls, ready, storage, advance, windowListeners, documentListeners };
 }
 
 function fixtures() {
@@ -46,6 +66,139 @@ function fixtures() {
     '/api/usage': { totals: { calls: 1, failures: 1, unknownUsageCalls: 1 }, byKind: [{ kind: 'draw', calls: 1 }], bySession: [{ sessionKey: 'g-1', calls: 1 }], items: [{ time: Date.now(), kind: 'draw', status: 'failure' }] },
   };
 }
+
+const LOGIN_KEY = 'big-fat-fish.admin-session.v1';
+const LOGIN_TTL = 30 * 60 * 1000;
+const LOGIN_START = 1800000000000;
+const loginRecord = (expiresAt = LOGIN_START + LOGIN_TTL) => JSON.stringify({ token: 'remembered-token', expiresAt });
+const loginStorage = (record = loginRecord()) => new Map([[LOGIN_KEY, record]]);
+
+test('成功验证后才记住令牌 30 分钟，刷新自动验证并进入，刷新不续期', async () => {
+  const data = fixtures();
+  const responder = (url) => data[url.split('?')[0]];
+  const ui = harness(responder, { signedIn: false });
+  await ui.ready;
+  assert.equal(ui.calls.length, 0);
+  ui.node('#admin-token').value = ' remembered-token ';
+  await ui.node('#login-form').listeners.get('submit')({ preventDefault() {} });
+  assert.equal(ui.node('#app').hidden, false);
+  assert.equal(ui.node('#admin-token').value, '');
+  assert.equal(ui.storage.get(LOGIN_KEY), loginRecord());
+  const refreshed = harness(responder, { signedIn: false, storage: ui.storage, now: LOGIN_START + 10 * 60 * 1000 });
+  assert.equal(refreshed.node('.login-submit').disabled, true);
+  assert.equal(refreshed.run('state.token'), '');
+  await refreshed.ready;
+  assert.equal(refreshed.node('#app').hidden, false);
+  assert.equal(refreshed.calls[0].options.headers.Authorization, 'Bearer remembered-token');
+  assert.equal(refreshed.storage.get(LOGIN_KEY), loginRecord());
+  refreshed.advance(20 * 60 * 1000 - 1);
+  assert.equal(refreshed.node('#app').hidden, false);
+  refreshed.advance(1);
+  assert.equal(refreshed.node('#app').hidden, true);
+  assert.equal(refreshed.run('state.token'), '');
+  assert.equal(refreshed.storage.has(LOGIN_KEY), false);
+  assert.match(refreshed.node('#login-error').textContent, /30 分钟/);
+});
+
+test('到期或损坏的登录记录被删除，不发送鉴权请求', async () => {
+  for (const record of [loginRecord(LOGIN_START), loginRecord(LOGIN_START - 1), '{broken', 'null', '{}',
+    JSON.stringify({ token: '', expiresAt: LOGIN_START + LOGIN_TTL }),
+    JSON.stringify({ token: 123, expiresAt: LOGIN_START + LOGIN_TTL }),
+    JSON.stringify({ token: 'token', expiresAt: String(LOGIN_START + LOGIN_TTL) }),
+    loginRecord(LOGIN_START + LOGIN_TTL + 1)]) {
+    const ui = harness(() => ({}), { signedIn: false, storage: loginStorage(record) });
+    await ui.ready;
+    assert.equal(ui.calls.length, 0, record);
+    assert.equal(ui.storage.has(LOGIN_KEY), false);
+    assert.equal(ui.node('#app').hidden, true);
+  }
+});
+
+test('错误令牌不保存，自动恢复收到 401 清理记录，临时断网可再次刷新恢复', async () => {
+  for (const restore of [false, true]) {
+    const ui = harness(() => ({ status: 401 }), { signedIn: false, storage: restore ? loginStorage() : new Map() });
+    await ui.ready;
+    if (!restore) await ui.run("login('wrong-token')");
+    assert.equal(ui.storage.has(LOGIN_KEY), false);
+    assert.equal(ui.run('state.token'), '');
+    assert.equal(ui.node('#app').hidden, true);
+    assert.equal(ui.node('.login-submit').disabled, false);
+    assert.match(ui.node('#login-error').textContent, /令牌/);
+  }
+  const offline = harness(() => { throw new Error('offline'); }, { signedIn: false, storage: loginStorage() });
+  await offline.ready;
+  assert.equal(offline.storage.get(LOGIN_KEY), loginRecord());
+  assert.equal(offline.node('#app').hidden, true);
+  assert.match(offline.node('#login-error').textContent, /无法连接/);
+});
+
+test('退出清除保存记录和内容，刷新不会重新登录', async () => {
+  const ui = harness(() => ({}), { signedIn: false, storage: loginStorage() });
+  await ui.ready;
+  ui.storage.set('unrelated-preference', 'keep');
+  ui.node('#logout').listeners.get('click')();
+  assert.equal(ui.storage.has(LOGIN_KEY), false);
+  assert.equal(ui.storage.get('unrelated-preference'), 'keep');
+  assert.equal(ui.node('#content').innerHTML, '');
+  assert.equal(ui.run('state.token'), '');
+  const refreshed = harness(() => ({}), { signedIn: false, storage: ui.storage });
+  await refreshed.ready;
+  assert.equal(refreshed.calls.length, 0);
+});
+
+test('休眠导致计时器延迟时，恢复焦点或发起 API 请求仍检查到期', async () => {
+  for (const trigger of ['focus', 'pageshow', 'visibilitychange', 'api']) {
+    const ui = harness(() => ({}), { signedIn: false, storage: loginStorage() });
+    await ui.ready;
+    const calls = ui.calls.length;
+    ui.advance(LOGIN_TTL, false);
+    if (trigger === 'api') await assert.rejects(ui.run("api('/config')"), /30 分钟/);
+    else if (trigger === 'visibilitychange') ui.documentListeners.get(trigger)();
+    else ui.windowListeners.get(trigger)();
+    assert.equal(ui.calls.length, calls);
+    assert.equal(ui.run('state.token'), '');
+    assert.equal(ui.storage.has(LOGIN_KEY), false);
+  }
+});
+
+test('自动恢复的慢响应不能撤销退出或越过原到期时间', async () => {
+  for (const action of ['logout()', `Date.now = () => ${LOGIN_START + LOGIN_TTL}`]) {
+    let finish;
+    const ui = harness(() => new Promise((resolve) => { finish = resolve; }), { signedIn: false, storage: loginStorage() });
+    ui.run(action);
+    finish({});
+    await ui.ready;
+    assert.equal(ui.run('state.token'), '');
+    assert.equal(ui.node('#app').hidden, true);
+    assert.equal(ui.storage.has(LOGIN_KEY), false);
+    assert.equal(ui.node('.login-submit').disabled, false);
+  }
+});
+
+test('另一标签页退出或更换登录时同步退出，保留该标签页写入的新记录', async () => {
+  const ui = harness(() => ({}), { signedIn: false, storage: loginStorage() });
+  await ui.ready;
+  const newRecord = JSON.stringify({ token: 'new-token', expiresAt: LOGIN_START + LOGIN_TTL });
+  ui.storage.set(LOGIN_KEY, newRecord);
+  ui.windowListeners.get('storage')({ key: LOGIN_KEY, newValue: newRecord });
+  assert.equal(ui.run('state.token'), '');
+  assert.equal(ui.storage.get(LOGIN_KEY), newRecord);
+  const other = harness(() => ({}), { signedIn: false, storage: ui.storage });
+  await other.ready;
+  ui.storage.delete(LOGIN_KEY);
+  other.windowListeners.get('storage')({ key: LOGIN_KEY, newValue: null });
+  assert.equal(other.run('state.token'), '');
+});
+
+test('浏览器禁用存储时仍允许登录并提示刷新需要重输，30 分钟后仍到期', async () => {
+  const ui = harness(() => ({}), { signedIn: false, storageDisabled: true });
+  await ui.ready;
+  await ui.run("login('valid-token')");
+  assert.equal(ui.node('#app').hidden, false);
+  assert.match(ui.node('#toast').textContent, /刷新后需重新输入/);
+  ui.advance(LOGIN_TTL);
+  assert.equal(ui.run('state.token'), '');
+});
 
 test('七个页面使用真实契约渲染：转义不可信文本、容忍畸形消息段、区分失败和未知用量', async () => {
   const data = fixtures();
@@ -90,10 +243,13 @@ test('旧页面的慢响应不会覆盖新页面正在使用的记录', async ()
 test('仅当前令牌的 401 才退出；令牌在 Authorization 头中，不进入 URL', async () => {
   const ui = harness(() => ({ status: 401, body: { error: 'unauthorized' } }));
   ui.run("state.token='new-token'");
+  ui.storage.set(LOGIN_KEY, JSON.stringify({ token: 'new-token', expiresAt: LOGIN_START + LOGIN_TTL }));
   await assert.rejects(ui.run("api('/status',{token:'old-token'})"), /令牌/);
   assert.equal(ui.run('state.token'), 'new-token');
+  assert.equal(ui.storage.has(LOGIN_KEY), true);
   await assert.rejects(ui.run("api('/status')"), /令牌/);
   assert.equal(ui.run('state.token'), '');
+  assert.equal(ui.storage.has(LOGIN_KEY), false);
   assert.equal(ui.node('#app').hidden, true);
   assert.equal(ui.node('#login').hidden, false);
   assert.equal(ui.calls[0].url, '/api/status');
@@ -117,6 +273,9 @@ test('配置保存期间锁定控件并防重复提交；409 后保留编辑值�
     { name: 'separator', value: '', disabled: false },
   ];
   fields.aliases = fields[2]; fields.separator = fields[3];
+  fields.push({ name: 'behavior.trigger.poke.enabled', type: 'checkbox', checked: false, disabled: false },
+    { name: 'behavior.trigger.poke.prompt', type: 'textarea', value: '简短回应', disabled: false },
+    { name: 'behavior.chat.cooldownMs', type: 'number', value: '2000', disabled: false });
   const button = ui.node('#save-config');
   fields.push(button);
   ui.context.testForm = { elements: fields };
@@ -130,6 +289,9 @@ test('配置保存期间锁定控件并防重复提交；409 后保留编辑值�
   assert.equal(ui.calls.length, 1);
   const payload = JSON.parse(ui.calls[0].options.body);
   assert.equal(payload.revision, 'original');
+  assert.equal(payload.behavior.trigger.poke.enabled, false);
+  assert.equal(payload.behavior.trigger.poke.prompt, '简短回应');
+  assert.equal(payload.behavior.chat.cooldownMs, 2000);
   assert.deepEqual(payload.behavior.trigger.nameCall.aliases, ['肥鱼', '小鱼']);
   assert.equal(payload.behavior.reply.split.separator, '');
   finish();

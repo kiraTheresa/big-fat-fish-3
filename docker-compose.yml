@@ -30,7 +30,7 @@ services:
       # 覆盖 .env 里的 localhost（compose 的 environment 优先级高于 env_file）：
       # 容器网络内经服务名访问 napcat
       ONEBOT_WS_URL: ws://napcat:3001
-      # 时区：日志与记忆条目时间戳取本地时区（镜像内已装 tzdata）
+      # 时区：日志与记忆条目时间戳取本地时区（Node 内置 ICU 支持时区，无需安装 tzdata）
       TZ: Asia/Shanghai
       ADMIN_HOST: 0.0.0.0
     ports:
@@ -38,5 +38,5 @@ services:
     env_file:
       - .env            # 其余配置（token / LLM key / 管理白名单等）与宿主机同源
     volumes:
-      - ./data:/app/data            # 全部运行时数据（messages / personas / usage / session-state）
+      - ./data:/app/data            # 全部运行时数据（含 media/generated 原图与 media/memes 表情包）
       - ./config.json:/app/config.json:ro  # 行为开关（CONFIG_PATH 默认 ./config.json）

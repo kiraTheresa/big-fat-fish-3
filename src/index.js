@@ -9,13 +9,17 @@ import ping from './triggers/ping.js';
 import draw from './triggers/draw.js';
 import command from './triggers/command.js';
 import chat from './triggers/chat.js';
+import meme from './triggers/meme.js';
+import poke from './triggers/poke.js';
 import { drainSender } from './sender/sender.js';
 import { startPlatform } from './platform/runtime.js';
 
 export const platform = await startPlatform();
 
+register(poke); // 通知入口：仅响应他人戳机器人，共用对话冷却与人设。
 register(ping); // L3：加功能 = triggers/ 加一个文件 + 此处一行注册（ping 先注册，优先于 chat）
 register(draw); // L3 绘图：/draw（默认公开）。必须排在 command 之前——command 的 '/' match 会吃掉 /draw
+register(meme);
 register(command); // L3 指令：'/' 前缀（help/status/persona/memory/remember/reset/history），群聊须 @ 本鱼（门控在 handle，match 仍宽吞）；置于 chat 前优先（命中即停，指令不落入 LLM）
 register(chat); // AIChat：私聊全量 / 群聊 @bot（未配置 DEEPSEEK_API_KEY 时自动不生效）
 onEvent(dispatch); // 接线：L1 连接层事件上抛 → L2 分发层（筛选 / 打标 / 存储 / 触发器链）

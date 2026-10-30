@@ -1,0 +1,110 @@
+# 图片与表情包文件存储
+
+所有媒体位于 `DATA_DIR/media`，默认是项目下的 `data/media`。启动时自动创建两个目录，现有 Docker Compose 的 `./data:/app/data` 已覆盖它们，不需要额外挂载。数据目录已被 Git 和 Docker 构建上下文忽略。
+
+```text
+data/media/
+├── generated/                 # 绘图原图，按 UTC 日期分目录
+│   └── 2026-10-29/
+│       └── <UUID>/
+│           ├── image.png      # 扩展名按原始文件头识别
+│           └── metadata.json
+└── memes/                     # 表情包库
+    └── <UUID>/
+        ├── metadata.json     # 必须：类型、发送参数、名称、标签与来源
+        ├── image.gif         # 可选：原始文件
+        └── preview.png       # 可选：预览，不作为原图发送
+```
+
+## 绘图自动归档
+
+`generateImage()` 在返回图片前保存原始字节，覆盖 `/draw`、聊天绘图工具和 Prompt 控制台真实绘图。当前调用链使用上游 `data[0]` 的一张图片；Base64 和 URL 下载两种返回形式都会保存。模拟绘图不产生文件。原有 Prompt 测试图片仍用于控制台预览。
+
+元数据包含版本、UUID、UTC 时间、文件名、MIME、字节数、SHA-256，以及提示词、会话、模型和请求尺寸。尺寸是请求参数，不是测量出的像素大小。文件路径只由内部 UUID 和日期生成，提示词与会话不参与路径拼接。不保存 API 密钥和上游临时下载 URL。
+
+返回值为 `{ b64, asset }`，`asset.path` 相对于 `DATA_DIR/media`。保存失败会记录警告，并返回 `asset: null`；已生成的图片仍正常进入发送流程，不因磁盘错误重新调用付费绘图。未知图片格式按 `.bin` 保存原始内容，便于检查。
+
+上线前已经发到 QQ 的图片没有自动归档，无法从聊天记录里的文字占位还原；这次也不迁移控制台旧测试图片。
+
+## 表情包存储接口
+
+`src/store/media-store.js` 提供统一接口：
+
+```js
+saveMeme({ type, data = {}, image = null, preview = null, name = '', tags = [], source = null })
+readMeme(id)
+```
+
+`type` 明确指定 `image`（自定义图片表情）、`mface`（商城表情）或 `face`（内置表情）。`data` 是构建该类型 OneBot 消息段时需要的参数，按 JSON 原样保存，包括扩展字段和数值/字符串类型；存储层不把收到的 `image` 自动推断为商城表情，不解析或执行其中的 URL、文件路径及原始数据。调用方应先识别类型，再传入对应参数。
+
+`image` 和 `preview` 都是可选 Buffer，可以同时为空。二者只支持按文件头识别的 PNG、JPEG、GIF、WebP，不转码、不压缩，保留原始动画字节；格式识别不等于完整图片解码校验。即使商城表情附有图片，发送时仍使用 `mface` 参数发送，不应改为图片段。`preview` 只供预览，不能用于替代原图判断参数是否完整。
+
+新表情元数据版本为 `2`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `memeType` | `image`、`mface` 或 `face` |
+| `send` | `{ type, data }`，保存的消息类型与原始发送参数 |
+| `name`、`tags` | 名称和去重后的标签，不参与文件路径 |
+| `source` | 可选 JSON 对象，如原消息 ID、会话、接收段类型；默认 `null` |
+| `filename`、`mimeType`、`bytes`、`sha256` | 原图描述；无原图时分别为 `null`、`null`、`0`、`null` |
+| `preview` | 可选预览文件描述，默认 `null` |
+| `missingParameters` | 缺失的基本发送参数列表；保存和读取时计算 |
+
+此外保留 UUID、创建时间和 `kind: 'memes'`。返回值的 `path` 是相对 `DATA_DIR/media` 的原图路径，无原图为 `null`；有预览时返回 `preview.path`。这些路径在读取时计算，不依赖旧主机绝对路径。
+
+基本参数检查规则：`image` 需要本地原图或非空 `data.file`；`mface` 检查 `emoji_id`、`emoji_package_id`、`key`；`face` 检查 `id`。缺失时仍允许保存，例如只有缩略图的素材会记录 `missingParameters: ['file']`。这只是保守的字段完整性检查，**空列表不代表已经验证可发送或能恢复原有动画效果**：远程链接可能过期，原生参数可能失效，QQ/NapCat 版本支持也尚未实测。图片的 `sub_type`、`summary` 由调用方提供并原样保存，不猜测或补造表情属性。
+
+保存本地动画及发送属性：
+
+```js
+import { readFile } from 'node:fs/promises';
+import { saveMemeImage } from './src/store/media-store.js';
+
+const asset = await saveMemeImage(await readFile('/path/to/开心.gif'), {
+  name: '开心', tags: ['开心', '肥鱼'],
+  data: { sub_type: 1, summary: '[动画表情]' }, // 传入来源提供的实际属性
+});
+console.log(asset.path);
+```
+
+保存只有原生引用的商城表情（不下载图片）：
+
+```js
+import { saveMeme, readMeme } from './src/store/media-store.js';
+
+const asset = await saveMeme({
+  type: 'mface', name: '开心', tags: ['开心'],
+  data: { emoji_id: '实际表情ID', emoji_package_id: '实际表情包ID', key: '实际key', summary: '[开心]' },
+  source: { messageId: '原消息ID', sessionKey: 'g-123', segmentType: 'image' },
+});
+const stored = await readMeme(asset.id); // stored.send 保留原参数，stored.path 为 null
+```
+
+旧接口 `saveMemeImage(buffer, { name, tags, data, source })` 保留，是 `type: 'image'` 的快捷入口；仍要求非空原图。`readMeme(id)` 只接受 UUID，记录不存在返回 `null`，元数据损坏、版本不支持或已声明的文件缺失时抛错。读取旧 v1 图片记录时补出 `send: { type: 'image', data: {} }` 供调用方使用，保留 `version: 1`，不会补造旧记录里没有的表情属性，也不改写旧文件。
+
+示例从项目根目录以 Node ESM 运行；自定义 `DATA_DIR` 时使用与 Bot 相同的环境。存储接口只写入、读取本地文件，不请求网络、不调用 OneBot。手动放入 `memes/` 的散文件不会自动扫描或生成元数据。上层已提供明确收藏指令、自然语言收藏/检索/发送工具，以及跨群聊和私聊共用的索引；使用方法见 [肥鱼表情包](memes.md)。此存储模块自身仍不执行网络操作。管理台已提供下述绘图作品与表情收藏两个只读页面；尚无自动收集，生成图片不会自动加入表情包库。
+
+## 共享收藏目录
+
+`meme-library.json` 的 v2 结构为 `{ version: 2, entries: [...] }`，条目保存共享名称、标签、启用状态、统计及 `sourceSessions` 来源列表。启动时从 v1 `sessions` 索引原子迁移，先保存旧索引备份 `meme-library.v1.backup.json`，再写入共享目录；坏数据拒绝覆盖。迁移保留原资产 ID 和媒体文件，重复启动不会重复合并。
+
+## 管理台浏览与下载
+
+侧栏“素材收藏”下的“绘图作品”（`#images`）与“表情收藏”（`#memes`）是两个独立页面，读取已有媒体元数据和 `meme-library.json` 收藏索引。旧 `#media` 链接兼容跳转到绘图作品页。两个页面各自保存搜索、筛选和分页状态，退出登录时清空；支持关键词搜索、来源会话筛选，以及按保存时间从新到旧分页（每页 24 项）。
+
+表情收藏页另有收藏状态筛选。名称、标签、启用状态和使用记录取自共享收藏；来源会话筛选仅按历史来源过滤，不改变使用范围。详情中可查看绘图提示词、模型、请求尺寸，或表情类型、标签与使用情况；元数据正常但未加入共享收藏的表情也可通过“未加入收藏”筛选找到。
+
+预览优先使用可选 `preview`，其次使用本地原图；存在可读取原图时提供下载。两个页面只读取文件头识别为 PNG、JPEG、GIF、WebP 且不超过 64 MB 的本地图片，原始字节不转码，GIF 动画字节保留。未知格式的 `.bin` 仍留在存储中，但不提供页面预览或下载。缺失、损坏的记录或文件会提示异常，并尽量保留其他素材的浏览能力。
+
+只有 `mface` / `face` 原生引用且没有本地图片时，表情收藏页显示类型占位和已有信息，不会根据参数恢复、下载或模拟 QQ 原生动画。原生表情附带的本地图片也只是预览素材，不能证明 QQ 中的实际播放效果；“可用”状态仅表示本地参数检查通过，实际发送仍由 QQ/NapCat 决定。
+
+`GET /api/media` 返回经过筛选的展示信息，`GET /api/media/file?key=...&variant=original|preview` 返回本地图片。两者均要求 `Authorization: Bearer <ADMIN_TOKEN>`、拒绝外站 Origin，并禁止缓存；图片 URL 不包含令牌。接口限制素材标识与文件类型，拒绝任意路径及符号链接，不返回服务器绝对路径、原生发送密钥或原始发送参数。两个页面均只读，不修改元数据或收藏索引，也不触发自动收集、绘图或发送。
+
+## 保留与备份
+
+媒体不受日志/事件的 `RETENTION_DAYS` 清理影响，暂时长期保留，没有自动容量淘汰。底层存储接口每次保存分配不同 UUID；上层共享表情库按内容去重，新增收藏上限为 5000 个。备份整个 `data/media`（含根目录的 `meme-library.json` 和迁移备份）才能同时保留原图、元数据和共享收藏状态，移动后本地图片相对引用仍有效。提示词、会话信息、商城表情 key 及调用方传入的链接属于本地数据，备份时一并保管；表情参数不会写入日志。相对路径不保证 `send.data` 中外部链接或外部文件路径永久可用。
+
+每份资产先在隐藏临时目录写入图片和元数据，文件 fsync 后再重命名目录发布；普通写入失败会清理该临时目录。强制断电/终止可能留下 `.<UUID>.tmp`，不应视为完整资产；停机后确认无写入可手动清理。不改写或自动删除已有媒体。
+
+修改源码后需重启本地 Bot；Docker 部署需重新构建并启动容器后，自动归档才会生效。

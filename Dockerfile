@@ -14,6 +14,7 @@ RUN npm ci --omit=dev
 # 运行必需：源码 + CHANGELOG（/version 指令的唯一版本数据源，version.js 现读）
 COPY CHANGELOG.md ./
 COPY src ./src
+COPY prompts ./prompts
 COPY web ./web
 
 # 非 root 运行（node 镜像内置 uid 1000 用户）；data/ 由 compose 挂载进来，

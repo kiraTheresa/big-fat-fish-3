@@ -44,7 +44,7 @@ test('成功：resolve { content, usage }，usage 原样透传，请求携带 Be
   assert.equal(req.method, 'POST');
   assert.equal(req.url, '/chat/completions');
   assert.equal(req.headers.authorization, 'Bearer test-key');
-  assert.equal(req.body.model, 'deepseek-chat');
+  assert.equal(req.body.model, 'deepseek-flash');
   assert.deepEqual(req.body.messages, messages);
 });
 
@@ -80,4 +80,60 @@ test('形状异常：响应缺 choices[0].message.content → reject', async () 
   llm.setEmpty();
   await assert.rejects(chatCompletion([{ role: 'user', content: 'x' }]), /缺少 choices/);
   llm.setReply('MOCK_LLM_REPLY');
+});
+
+const sse = (delta, finish_reason = null, usage) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }], ...(usage ? { usage } : {}) })}\n\n`;
+
+test('流式网关在 HTTP 结束前收到增量；收齐工具参数、reasoning、usage 后返回并记首包耗时', async () => {
+  let release;
+  let observed;
+  const firstDelta = new Promise((resolve) => { observed = resolve; });
+  llm.setStream((res) => {
+    res.write(sse({ role: 'assistant', reasoning_content: '规划' }));
+    res.write(sse({ tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'draw', arguments: '{"prompt":' } }] }));
+    release = () => res.end(sse({ tool_calls: [{ index: 0, function: { arguments: '"猫"}' } }] }) + sse({}, 'tool_calls', { total_tokens: 8 }) + 'data: [DONE]\n\n');
+  });
+  const trace = [];
+  let finished = false;
+  const pending = chatCompletion([{ role: 'user', content: '画猫' }], { onAttempt: (entry) => trace.push(entry), onDelta: (delta) => { if (delta.tool_calls) observed(); } }).then((value) => { finished = true; return value; });
+  try {
+    await firstDelta;
+    assert.equal(finished, false);
+    release();
+    const result = await pending;
+    assert.equal(llm.requests.at(-1).body.stream, true);
+    assert.deepEqual(llm.requests.at(-1).body.stream_options, { include_usage: true });
+    assert.equal(result.message.reasoning_content, '规划');
+    assert.equal(result.message.tool_calls[0].function.arguments, '{"prompt":"猫"}');
+    assert.equal(result.usage.total_tokens, 8);
+    assert.ok(trace.some((entry) => entry.event === 'first_tool_call' && entry.elapsedMs >= 0));
+    assert.equal(trace.filter((entry) => entry.phase === 'response').length, 1);
+  } finally { release?.(); await pending.catch(() => {}); llm.setReply('MOCK_LLM_REPLY'); }
+});
+
+test('关闭流式与记忆提炼保留原 JSON 请求', async () => {
+  await chatCompletion([], { stream: false });
+  assert.equal(llm.requests.at(-1).body.stream, undefined);
+  await chatCompletion([], { kind: 'distill' });
+  assert.equal(llm.requests.at(-1).body.stream, undefined);
+});
+
+test('流中断仍记一次失败和已收到的用量，不自动重试', async () => {
+  const { readUsageOverview } = await import('../src/store/usage-store.js');
+  const before = llm.requests.length;
+  llm.setStream((res) => res.end(sse({ content: '半截' }, 'stop', { total_tokens: 9 })));
+  try {
+    await assert.rejects(chatCompletion([], { sessionKey: 'p-stream-cut' }), /中断/);
+    assert.equal(llm.requests.length, before + 1);
+    const usage = await readUsageOverview({ sessionKey: 'p-stream-cut' });
+    assert.equal(usage.items.length, 1);
+    assert.equal(usage.items[0].status, 'failure');
+    assert.equal(usage.items[0].total_tokens, 9);
+  } finally { llm.setReply('MOCK_LLM_REPLY'); }
+});
+
+test('收到部分 SSE 后仍受整体超时限制', async () => {
+  llm.setStream((res) => res.write(sse({ content: '还没结束' })));
+  try { await assert.rejects(chatCompletion([]), /timeout|aborted/i); }
+  finally { llm.setReply('MOCK_LLM_REPLY'); }
 });

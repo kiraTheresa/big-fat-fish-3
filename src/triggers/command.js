@@ -20,7 +20,7 @@ import { logger } from '../utils/logger.js';
 import { appendCharacter, appendMemory, getPersona, readHistory, resetPersona } from '../store/persona-store.js';
 import { readState, updateState } from '../store/session-state.js';
 import { readUsageStats } from '../store/usage-store.js';
-import { readMessagesSince } from '../store/message-store.js';
+import { readMemoryMessages } from '../distill/activity.js';
 import { getVersion } from '../version.js';
 import { canManageSession } from '../platform/permissions.js';
 
@@ -67,6 +67,7 @@ export const COMMANDS = [
       for (const cmd of COMMANDS) {
         lines.push(`/${cmd.name} - ${cmd.summary}${cmd.adminOnly ? '（管理员）' : ''}`);
       }
+      lines.push('/meme help - 收藏、查找和发送肥鱼共享表情包');
       await ctx.reply(lines.join('\n'));
     },
   },
@@ -80,8 +81,8 @@ export const COMMANDS = [
       const persona = await getPersona(sessionKey);
       const state = await readState(sessionKey);
       const usage = await readUsageStats(sessionKey);
-      // 未提炼条数：distillMark 水位之后的消息尾部最多 200 条（水位未置则全量统计）
-      const undistilled = (await readMessagesSince(sessionKey, state.distillMark ?? 0, 200)).length;
+      // 最多统计 200 条待处理消息；群聊排除休眠时段，与实际提炼筛选保持一致。
+      const undistilled = (await readMemoryMessages(sessionKey, state, 200)).length;
       const lines = [
         `人设 ${Buffer.byteLength(persona.character, 'utf8')} 字节，记忆 ${Buffer.byteLength(persona.memory, 'utf8')} 字节`,
         // resetAt 为秒级（与消息 JSONL 的 time 同量纲），formatMs 收毫秒 → 展示时 ×1000
@@ -240,11 +241,12 @@ export default {
 
     // 权限集中判定（全模块唯一一处，/persona reset 内部判定除外）：
     // adminOnly 指令群聊要求管理员，私聊全放行
-    if (cmd.adminOnly && !isAdmin(ctx.event)) {
+    if ((cmd.adminOnly || (word === 'persona' && args.toLowerCase() === 'reset')) && !isAdmin(ctx.event)) {
       await ctx.reply(NO_PERMISSION_REPLY);
       return;
     }
 
+    await ctx.activateMemory?.();
     await cmd.handle(ctx, args);
   },
 };
