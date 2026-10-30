@@ -44,7 +44,7 @@ flowchart LR
 | [`src/connection/`](../src/connection/)、[`src/protocol/`](../src/protocol/)、[`src/dispatch/`](../src/dispatch/) | WS 与 API、事件归一化、会话与触发器分发 |
 | [`src/triggers/`](../src/triggers/)、[`src/sender/`](../src/sender/) | 业务触发、回复加工与统一发送 |
 | [`src/prompt/`](../src/prompt/)、[`prompts/`](../prompts/README.md) | Prompt 加载、版本、组装、测试、trace 与默认正文 |
-| [`src/tools/`](../src/tools/)、[`src/memes/`](../src/memes/) | 模型工具、图片投递、会话表情收藏与检索 |
+| [`src/tools/`](../src/tools/)、[`src/memes/`](../src/memes/) | 模型工具、图片投递、共享表情收藏与检索 |
 | [`src/llm.js`](../src/llm.js)、[`src/imagegen.js`](../src/imagegen.js) | 对话／视觉／提炼及图片生成请求 |
 | [`src/distill/`](../src/distill/) | 记忆提炼、校验、失败退避与群聊活跃窗口 |
 | [`src/platform/`](../src/platform/) | 运行锁、配置、权限、持久化、调度及用量策略 |

@@ -94,6 +94,11 @@
 | `draw` | `prompt` | 使用现有图片 API，图片进入既有发送队列 |
 | `remember_fact` | `content` | 以当前真实发言者的名义保存当前会话的事实 |
 | `recall_memory` | 无 | 读取当前会话记忆 |
+| `save_meme` | `description` | 收藏当前附图或本会话引用的表情到共享库 |
+| `search_memes` | `query` | 搜索共享库候选 |
+| `send_meme` | `id` | 向当前会话发送本轮搜索返回的一个候选 |
+
+表情工具每轮各最多一次，完整权限、去重及迁移规则见 [表情手册](memes.md)。Prompt 测试中的表情工具始终隔离，不修改线上收藏或向 QQ 发送。
 
 工具定义随请求的 `tools` 发送，后端验证参数、调用权限与开关，并把 assistant.tool_calls + role:tool 结果完整回传给模型。密钥、用户 ID、会话 ID 不由模型填写。缺少图片 API 配置或绘图功能被停用时，不提供 draw。既有斜杠指令继续使用共享的图片 / 记忆能力。
 

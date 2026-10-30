@@ -22,6 +22,7 @@
 | 哪些事件只收件，哪些能触发业务 | [OneBot 接收契约](onebot-reception.md) |
 | 正向 WebSocket、事件格式与 API 清单 | [NapCat 协议参考](napcat-protocol.md)（通用清单保留资料快照日期） |
 | 管理页面与真实 QQ 的人工检查步骤 | [验收清单](console-acceptance.md) |
+| 0.30.0 公开测试版内容、升级与验证边界 | [发布说明](releases/0.30.0.md) |
 | 功能演进 | [更新日志](../CHANGELOG.md) |
 
 ## 历史归档

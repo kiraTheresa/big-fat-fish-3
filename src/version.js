@@ -1,7 +1,7 @@
 // 版本读取模块：/version 指令的唯一数据源。
 // 为什么读 CHANGELOG.md 顶部而不是 package.json：CHANGELOG 每次发版由收尾任务更新，
-// 顶部第一条 [x.y.z] 即当前版本（面向用户的真版本）；而 package.json 的 version
-// 历史上无人维护、长期停在脚手架初始值，不可信——故版本事实以 CHANGELOG 为准。
+// 顶部第一条 [x.y.z] 即当前版本；发布时同步 package.json 与 package-lock.json。
+// [Unreleased] 不参与版本解析。公开测试版标记由 GitHub Release 的 pre-release 属性表达。
 import { readFile } from 'node:fs/promises';
 
 // 安静兜底：文件缺失/读损坏/找不到版本标题一律返回 'unknown'，不抛异常也不打日志。

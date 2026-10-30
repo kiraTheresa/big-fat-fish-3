@@ -7,7 +7,18 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.30.0] - 2026-10-30
+
+Public beta release candidate; publication is pending. This consolidates development commits 0.12.0–0.29.0 and release preparation into one release entry. Earlier numbered entries are historical behavior, not current instructions. See [release notes](docs/releases/0.30.0.md) for setup, upgrade steps and verification limits.
+
 ### feat
+
+- Poke replies and standalone mentions, private image-only messages and recent-image follow-ups. Chat and vision share the configured model, receive streaming responses, and send completed replies to QQ. Drawing reports progress and archives generated originals.
+- Group memory distillation sleeps after two hours without an accepted invocation by default; durable activity windows resume on the next invocation.
+- Default Prompt bodies live in `prompts/`; published configuration and existing personas retain precedence.
+- Management login is remembered for a fixed 30 minutes in the browser, with expiry, logout and unauthorized-response cleanup.
 
 - Separate read-only generated-picture and meme-collection pages in the management console sidebar, each retaining its own keyword search, filters and pagination, with details and local-original downloads. The legacy `#media` link redirects to `#images`; meme collections use `#memes`. List and image requests require the admin token; GIF bytes are preserved. Native QQ references without local images show a placeholder, and local previews do not reproduce or verify QQ's native animation.
 
@@ -24,6 +35,8 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 - Count chat, vision, drawing and distillation API attempts, including failures and unknown usage; enforce feature switches and daily request limits, with a reported-token threshold.
 
 ### fix
+
+- Align package and lockfile versions with the changelog-backed `/version`; reconcile deployment, tools, storage, permission and verification documentation for the public beta.
 
 - Generic requests to send any meme search all usable shared candidates instead of inventing restrictive keywords; explicit topics still require matching results.
 - Treat teaching an attached or quoted meme's purpose, emotion or name as a save request. Give the model structural source context and upgrade only matching legacy default instructions, preserving custom prompts and disabled tools.
