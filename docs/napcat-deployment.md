@@ -40,6 +40,20 @@ Compose 默认将 NapCat 的 6099 和 3001 映射到宿主所有网络接口；�
 
 正向连接方向：Bot → NapCat。容器内 Bot 连接 `ws://napcat:3001`；宿主机 Bot 使用 `.env` 的 `ONEBOT_WS_URL`，默认 `ws://localhost:3001`。Bot 已有断线自动重连，默认间隔 5 秒；NapCat 完成 QQ 登录并启动 WS 后即可接通。
 
+## 使用 Clash / Mihomo 分流
+
+如果希望肥鱼直连，在已有 `rules:` 列表的顶部插入下面五条，放在 Docker 进程规则、国内规则集和 `MATCH` 之前。这样即使绘图域名解析到海外 IP，只要 Mihomo 能识别主机名，它仍然走直连。
+
+```yaml
+  - DOMAIN,api2.laozhang.ai,DIRECT
+  - DOMAIN,api.deepseek.com,DIRECT
+  - DOMAIN-SUFFIX,qq.com,DIRECT
+  - DOMAIN-SUFFIX,qpic.cn,DIRECT
+  - DOMAIN-SUFFIX,multimedia.nt.qq.com.cn,DIRECT
+```
+
+前两条对应默认绘图和聊天接口。使用自定义供应商时按实际主机名调整。绘图接口返回 Base64 时直接读取响应，返回 URL 时 Bot 还会下载图片，下载域名独立匹配规则。QQ 使用裸 IP 时也不会命中域名规则。排查时在客户端连接记录中查看目标、进程、命中规则和出口，并检查 Verge 的前置规则是否覆盖这里的顺序。
+
 ## 在宿主机开发
 
 使用 Node.js 22.9+，保留 NapCat 容器，Bot 在容器或宿主机运行二选一。同一数据目录不能启动两个 Bot。
