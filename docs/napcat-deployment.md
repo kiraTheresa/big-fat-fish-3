@@ -62,16 +62,26 @@ Compose 默认将 NapCat 的 6099 和 3001 映射到宿主所有网络接口；�
 docker compose stop bot
 docker compose up -d napcat
 npm ci
+# 用量分享图需要；已有可用 Chrome 时也可配置 CHROME_EXECUTABLE
+npx playwright install chromium --only-shell
 npm run dev
 ```
 
 `npm run dev` 监视源码并重启；不需要监视时使用 `npm start`。修改 `.env` 后重新启动进程。开发与测试入口见 [架构文档](architecture.md#本地开发与验证)。
 
+## 截图浏览器
+
+用量页面的 PNG 分享和 QQ 用量报告由 Playwright + Chromium 截图生成。Dockerfile 使用 `node:22-bookworm-slim`，构建时安装锁定 Playwright 版本对应的 Chromium、系统依赖与中文字体；不需要在宿主另装浏览器。
+
+宿主机运行时，在 `npm ci` 后执行 `npx playwright install chromium --only-shell`；Linux 可使用 `npx playwright install --with-deps chromium --only-shell`，并安装中文字体（Debian / Ubuntu 可用 `fonts-noto-cjk`）。也可在 `.env` 设置 `CHROME_EXECUTABLE` 指向现有 Chrome / Chromium 可执行文件。
+
+Chromium 按需启动，不影响普通文字聊天的启动；生成报告时浏览器不可用会返回错误。依赖版本变化后使用对应版本的安装命令更新浏览器。截图内容、队列和快照限制见 [用量与报告](usage-monitoring.md#费用计价与分享图片)。
+
 ## 更新与排查
 
 修改源码或默认 Prompt 后，运行 `docker compose up -d --build bot` 重建 Bot。只修改 `.env` 时运行 `docker compose up -d bot`；同时修改连接令牌时也需 `docker compose up -d napcat`。单纯 `restart` 不会重新加载容器环境。
 
-`docker compose ps` 查看容器状态，`docker compose logs --tail=100 bot` 查看连接及启动结果。连接成功后可在 QQ 发 `ping` 检查收发链路，再按 [使用指南](usage.md) 测试聊天。只收到 `pong` 不能证明模型接口已正常工作。
+`docker compose ps` 查看容器状态，`docker compose logs --tail=100 bot` 查看连接及启动结果。连接成功后可在 QQ 发 `ping` 检查收发链路，再按 [使用指南](usage.md) 测试聊天。只收到 `pong` 不能证明模型接口已正常工作。模型失败、发送结果未知和请求耗时的排查见 [日志与排障](observability.md)。
 
 Bot 数据默认在 `data/`，QQ 登录数据在 `napcat/`；备份时停止 Bot 并复制完整配置和数据，自定义路径也需一起保存，具体见 [持久化说明](management.md#持久化)。
 

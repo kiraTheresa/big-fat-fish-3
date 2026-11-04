@@ -1,5 +1,7 @@
 # OneBot 11 接收边界
 
+[← 文档目录](README.md)
+
 本项目通过 NapCat 的 OneBot 11 正向 WebSocket 接收 QQ 消息。这里的“全类型”指这个现有协议接入面，不代表 QQ 官方开放平台机器人 API、OneBot 12 或每个客户端内部事件。
 
 ## 接收与处理分开
@@ -29,7 +31,7 @@
 
 ## 持久化与接口
 
-- `DATA_DIR/events/YYYY-MM-DD.jsonl`：按 UTC 接收日期分文件的完整事件收件箱，串行追加。记录含 `id`、毫秒 `receivedAt`、`postType`、`eventType`、`subType`、`sessionKey`、`messageTypes`、`handling`、`issues`、原始 `event` 及可选 `segments`。
+- `DATA_DIR/events/YYYY-MM-DD.jsonl`：按 UTC 接收日期分文件的完整事件收件箱，串行追加。记录含 `id`、毫秒 `receivedAt`、`postType`、`eventType`、`subType`、`sessionKey`、`messageTypes`、`handling`、`issues`、原始 `event` 及可选 `segments`；具有可处理会话的事件还可包含 `traceId`，用于关联业务日志。
 - `handling` 包括 `trigger_eligible`、`received_only`、`malformed` 及权限阻断时的 `blocked`。`trigger_eligible` 仅表示可交给原有触发器，不代表实际命中、通过权限或已回复。
 - `readEvents({limit=50,postType,sessionKey,before})` 返回 `{items,nextCursor}`，最新在前；`before` 是稳定的事件 UUID 游标，跨日期分页，单页最多 200 条。坏行跳过；流式读取只保留一页，磁盘扫描仍与保留文件长度相关。指向已清理记录的游标返回空页。
 - `getEventStats()` 返回本次进程的保存成功/失败数量、分类/会话计数和最后保存时间；`scope: 'process'` 表示重启后计数重新开始，不伪称历史总数。
@@ -38,7 +40,9 @@
 
 用户消息正文和昵称仅保存在收件箱及需要的会话历史中。终端不逐条打印入站消息，业务日志只记录关联 ID、会话及处理结果，避免把内容复制到日志。
 
-本版本验证为本地协议模拟与单元测试；真实 NapCat 是否上报某个标准/扩展事件，仍取决于其版本及上报设置。统一维护任务按 `RETENTION_DAYS` 清理过期收件文件，默认保留 30 天。
+可用 `test/onebot-protocol.test.js`、`test/event-reception.test.js` 做本地协议定向检查；真实 NapCat 是否上报某个标准/扩展事件，仍取决于其版本及上报设置。统一维护任务按 `RETENTION_DAYS` 清理过期收件文件，默认保留 30 天。
+
+管理台主导航已移除事件收件箱，但鉴权后的 `GET /api/events` 和旧 `#events` 地址仍保留。日常失败排查使用 [业务日志与请求视图](observability.md)。
 
 ## 协议依据
 

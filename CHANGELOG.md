@@ -7,11 +7,23 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 
 ## [Unreleased]
 
-No changes yet.
+### feat
+
+- Token usage and estimated-cost dashboard with Beijing-time ranges, per-session views, tariff snapshots, and explicit pending-cost records. `/usage` and `send_usage_report` share current-session reports through the existing sender.
+- PNG usage reports rendered with Playwright / Chromium from the shared web view; browser export uses the displayed statistics snapshot.
+- Structured business logs correlate triggers, model attempts, tools and sends. The console focuses on failures and links to complete traces.
+- Request and stability view adds request frequency, known-result failure rate, successful-request P95, detail filtering and trace navigation.
+
+### chore
+
+- Deployment guidance includes Clash / Mihomo routing rules for the configured model and QQ media hosts.
+- Documentation now has one task-oriented index, feature-completion update milestones, separate usage and observability guides, and archived verification records. Daily changes use focused validation.
+
+These entries summarize development after 0.30.0; no new release number is assigned here. As of the 2026-11-04 documentation review, commit titles reach 0.33.0 while the first numbered changelog entry and package versions remain 0.30.0. The runtime `/version` follows the numbered changelog, not commit titles.
 
 ## [0.30.0] - 2026-10-30
 
-Public beta release candidate; publication is pending. This consolidates development commits 0.12.0–0.29.0 and release preparation into one release entry. Earlier numbered entries are historical behavior, not current instructions. See [release notes](docs/releases/0.30.0.md) for setup, upgrade steps and verification limits.
+Published as a GitHub [pre-release](https://github.com/kiraTheresa/big-fat-fish-3/releases/tag/v0.30.0); publication status checked on 2026-11-04. This consolidates development commits 0.12.0–0.29.0 and release preparation into one release entry. Earlier numbered entries are historical behavior, not current instructions. See [release notes](docs/releases/0.30.0.md) for setup, upgrade steps and verification limits.
 
 ### feat
 
