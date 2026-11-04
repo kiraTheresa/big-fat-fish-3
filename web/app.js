@@ -1,4 +1,5 @@
 import { usageMoney, usageTime, usageSession, renderUsageShareContent } from './usage-view.js';
+import { renderRequestsView, renderRequestDetail, renderRequestTrace } from './request-view.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -29,6 +30,7 @@ const icons = {
   jobs: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
   usage: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  requests: '<path d="M2 12h5l3-9 4 18 3-9h5"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3a7 7 0 0 0 11.6-2"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
@@ -50,6 +52,7 @@ const pages = {
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
   logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
   usage: ['Token 用量与费用', '查看预估费用、用量来源、调用结果与会话统计。', 'USAGE'],
+  requests: ['请求与稳定性', '观察模型调用频率、耗时与失败原因，沿业务链路定位问题。', 'REQUESTS'],
 };
 const resolvePage = (page) => page === 'media' ? 'images' : page;
 const initialPage = resolvePage(location.hash.slice(1));
@@ -57,7 +60,8 @@ const state = {
   token: '', tokenExpiresAt: 0, page: pages[initialPage] ? initialPage : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
-  filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { period: 'today', since: '', until: '', detailKind: '', pendingOnly: '', sessionKey: '' } },
+  filters: { requests: { period: 'today', kind: '', source: '', sessionKey: '' }, events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { period: 'today', since: '', until: '', detailKind: '', pendingOnly: '', sessionKey: '' } },
+  requestDashboard: null, requestTrace: null, requestTraceVersion: 0,
 };
 let promptConsole;
 let usageReportUrl;
@@ -151,6 +155,9 @@ function logout(message = '', { forget = true } = {}) {
   promptConsole?.clear();
   clearUsageReport();
   state.usageDashboard = null;
+  state.requestDashboard = null;
+  state.requestTrace = null;
+  state.requestTraceVersion++;
   for (const gallery of mediaGalleries.values()) gallery.clear();
   state.token = '';
   state.tokenExpiresAt = 0;
@@ -273,7 +280,7 @@ async function loadPage({ quiet = false } = {}) {
   $('#page-description').textContent = description;
   $('#page-eyebrow').textContent = `WORKSPACE / ${section}`;
   document.title = `${title} · 大肥鱼`;
-  $('#live-control').hidden = !['overview', 'events', 'logs', 'usage'].includes(page);
+  $('#live-control').hidden = !['overview', 'events', 'logs', 'usage', 'requests'].includes(page);
   document.querySelectorAll('#navigation [data-page]').forEach((link) => {
     link.classList.toggle('active', link.dataset.page === page);
     if (link.dataset.page === page) link.setAttribute('aria-current', 'page');
@@ -506,10 +513,44 @@ async function renderMedia(page, sequence) {
   }
   return gallery.render();
 }
-const renderers = { images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+function resetRequestDetails() {
+  Object.assign(state.filters.requests, { reason: '', failedOnly: '', detailSince: '', detailUntil: '', asOf: '' });
+  state.cursor = null; state.cursors = [];
+}
+async function renderRequests(sequence) {
+  const filters = { ...state.filters.requests, limit: 20, before: state.cursor };
+  if (filters.period === 'custom') {
+    filters.since = `${filters.since}T00:00:00+08:00`;
+    filters.until = new Date(`${filters.until}T00:00:00+08:00`).getTime() + 86400000;
+  } else { delete filters.since; delete filters.until; }
+  const result = await api(`/requests/dashboard${query(filters)}`);
+  if (sequence !== state.sequence) return '';
+  state.requestDashboard = result;
+  state.rows = result.items;
+  state.nextCursor = result.nextCursor;
+  return renderRequestsView(result, state.filters.requests, { compact: window.innerWidth < 650, older: Boolean(state.cursor) });
+}
+async function showRequestTrace(button, more = false) {
+  const sequence = state.sequence;
+  const version = ++state.requestTraceVersion;
+  const traceId = button.dataset.trace;
+  await withButton(button, async () => {
+    const result = await api(`/logs${query({ traceId, limit: 100, before: more ? button.dataset.before : '' })}`);
+    if (sequence !== state.sequence || version !== state.requestTraceVersion || !state.token || !$('#detail-dialog').open) return;
+    const rows = more && state.requestTrace?.traceId === traceId ? [...state.requestTrace.rows, ...result.items] : result.items;
+    state.requestTrace = { traceId, rows };
+    $('#dialog-title').textContent = '本轮业务链路';
+    $('#dialog-eyebrow').textContent = 'REQUESTS / TRACE';
+    $('#detail-dialog').classList.toggle('request-trace-dialog', true);
+    $('#dialog-content').innerHTML = renderRequestTrace(rows, result.nextCursor, traceId);
+    $('#detail-dialog').scrollTop = 0;
+  });
+}
+const renderers = { requests: renderRequests, images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;
+  $('#detail-dialog').classList.toggle('request-trace-dialog', false);
   $('#dialog-title').textContent = title;
   $('#dialog-eyebrow').textContent = eyebrow;
   $('#dialog-content').innerHTML = html;
@@ -631,6 +672,41 @@ document.addEventListener('click', async (event) => {
   if (action === 'first-page') { state.cursor = null; state.cursors = []; loadPage(); return; }
   if (action === 'event-detail') { showJson('接收事件详情', 'INBOX / EVENT', state.rows[index], '这里只展示已接收的数据。未知消息段会保留原始字段，不自动执行。'); return; }
   if (action === 'log-detail') { showJson('日志详情', 'LOGS / RECORD', state.rows[index]); return; }
+  if (action === 'request-detail') {
+    state.requestTraceVersion++;
+    state.requestTrace = null;
+    showDialog('模型调用详情', 'REQUESTS / CALL', renderRequestDetail(state.rows[index])); return;
+  }
+  if (action === 'request-trace' || action === 'request-trace-more') { await showRequestTrace(button, action === 'request-trace-more'); return; }
+  if (action === 'request-reset') {
+    state.filters.requests = { period: 'today', kind: '', source: '', sessionKey: '' };
+    resetRequestDetails(); loadPage(); return;
+  }
+  if (action === 'request-period') {
+    state.filters.requests.period = button.dataset.period;
+    if (button.dataset.period === 'custom') {
+      const local = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+      state.filters.requests.since ||= local; state.filters.requests.until ||= local;
+    }
+    resetRequestDetails(); loadPage(); return;
+  }
+  if (action === 'request-kind' || action === 'request-session') {
+    state.filters.requests[action === 'request-kind' ? 'kind' : 'sessionKey'] = button.dataset[action === 'request-kind' ? 'kind' : 'session'];
+    resetRequestDetails(); loadPage(); return;
+  }
+  if (['request-bucket', 'request-reason', 'request-failures', 'request-clear-detail'].includes(action)) {
+    const f = state.filters.requests;
+    state.cursor = null; state.cursors = [];
+    f.asOf = state.requestDashboard.range.asOf;
+    if (action === 'request-bucket') { f.detailSince = button.dataset.since; f.detailUntil = button.dataset.until; }
+    if (action === 'request-reason') { f.reason = button.dataset.reason; f.failedOnly = 'true'; }
+    if (action === 'request-failures') { f.failedOnly = f.failedOnly === 'true' ? '' : 'true'; f.reason = ''; }
+    if (action === 'request-clear-detail') resetRequestDetails();
+    if (!f.reason && !f.failedOnly && !f.detailSince) f.asOf = '';
+    await loadPage({ quiet: true });
+    if (state.page === 'requests') $('.request-ledger')?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
   if (action === 'usage-period') {
     state.filters.usage.period = button.dataset.period;
     if (button.dataset.period === 'custom') {
@@ -676,6 +752,7 @@ document.addEventListener('submit', async (event) => {
   if (!state.filters[page]) return;
   const draft = Object.fromEntries(new FormData(form).entries());
   if (page === 'usage' && draft.since && draft.until && draft.since > draft.until) { toast('开始日期不能晚于结束日期。', true); return; }
+  if (page === 'requests' && draft.period === 'custom' && draft.since > draft.until) { toast('开始日期不能晚于结束日期。', true); return; }
   state.filters[page] = draft;
   state.cursor = null; state.cursors = [];
   loadPage();
@@ -704,13 +781,13 @@ $('#toggle-token').addEventListener('click', () => {
 });
 $('#logout').addEventListener('click', () => { if (canLeave()) logout(); });
 $('#refresh').innerHTML = icon('refresh');
-$('#refresh').addEventListener('click', () => { if (canLeave()) { state.dirty = false; loadPage(); } });
+$('#refresh').addEventListener('click', () => { if (canLeave()) { state.dirty = false; if (state.page === 'requests') resetRequestDetails(); loadPage(); } });
 $('#close-dialog').addEventListener('click', closeDialog);
 $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) event.preventDefault(); });
 $('#detail-dialog').addEventListener('close', () => { clearUsageReport(); if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
 const navigationGroups = [
-  ['运行排查', ['overview', 'events', 'logs', 'usage']],
+  ['运行排查', ['overview', 'requests', 'usage', 'events', 'logs']],
   ['开发调试', ['prompt']],
   ['素材收藏', ['images', 'memes']],
   ['实例管理', ['config', 'jobs', 'users']],
@@ -731,6 +808,6 @@ window.addEventListener('hashchange', () => {
   history.replaceState(null, '', `#${state.page}`);
 });
 setInterval(() => {
-  if (state.token && state.live && !state.loading && !state.dirty && !document.hidden && !$('#detail-dialog').open && !state.cursor && ['overview', 'events', 'logs', 'usage'].includes(state.page) && !$('#content').contains(document.activeElement)) loadPage({ quiet: true });
+  if (state.token && state.live && !state.loading && !state.dirty && !document.hidden && !$('#detail-dialog').open && !state.cursor && ['overview', 'events', 'logs', 'usage', 'requests'].includes(state.page) && !(state.page === 'requests' && (state.filters.requests.reason || state.filters.requests.failedOnly || state.filters.requests.detailSince)) && !$('#content').contains(document.activeElement)) loadPage({ quiet: true });
 }, 20000);
 restoreLogin();

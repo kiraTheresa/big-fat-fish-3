@@ -76,7 +76,7 @@ function ledgerError(name, line) {
 }
 function validRecord(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record) || !Number.isFinite(record.time) || record.time < 0) return false;
-  for (const field of ['prompt_tokens', 'completion_tokens', 'total_tokens', 'prompt_cache_hit_tokens', 'prompt_cache_miss_tokens', 'images', 'elapsedMs']) {
+  for (const field of ['prompt_tokens', 'completion_tokens', 'total_tokens', 'prompt_cache_hit_tokens', 'prompt_cache_miss_tokens', 'images', 'elapsedMs', 'finishedAt']) {
     if (record[field] !== undefined && record[field] !== null && (!Number.isFinite(record[field]) || record[field] < 0)) return false;
   }
   if (record.status !== undefined && !['success', 'failure', 'interrupted'].includes(record.status)) return false;
@@ -114,6 +114,14 @@ async function* records(sessionKey, { strict = false } = {}) {
       if (error.code !== 'ENOENT' || !sessionKey) throw error;
     } finally { lines.close(); input.destroy(); }
   }
+}
+
+export async function* readUsageRecords(sessionKey) {
+  await flushUsage();
+  try {
+    yield* records(sessionKey, { strict: true });
+    lastReadError = null;
+  } catch (error) { lastReadError = redactText(error.message); throw error; }
 }
 
 // Aggregates cover ALL matching records, independently of the bounded newest

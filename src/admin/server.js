@@ -11,6 +11,8 @@ STATIC.set('/media.js', ['media.js', 'text/javascript']);
 STATIC.set('/media.css', ['media.css', 'text/css']);
 STATIC.set('/usage.css', ['usage.css', 'text/css']);
 STATIC.set('/usage-view.js', ['usage-view.js', 'text/javascript']);
+STATIC.set('/request-view.js', ['request-view.js', 'text/javascript']);
+STATIC.set('/requests.css', ['requests.css', 'text/css']);
 const hash = (value) => createHash('sha256').update(value).digest();
 function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -98,6 +100,7 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
       if (route === 'GET /api/jobs') return reply(res, 200, services.scheduler.list());
       if (route === 'POST /api/jobs') return reply(res, 201, await services.scheduler.create(await body(req)));
       if (route === 'GET /api/logs') return reply(res, 200, await services.readLogs(query));
+      if (route === 'GET /api/requests/dashboard') return reply(res, 200, await services.readRequestDashboard(query));
       if (route === 'GET /api/usage/dashboard') return reply(res, 200, await services.readUsageDashboard(query));
       if (route === 'GET /api/usage/report') {
         const bytes = await services.readUsageReport(query);

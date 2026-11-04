@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { usageMoney, usageTime, usageSession, renderUsageShareContent } from '../web/usage-view.js';
+import { renderRequestsView, renderRequestDetail, renderRequestTrace } from '../web/request-view.js';
 
-const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8').split('\n').slice(1).join('\n');
+const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8').replace(/^import .*;$/gm, '');
 
 function harness(responder = () => ({}), { signedIn = true, storage = new Map(), now = 1800000000000, storageDisabled = false } = {}) {
   const nodes = new Map();
@@ -24,7 +25,7 @@ function harness(responder = () => ({}), { signedIn = true, storage = new Map(),
     return nodes.get(selector);
   };
   const context = vm.createContext({
-    usageMoney, usageTime, usageSession, renderUsageShareContent,
+    usageMoney, usageTime, usageSession, renderUsageShareContent, renderRequestsView, renderRequestDetail, renderRequestTrace,
     document: { querySelector: node, querySelectorAll() { return []; }, addEventListener(event, callback) { documentListeners.set(event, callback); }, title: '' },
     window: { addEventListener(event, callback) { windowListeners.set(event, callback); }, confirm() { return true; } },
     location: { hash: '' }, history: { replaceState() {} },

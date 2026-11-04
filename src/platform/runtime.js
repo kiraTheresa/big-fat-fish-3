@@ -22,6 +22,7 @@ import { createMediaService } from '../admin/media-service.js';
 import { acquireRuntimeLock } from './runtime-lock.js';
 import { initializePrompts, getPromptWorkspace, savePromptDraft, restorePromptVersion, reviewPromptTest, publishPromptDraft } from '../prompt/store.js';
 import { createPromptService } from '../prompt/service.js';
+import { readRequestDashboard } from '../usage/requests.js';
 import { readUsageDashboardForExport as readUsageDashboard, readUsageReport, closeUsageReportBrowser } from '../usage/report.js';
 
 export async function startPlatform({ admin = true, schedule = true } = {}) {
@@ -64,6 +65,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
       readEvents,
       readLogs: async (query) => { const items = await readLogs(query); return { items, nextCursor: items.length >= (query.limit ?? 100) ? items.at(-1).cursor : null }; },
       readUsageOverview,
+      readRequestDashboard,
       readUsageDashboard,
       readUsageReport,
       status: async () => ({

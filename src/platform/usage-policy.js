@@ -60,7 +60,8 @@ async function loadPending() {
     if (!row || typeof row.id !== 'string' || !Number.isFinite(row.time)) throw new Error('Usage reservation entry is invalid');
     const history = await readUsageOverview({ sessionKey: row.sessionKey, since: row.time, until: row.time, limit: 1000 });
     if (history.items.some((entry) => entry.id === row.id)) continue;
-    const recovered = { ...row, status: 'interrupted', usageKnown: false, elapsedMs: Math.max(0, Date.now() - row.time), error: 'Process exited before API result was recorded' };
+    const recovered = { ...row, status: 'interrupted', finishedAt: Date.now(), usageKnown: false, elapsedMs: Math.max(0, Date.now() - row.time), error: 'Process exited before API result was recorded' };
+    delete recovered.endpoint;
     if (!await appendUsage(row.sessionKey, recovered)) pending.set(row.id, row);
   }
   await savePending();
@@ -117,10 +118,12 @@ export async function finishUsage(attempt, { usage, error, httpStatus, images = 
     const promptTokens = numeric(usage?.prompt_tokens ?? usage?.input_tokens);
     const completionTokens = numeric(usage?.completion_tokens ?? usage?.output_tokens);
     const totalTokens = numeric(usage?.total_tokens) ?? (promptTokens !== undefined && completionTokens !== undefined ? promptTokens + completionTokens : undefined);
+    const finishedAt = Date.now();
     const record = {
       ...attempt,
       status: error ? 'failure' : 'success',
-      elapsedMs: Math.max(0, Date.now() - attempt.time),
+      finishedAt,
+      elapsedMs: Math.max(0, finishedAt - attempt.time),
       usageKnown: totalTokens !== undefined,
       ...(typeof responseModel === 'string' ? { responseModel: redactText(responseModel).slice(0, 200) } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
@@ -132,6 +135,8 @@ export async function finishUsage(attempt, { usage, error, httpStatus, images = 
       prompt_cache_miss_tokens: numeric(usage?.prompt_cache_miss_tokens),
       images: numeric(images) ?? 0,
     };
+    // Transport details belong to business logs, not the billing ledger.
+    delete record.endpoint;
     const saved = await appendUsage(attempt.sessionKey, record);
     if (saved) {
       pending.delete(attempt.id);
