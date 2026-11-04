@@ -100,6 +100,10 @@ export async function initializePrompts() {
           changed = added = true;
         }
       }
+      if (!Object.hasOwn(version.config.tools, 'send_usage_report')) {
+        version.config.tools.send_usage_report = structuredClone(template.tools.send_usage_report);
+        changed = true;
+      }
       for (const previous of [LEGACY_MEME_TOOL_RULES, TEACHING_MEME_TOOL_RULES]) {
         const rules = version.config.prompts?.toolRules;
         if (hasRuleBlock(rules, previous)) {

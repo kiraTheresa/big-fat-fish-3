@@ -63,7 +63,7 @@ function fixtures() {
     '/api/users': { items: [{ id: '123', role: 'blocked', source: 'management', note: '<script>bad</script>' }], defaults: { draw: 'allow' } },
     '/api/jobs': { items: [{ id: 'job-1', name: '维护', type: 'maintenance', schedule: { kind: 'interval', everyMs: 1500 }, enabled: true, lastStatus: 'interrupted' }] },
     '/api/logs': { items: [{ time: Date.now(), level: 'WARN', message: '<script>bad</script>' }], nextCursor: null },
-    '/api/usage': { totals: { calls: 1, failures: 1, unknownUsageCalls: 1 }, byKind: [{ kind: 'draw', calls: 1 }], bySession: [{ sessionKey: 'g-1', calls: 1 }], items: [{ time: Date.now(), kind: 'draw', status: 'failure' }] },
+    '/api/usage/dashboard': { totals: { calls: 1, failures: 1, unknownUsageCalls: 1 }, byKind: [{ kind: 'draw', calls: 1 }], bySession: [{ sessionKey: 'g-1', calls: 1 }], items: [{ time: Date.now(), kind: 'draw', status: 'failure' }] },
   };
 }
 

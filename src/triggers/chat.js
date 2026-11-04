@@ -139,7 +139,7 @@ export default {
     const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
     let imageAttempts = 0;
     let imageFailed = false;
-    const toolContext = { sessionKey, event, memeTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
+    const toolContext = { sessionKey, event, memeTurn: {}, reportTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
       onImageAttempt(entry) {
         if (entry.phase === 'error') imageFailed = true;
         if (entry.phase !== 'request') return;
@@ -226,7 +226,7 @@ export default {
       let segments = reply.trim() ? [reply] : [];
       for (const mod of chatReplyChain) {
         if (poke) continue; // 戳一戳立即发一条短回复，不引用不存在的消息。
-        if ((imageAttempts > 0 || toolContext.memeTurn.sent) && mod.name === 'delay') continue;
+        if ((imageAttempts > 0 || toolContext.memeTurn.sent || toolContext.reportTurn.sent) && mod.name === 'delay') continue;
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
       if (segments.length) persistAndSend(reply, segments);
@@ -240,7 +240,7 @@ export default {
       // 兜底文案不是 LLM 输出：不走加工链（不延迟，出错要立刻让人知道），但存储与
       // 发送仍走统一出口（与既有行为等价：回存一条 bot 行 + 发一条）
       const failureReply = err.name === 'UsageLimitError' ? `本鱼暂时不能调用模型：${err.message}。` : FALLBACK_REPLY;
-      persistAndSend(failureReply, [failureReply]);
+      if (!toolContext.reportTurn.sent) persistAndSend(failureReply, [failureReply]);
     } finally {
       await saveRun(run).catch((error) => logger.warn(`[prompt] 请求记录保存失败: ${error.code ?? 'storage error'}`));
     }

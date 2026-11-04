@@ -138,12 +138,12 @@ test('群聊 @ 门控：match 仍宽吞 \'/\' 前缀（未 @ 也命中——命�
   );
 });
 
-test('注册表完整性：8 个旧指令 + character 共 9 个，name 唯一、summary 非空、契约字段齐全', () => {
-  assert.equal(COMMANDS.length, 9, '8 旧 + 1 新（character）');
+test('注册表完整性：包含用量报告的 10 个指令，name 唯一、summary 非空、契约字段齐全', () => {
+  assert.equal(COMMANDS.length, 10, '新增 /usage 用量报告');
   const names = COMMANDS.map((c) => c.name);
-  assert.equal(new Set(names).size, 9, 'name 不得重复（主流程按 name 精确匹配查表）');
+  assert.equal(new Set(names).size, 10, 'name 不得重复（主流程按 name 精确匹配查表）');
   // 旧 8 个一个不少 + 新增 character：防迁移时静默丢指令
-  for (const name of ['help', 'status', 'persona', 'memory', 'remember', 'character', 'reset', 'history', 'version']) {
+  for (const name of ['help', 'usage', 'status', 'persona', 'memory', 'remember', 'character', 'reset', 'history', 'version']) {
     assert.ok(names.includes(name), `注册表应含 /${name}`);
   }
   for (const cmd of COMMANDS) {

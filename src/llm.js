@@ -6,15 +6,17 @@ import { redactText } from './utils/logger.js';
 import { chatStreamOptions, readChatStream } from './utils/chat-stream.js';
 
 export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system', tools, toolChoice, stream = config.chatStream && kind !== 'distill', onAttempt, onDelta, allowEmptyContent = false } = {}) {
-  const attempt = await beginUsage({ kind, model, sessionKey });
+  const baseUrl = config.deepseekBaseUrl;
+  const attempt = await beginUsage({ kind, model, sessionKey, baseUrl });
   let usage = null;
+  let responseModel;
   let httpStatus;
   let failure;
   const request = { model, messages, ...chatStreamOptions(stream), ...(tools?.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}) };
   const startedAt = Date.now();
   onAttempt?.({ phase: 'request', request: structuredClone(request), at: startedAt });
   try {
-    const res = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.deepseekApiKey}` },
       body: JSON.stringify(request),
@@ -25,6 +27,8 @@ export async function chatCompletion(messages, { model = config.deepseekModel, k
       let detail = '';
       try {
         const body = await res.json();
+        usage = body.usage ?? null;
+        responseModel = body.model;
         const message = body.error?.message ?? body.message;
         if (typeof message === 'string') detail = redactText(message, [config.deepseekApiKey]).slice(0, 500);
       } catch { /* The HTTP status remains useful when the body is not JSON. */ }
@@ -34,6 +38,7 @@ export async function chatCompletion(messages, { model = config.deepseekModel, k
     if (res.headers.get('content-type')?.includes('text/event-stream')) {
       const milestones = new Set();
       message = await readChatStream(res.body, {
+        onModel: (value) => { responseModel = value; },
         onUsage: (value) => { usage = value; },
         onDelta: (delta) => {
           for (const [event, present] of [['first_delta', Object.keys(delta).length > 0], ['first_content', !!delta.content], ['first_tool_call', !!delta.tool_calls?.length]]) {
@@ -48,6 +53,7 @@ export async function chatCompletion(messages, { model = config.deepseekModel, k
       // Compatible gateways may ignore stream and return JSON. Consume that
       // same response; never retry a failed request automatically.
       const data = await res.json();
+      responseModel = data.model;
       usage = data.usage ?? null;
       message = data.choices?.[0]?.message;
     }
@@ -62,6 +68,6 @@ export async function chatCompletion(messages, { model = config.deepseekModel, k
     onAttempt?.({ phase: 'error', error: redactText(error.message, [config.deepseekApiKey]), httpStatus, elapsedMs: Date.now() - startedAt });
     throw error;
   } finally {
-    await finishUsage(attempt, { usage, error: failure, httpStatus });
+    await finishUsage(attempt, { usage, error: failure, httpStatus, responseModel });
   }
 }

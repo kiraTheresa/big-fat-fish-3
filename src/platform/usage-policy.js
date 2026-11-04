@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { appendUsage, readUsageOverview, usageSessionKey } from '../store/usage-store.js';
 import { logger, redactText } from '../utils/logger.js';
+import { snapshotUsagePrice } from '../usage/pricing.js';
 
 const DEFAULT_POLICY = { enabled: { chat: true, vision: true, draw: true, distill: true }, maxCallsPerDay: 0, maxTokensPerDay: 0 };
 let policy = structuredClone(DEFAULT_POLICY);
@@ -66,7 +67,7 @@ async function loadPending() {
   loadedDir = dir;
 }
 
-export async function beginUsage({ kind = 'chat', model, sessionKey = 'system' }) {
+export async function beginUsage({ kind = 'chat', model, sessionKey = 'system', baseUrl = kind === 'draw' ? config.imageApiBaseUrl : config.deepseekBaseUrl }) {
   const key = usageSessionKey(sessionKey);
   return serial(async () => {
     if (!(kind in DEFAULT_POLICY.enabled)) throw new Error('Unknown model usage kind');
@@ -93,7 +94,8 @@ export async function beginUsage({ kind = 'chat', model, sessionKey = 'system' }
     if (policy.maxTokensPerDay && overview.totals.totalTokens >= policy.maxTokensPerDay) {
       throw new UsageLimitError('今日已报告 token 用量已达上限');
     }
-    const attempt = { id: randomUUID(), time: now, kind, model: redactText(model), sessionKey: key };
+    const attempt = { id: randomUUID(), time: now, kind, model: redactText(model), sessionKey: key,
+      pricing: snapshotUsagePrice({ kind, model, baseUrl, time: now }) };
     pending.set(attempt.id, attempt);
     try { await savePending(); }
     catch (error) {
@@ -105,7 +107,7 @@ export async function beginUsage({ kind = 'chat', model, sessionKey = 'system' }
   });
 }
 
-export async function finishUsage(attempt, { usage, error, httpStatus, images = 0 } = {}) {
+export async function finishUsage(attempt, { usage, error, httpStatus, images = 0, responseModel } = {}) {
   return serial(async () => {
     const numeric = (value) => Number.isFinite(value) && value >= 0 ? value : undefined;
     const promptTokens = numeric(usage?.prompt_tokens ?? usage?.input_tokens);
@@ -116,12 +118,14 @@ export async function finishUsage(attempt, { usage, error, httpStatus, images = 
       status: error ? 'failure' : 'success',
       elapsedMs: Math.max(0, Date.now() - attempt.time),
       usageKnown: totalTokens !== undefined,
+      ...(typeof responseModel === 'string' ? { responseModel: redactText(responseModel).slice(0, 200) } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(error ? { error: redactText(error.message ?? error, [config.deepseekApiKey, config.imageApiKey]) } : {}),
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: totalTokens,
-      prompt_cache_hit_tokens: numeric(usage?.prompt_cache_hit_tokens),
+      prompt_cache_hit_tokens: numeric(usage?.prompt_cache_hit_tokens ?? usage?.prompt_tokens_details?.cached_tokens),
+      prompt_cache_miss_tokens: numeric(usage?.prompt_cache_miss_tokens),
       images: numeric(images) ?? 0,
     };
     const saved = await appendUsage(attempt.sessionKey, record);

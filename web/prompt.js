@@ -36,8 +36,8 @@ const sections = [
   ['json', '配置 JSON', '高级编辑：与左侧表单共用同一份草稿。'],
 ];
 const boolLabels = { users: '用户消息', assistant: '机器人回复', text: '文本消息', image: '图片相关消息（文字占位）', excludeCommands: '排除命令消息', onlySpeaker: '仅当前发言者的用户消息', injectMemory: '自动注入会话记忆', vision: '启用本轮图片理解（沿用现有识图规则）' };
-const names = { draw: '绘图', remember_fact: '保存记忆', recall_memory: '读取记忆', save_meme: '收藏表情', search_memes: '查找表情', send_meme: '发送表情' };
-const parameterNames = { draw: 'prompt', remember_fact: 'content', save_meme: 'description', search_memes: 'query', send_meme: 'id' };
+const names = { draw: '绘图', remember_fact: '保存记忆', recall_memory: '读取记忆', save_meme: '收藏表情', search_memes: '查找表情', send_meme: '发送表情', send_usage_report: '发送用量报告' };
+const parameterNames = { draw: 'prompt', remember_fact: 'content', save_meme: 'description', search_memes: 'query', send_meme: 'id', send_usage_report: 'period' };
 const phases = { request: '发送请求', response: '模型返回', tool: '执行工具', error: '调用失败' };
 const statuses = { running: '运行中', completed: '已完成，待评审', failed: '失败', interrupted: '已中断' };
 const button = (action, label, extra = '') => `<button type="button" class="button small ${action === 'publish' ? 'primary' : ''}" data-pp-action="${action}" ${extra}>${label}</button>`;

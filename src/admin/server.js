@@ -9,6 +9,7 @@ const WEB_DIR = fileURLToPath(new URL('../../web/', import.meta.url));
 const STATIC = new Map([['/', ['index.html', 'text/html']], ['/index.html', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/prompt.js', ['prompt.js', 'text/javascript']], ['/style.css', ['style.css', 'text/css']], ['/styles.css', ['styles.css', 'text/css']]]);
 STATIC.set('/media.js', ['media.js', 'text/javascript']);
 STATIC.set('/media.css', ['media.css', 'text/css']);
+STATIC.set('/usage.css', ['usage.css', 'text/css']);
 const hash = (value) => createHash('sha256').update(value).digest();
 function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -96,6 +97,12 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
       if (route === 'GET /api/jobs') return reply(res, 200, services.scheduler.list());
       if (route === 'POST /api/jobs') return reply(res, 201, await services.scheduler.create(await body(req)));
       if (route === 'GET /api/logs') return reply(res, 200, await services.readLogs(query));
+      if (route === 'GET /api/usage/dashboard') return reply(res, 200, await services.readUsageDashboard(query));
+      if (route === 'GET /api/usage/report') {
+        const bytes = await services.readUsageReport(query);
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': bytes.length, 'Content-Disposition': 'inline; filename="usage-report.png"' });
+        return res.end(bytes);
+      }
       if (route === 'GET /api/usage') return reply(res, 200, await services.readUsageOverview(query));
       const user = url.pathname.match(/^\/api\/users\/(\d{1,20})$/);
       if (user && req.method === 'PUT') return reply(res, 200, await services.setUser(user[1], await body(req)));

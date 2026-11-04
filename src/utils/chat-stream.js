@@ -2,7 +2,7 @@ export const chatStreamOptions = (enabled) => enabled ? { stream: true, stream_o
 
 // SSE frames and UTF-8 characters can both straddle network chunks. Assemble
 // the entire assistant turn before exposing executable tool calls to the runner.
-export async function readChatStream(body, { onDelta, onUsage } = {}) {
+export async function readChatStream(body, { onDelta, onUsage, onModel } = {}) {
   if (!body) throw new Error('DeepSeek 流式响应缺少 body');
   const decoder = new TextDecoder();
   const message = { role: 'assistant', content: null };
@@ -25,6 +25,7 @@ export async function readChatStream(body, { onDelta, onUsage } = {}) {
     let chunk;
     try { chunk = JSON.parse(raw); } catch { throw new Error('DeepSeek 流式响应包含无效 JSON'); }
     if (chunk.error) throw new Error(`DeepSeek stream: ${chunk.error.message ?? '上游返回错误'}`);
+    if (typeof chunk.model === 'string') onModel?.(chunk.model);
     if (chunk.usage) onUsage?.(chunk.usage);
     const choice = chunk.choices?.find((item) => item.index === 0 || item.index === undefined);
     if (!choice) return; // Some compatible providers send usage in a separate frame.

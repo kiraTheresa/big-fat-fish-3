@@ -5,11 +5,13 @@ import { generateImage } from '../imagegen.js';
 import { appendMemory, getPersona } from '../store/persona-store.js';
 import { collectFromEvent, sendStoredMeme } from '../memes/service.js';
 import { searchMemes } from '../store/meme-library.js';
+import { sendUsageReport } from '../usage/report.js';
+import { USAGE_PERIODS } from '../usage/overview.js';
 
 export const TOOL_PARAMETERS = { draw: 'prompt', remember_fact: 'content', recall_memory: null,
-  save_meme: 'description', search_memes: 'query', send_meme: 'id' };
+  save_meme: 'description', search_memes: 'query', send_meme: 'id', send_usage_report: 'period' };
 const EFFECTS = { draw: '调用图片 API', remember_fact: '写入当前会话记忆', recall_memory: '读取当前会话记忆',
-  save_meme: '将当前或引用的表情收藏到肥鱼共享表情库', search_memes: '搜索肥鱼共享表情库', send_meme: '向当前会话发送共享库表情' };
+  save_meme: '将当前或引用的表情收藏到肥鱼共享表情库', search_memes: '搜索肥鱼共享表情库', send_meme: '向当前会话发送共享库表情', send_usage_report: '读取当前会话用量并发送统计图片' };
 export function toolAvailability(settings, actorId) {
   return Object.entries(settings.tools).map(([name, tool]) => {
     const reason = !tool.enabled ? '已关闭' : actorId && getRole(actorId) === 'blocked' ? '用户已封禁'
@@ -22,7 +24,8 @@ export function toolDefinitions(settings, actorId) {
   return toolAvailability(settings, actorId).filter((tool) => tool.available).map(({ name }) => {
     const parameter = TOOL_PARAMETERS[name];
     return { type: 'function', function: { name, description: settings.tools[name].description, parameters: {
-      type: 'object', properties: parameter ? { [parameter]: { type: 'string', description: settings.tools[name].parameterDescription } } : {},
+      type: 'object', properties: parameter ? { [parameter]: { type: 'string', description: settings.tools[name].parameterDescription,
+        ...(name === 'send_usage_report' ? { enum: Object.keys(USAGE_PERIODS) } : {}) } } : {},
       required: parameter ? [parameter] : [], additionalProperties: false,
     } } };
   });
@@ -34,11 +37,21 @@ export function parseToolArguments(name, raw) {
   try { args = JSON.parse(raw); } catch { throw new Error('工具参数不是有效 JSON'); }
   const key = TOOL_PARAMETERS[name];
   if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length !== (key ? 1 : 0) || (key && (!Object.hasOwn(args, key) || typeof args[key] !== 'string' || !args[key].trim() || args[key].length > (name === 'draw' ? 4000 : 1000)))) throw new Error('工具参数不符合声明，不能指定其他会话或用户');
+  if (name === 'send_usage_report' && !Object.hasOwn(USAGE_PERIODS, args.period)) throw new Error('统计时段需为 today、7d 或 30d');
   return args;
 }
 // Both slash commands and natural-language tools use the same image / memory gateways.
-export async function executeTool(name, args, { sessionKey, actorId, speaker, memory, mode = 'live', onImage, onImageAttempt, nowMs = Date.now(), event, memeTurn }, settings) {
+export async function executeTool(name, args, { sessionKey, actorId, speaker, memory, mode = 'live', onImage, onImageAttempt, nowMs = Date.now(), event, memeTurn, reportTurn }, settings) {
   if (!toolAvailability(settings, actorId).find((t) => t.name === name)?.available) throw new Error('工具已停用或当前用户不可用');
+  if (name === 'send_usage_report') {
+    if (mode !== 'live') return { ok: true, simulated: true, message: '用量报告模拟成功，未查询真实账本、未向 QQ 发送图片' };
+    if (!reportTurn) throw new Error('缺少当前用量报告上下文');
+    if (reportTurn.attempted) throw new Error('本轮已尝试发送用量报告，不能重复发送');
+    reportTurn.attempted = true;
+    const result = await sendUsageReport({ event, sessionKey }, args.period);
+    if (result.ok) reportTurn.sent = true;
+    return result;
+  }
   if (['save_meme', 'search_memes', 'send_meme'].includes(name)) {
     if (mode !== 'live') return { ok: true, simulated: true, items: [], message: '表情工具模拟完成，未修改或检索肥鱼共享表情库、未向 QQ 发送' };
     if (!event || !memeTurn) throw new Error('缺少当前会话表情上下文');

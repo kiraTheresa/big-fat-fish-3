@@ -47,7 +47,7 @@ const pages = {
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
   logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
-  usage: ['调用与用量', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
+  usage: ['Token 用量与费用', '查看预估费用、用量来源、调用结果与会话统计。', 'USAGE'],
 };
 const resolvePage = (page) => page === 'media' ? 'images' : page;
 const initialPage = resolvePage(location.hash.slice(1));
@@ -55,9 +55,10 @@ const state = {
   token: '', tokenExpiresAt: 0, page: pages[initialPage] ? initialPage : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
-  filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { since: '', until: '', kind: '', sessionKey: '' } },
+  filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { period: 'today', since: '', until: '', detailKind: '', pendingOnly: '', sessionKey: '' } },
 };
 let promptConsole;
+let usageReportUrl;
 const mediaGalleries = new Map();
 if (location.hash === '#media') history.replaceState(null, '', '#images');
 let toastTimer;
@@ -118,7 +119,7 @@ async function login(token, expiresAt = null) {
     $('#app').hidden = false;
     updateStatus(status);
     await loadPage();
-    if (attempt === loginAttempt && state.token) $('#content').focus();
+    if (attempt === loginAttempt && state.token) $('#content').focus({ preventScroll: true });
   } catch (error) {
     if (attempt !== loginAttempt) return;
     if (error.status === 401) clearSavedLogin();
@@ -146,6 +147,8 @@ function logout(message = '', { forget = true } = {}) {
   if (forget) clearSavedLogin();
   resetLoginButton();
   promptConsole?.clear();
+  clearUsageReport();
+  state.usageDashboard = null;
   for (const gallery of mediaGalleries.values()) gallery.clear();
   state.token = '';
   state.tokenExpiresAt = 0;
@@ -170,7 +173,7 @@ function logout(message = '', { forget = true } = {}) {
   $('#admin-token').focus();
 }
 
-async function api(path, { method = 'GET', body, token = state.token } = {}) {
+async function api(path, { method = 'GET', body, token = state.token, responseType = 'json' } = {}) {
   if (token === state.token && expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
   let response;
   try {
@@ -180,6 +183,11 @@ async function api(path, { method = 'GET', body, token = state.token } = {}) {
     });
   } catch (error) {
     throw new Error(error.name === 'TimeoutError' ? '请求超时，请稍后重试。' : '无法连接管理服务，请检查 Bot 是否仍在运行。');
+  }
+  if (response.ok && responseType === 'blob') {
+    const blob = await response.blob();
+    if (token !== state.token) throw new Error('登录状态已改变。');
+    return blob;
   }
   let data;
   try { data = await response.json(); } catch { data = {}; }
@@ -254,6 +262,7 @@ async function loadPage({ quiet = false } = {}) {
   if (!state.token) return;
   const sequence = ++state.sequence;
   const page = state.page;
+  if (page === 'usage' && $('#usage-ledger')) state.usageDetailsOpen = $('#usage-ledger').open;
   for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
   $('#refresh').disabled = true;
@@ -424,28 +433,83 @@ async function renderLogs(sequence) {
 }
 
 const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
-function groupEntries(value, keyName) {
-  if (Array.isArray(value)) return value.map((item) => [item[keyName] || item.key || '未分类', item]);
-  return Object.entries(value || {});
+const usageMoney = (totals = {}) => totals.calls && !totals.pricedCalls ? '待确认'
+  : `¥${((totals.costNano || 0) / 1e9).toFixed(totals.costNano > 0 && totals.costNano < 10000000 ? 4 : 2)}`;
+const usageTime = (value, timeOnly = false) => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: timeOnly ? undefined : '2-digit', day: timeOnly ? undefined : '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : '—';
+const usageSession = (key) => key?.startsWith('g-') ? `群聊 · ${key.slice(2)}` : key?.startsWith('p-') ? `私聊 · ${key.slice(2)}` : key || '全部会话';
+function usageChart(result) {
+  if (result.totals?.calls && !result.totals.pricedCalls) return empty('费用走势待确认', '当前记录缺少可计价用量，不显示为零费用走势。', 'usage');
+  const buckets = result.byTime || [];
+  if (!buckets.length) return empty('暂无用量走势', '产生调用后显示当前时段的费用走势。', 'usage');
+  const max = Math.max(1, ...buckets.map(row => row.costNano || 0));
+  const tickEvery = Math.max(1, Math.ceil(buckets.length / 6));
+  return `<div class="usage-chart" role="group" aria-label="已计价预估费用走势"><div class="usage-chart-axis"><span>${e(usageMoney({costNano:max}))}</span><span>¥0</span></div><div class="usage-chart-columns">${buckets.map((row, i) => {
+    const label = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', ...(result.range?.interval === 'hour' ? { hour: '2-digit', hour12: false } : { month: '2-digit', day: '2-digit' }) }).format(row.time);
+    const reading = `${usageTime(row.time)} · ${usageMoney(row)} · ${number(row.totalTokens)} token · ${number(row.pendingCostCalls)} 次费用待确认`;
+    const height = (row.costNano || 0) / max * 98;
+    const tick = (i % tickEvery === 0 && i < buckets.length - 2) || i === buckets.length - 1;
+    return `<button class="usage-chart-bar" type="button" data-action="usage-chart" data-reading="${e(reading)}" aria-label="${e(reading)}" title="${e(reading)}"><svg viewBox="0 0 20 100" preserveAspectRatio="none" aria-hidden="true"><rect x="3" y="${100-height}" width="14" height="${height}" rx="1"/></svg><span>${tick ? e(label) : ''}</span></button>`;
+  }).join('')}</div></div><p class="field-hint" id="usage-chart-reading">选择柱形查看该时段费用；无完整用量的调用不作为零费用计入。</p>`;
 }
-function usageBars(entries, names = {}) {
-  const sorted = entries.sort((a, b) => (b[1].calls || 0) - (a[1].calls || 0));
-  const max = Math.max(1, ...sorted.map(([, value]) => Number(value.calls) || 0));
-  return sorted.length ? sorted.slice(0, 8).map(([key, value]) => `<div class="bar-row"><div class="bar-heading"><span>${e(names[key] || key)}</span><span>${e(number(value.calls))} 次 · ${e(number(value.totalTokens))} Token</span></div><progress class="usage-progress" max="${max}" value="${Number(value.calls) || 0}" aria-label="${e(names[key] || key)} 调用次数">${e(number(value.calls))}</progress></div>`).join('') : empty('暂无调用记录', '发生模型调用后，这里会显示真实用量。', 'usage');
+function usageKindRows(result) {
+  const rows = result.byKind || [];
+  const max = Math.max(1, result.totals?.costNano || 0);
+  return rows.length ? [...rows].sort((a,b) => (b.costNano || 0) - (a.costNano || 0)).map(row => `<button class="usage-kind" type="button" data-action="usage-kind" data-kind="${e(row.kind)}"><span class="usage-kind-heading"><strong>${e(kindNames[row.kind] || row.kind)}</strong><span>${e(usageMoney(row))}</span></span><progress class="usage-progress" value="${Math.round((row.costNano || 0) / max * 1000) / 10}" max="100" aria-label="${e(kindNames[row.kind] || row.kind)}预估费用占比" aria-valuetext="${row.calls && !row.pricedCalls ? '费用待确认，暂无占比' : Math.round((row.costNano || 0) / max * 1000) / 10+'%'}"></progress><span class="usage-kind-note"><span>${e(number(row.calls))} 次 · ${row.kind === 'draw' || row.kind === 'image' ? '已返回 '+e(number(row.images))+' 张图片' : row.unknownUsageCalls === row.calls ? 'token 未返回' : e(number(row.totalTokens))+' token'}</span><span>${e(number(row.pendingCostCalls))} 次待确认</span></span></button>`).join('') : empty('暂无调用用途', '统计包含聊天、识图、记忆提炼与绘图。', 'usage');
+}
+function usageSessionTable(result) {
+  const rows = [...(result.bySession || [])].sort((a,b) => (b.costNano || 0) - (a.costNano || 0) || b.calls - a.calls).slice(0,8);
+  return rows.length ? `<div class="table-wrap"><table><thead><tr><th>会话</th><th>已报告 token</th><th>预估费用</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td><span class="cell-main">${e(usageSession(row.sessionKey))}</span><span class="cell-sub">${e(number(row.calls))} 次调用 · ${e(number(row.pendingCostCalls))} 次待确认</span></td><td>${row.unknownUsageCalls === row.calls ? '未返回' : e(number(row.totalTokens))}</td><td class="usage-number">${e(usageMoney(row))}</td><td class="cell-actions"><button class="text-button" type="button" data-action="usage-session" data-session="${e(row.sessionKey)}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('暂无会话用量', '统计覆盖全部记录，此处最多展示费用最高的 8 个会话。', 'usage');
+}
+function usageLedger(result) {
+  const f = state.filters.usage;
+  return `<details id="usage-ledger" class="panel usage-ledger"${f.detailKind || f.pendingOnly || state.usageDetailsOpen ? ' open' : ''}><summary><span>调用明细</span><span class="muted">匹配 ${e(number(result.itemCount ?? state.rows.length))} 次 · 展示最近 ${state.rows.length} 次</span></summary><form id="usage-detail-filter" class="filters"><label>用途<select name="detailKind">${selectOptions([['','全部用途'],...Object.entries(kindNames).filter(([key]) => key !== 'image')], f.detailKind)}</select></label><label>计价状态<select name="pendingOnly">${selectOptions([['','全部记录'],['true','费用待确认']], f.pendingOnly)}</select></label><button class="button" type="submit">筛选明细</button></form>${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间 / 模型</th><th>用途 / 会话</th><th>输入 / 输出 token</th><th>耗时 / 结果</th><th>预估费用</th><th>详情</th></tr></thead><tbody>${state.rows.map((row,index) => `<tr><td>${e(usageTime(row.time))}<span class="cell-sub mono">${e(row.responseModel || row.model || '—')}</span></td><td>${e(kindNames[row.kind] || row.kind || '—')}<span class="cell-sub">${e(usageSession(row.sessionKey))}</span></td><td>${row.prompt_tokens == null ? '未返回' : e(number(row.prompt_tokens))} / ${row.completion_tokens == null ? '未返回' : e(number(row.completion_tokens))}<span class="cell-sub">缓存输入 ${row.prompt_cache_hit_tokens == null ? '未返回' : e(number(row.prompt_cache_hit_tokens))}</span></td><td>${Number.isFinite(row.elapsedMs) ? e((row.elapsedMs / 1000).toFixed(1))+'s' : '—'}<span class="cell-sub">${row.status === 'failure' || row.status === 'interrupted' ? pill(row.status === 'interrupted' ? '已中断' : '失败','danger') : pill('成功')}</span></td><td class="usage-number">${row.cost?.status === 'estimated' ? e(usageMoney({costNano:row.cost.costNano})) : '待确认'}<span class="cell-sub usage-cost-reason">${e(row.cost?.reason || (row.pricing?.band === 'peak' ? '高峰时段价格' : row.pricing?.band === 'off-peak' ? '空闲时段价格' : ''))}</span></td><td class="cell-actions"><button class="button small" type="button" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有符合条件的调用', '当前明细筛选不会改变上方费用、趋势和会话汇总。', 'usage')}</details>`;
 }
 async function renderUsage(sequence) {
   const f = state.filters.usage;
-  const range = { ...f };
-  if (range.since) range.since = new Date(`${range.since}T00:00:00`).toISOString();
-  if (range.until) range.until = new Date(`${range.until}T23:59:59.999`).toISOString();
-  const result = await api(`/usage${query(range)}`);
+  const filters = { ...f, limit:100 };
+  if (f.period === 'custom') {
+    if (f.since) filters.since = `${f.since}T00:00:00+08:00`;
+    if (f.until) filters.until = `${f.until}T23:59:59.999+08:00`;
+  } else { delete filters.since; delete filters.until; }
+  const [result, status] = await Promise.all([api(`/usage/dashboard${query(filters)}`), api('/status')]);
   if (sequence !== state.sequence) return '';
-  const totals = result.totals || {};
   state.rows = result.items || [];
-  return `<section class="panel">${panelHead('观察范围', '统计来自持久化调用记录，不估算缺失的上游用量。')}<form id="usage-filter" class="filters"><label>开始日期<input type="date" name="since" value="${e(f.since)}"></label><label>结束日期<input type="date" name="until" value="${e(f.until)}"></label><label>能力<select name="kind">${selectOptions([['', '全部能力'], ['chat', '文字对话'], ['vision', '图片理解'], ['draw', '绘图'], ['distill', '记忆提炼']], f.kind)}</select></label><label>会话<input name="sessionKey" value="${e(f.sessionKey)}" placeholder="g-群号 / p-QQ号"></label><button type="submit" class="button">应用</button><button type="button" class="button subtle" data-action="reset-filters">重置</button></form></section>
-    <div class="metrics-grid usage-metrics">${metric('模型调用', number(totals.calls), `${number(totals.successes)} 次成功 · ${number(totals.failures)} 次失败`, 'usage', '次')}${metric('已知 Token', number(totals.totalTokens), `输入 ${number(totals.promptTokens)} · 输出 ${number(totals.completionTokens)}`, 'config')}${metric('生成图片', number(totals.images), '上游实际返回的图片数量', 'events', '张')}${metric('用量未完整返回', number(totals.unknownUsageCalls), '单独保留，不按零成本推断', 'warning', '次')}</div>
-    <div class="usage-grid"><section class="panel">${panelHead('按能力分布', '调用次数与已知 Token。')}${usageBars(groupEntries(result.byKind, 'kind'), kindNames)}</section><section class="panel">${panelHead('活跃会话', '按调用次数排序，最多显示 8 个会话。')}${usageBars(groupEntries(result.bySession, 'sessionKey'))}</section></div>
-    <section class="panel">${panelHead('调用明细', `统计覆盖全部匹配记录，下方显示最新 ${state.rows.length} 条。`)}${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>能力 / 模型</th><th>会话</th><th>结果</th><th>Token</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => `<tr><td class="mono">${e(date(row.time ?? row.timestamp))}</td><td><span class="cell-main">${e(kindNames[row.kind] || row.kind || '—')}</span><span class="cell-sub mono">${e(row.model || '—')}</span></td><td class="mono">${e(row.sessionKey || '—')}</td><td>${row.success === false || ['failed', 'failure', 'error', 'interrupted'].includes(row.status) ? pill('失败', 'danger') : row.success === true || row.status === 'success' ? pill('成功') : pill('已记录', 'neutral')}</td><td class="mono">${row.total_tokens === undefined && row.totalTokens === undefined ? '未返回' : e(number(row.total_tokens ?? row.totalTokens))}</td><td class="cell-actions"><button type="button" class="button small" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有模型调用', '调用发生后可在此追踪结果与用量。', 'usage')}</section>`;
+  state.usageDashboard = result;
+  updateStatus(status);
+  const t = result.totals || {};
+  const monitor = status.usage || {};
+  const today = monitor.today;
+  const limits = monitor.policy?.limits || {};
+  const previous = result.previous;
+  const delta = t.pricedCalls && !t.pendingCostCalls && previous?.pricedCalls && !previous.pendingCostCalls && previous.costNano > 0 ? (t.costNano-previous.costNano)/previous.costNano*100 : null;
+  const cache = t.cacheReportedPromptTokens ? `${(t.cacheHitTokens/t.cacheReportedPromptTokens*100).toFixed(1)}%` : '未返回';
+  const range = result.range || {};
+  const period = f.period || 'today';
+  const periods = [['today','今天'],['7d','近 7 天'],['30d','近 30 天'],['custom','自定义']];
+  return `<div class="usage-workbench"><section class="usage-toolbar" aria-label="用量筛选"><div class="usage-periods" role="group" aria-label="统计时段">${periods.map(([value,label])=>`<button type="button" class="button${period===value?' primary':''}" aria-pressed="${period===value}" data-action="usage-period" data-period="${value}">${label}</button>`).join('')}</div><div class="usage-top-actions"><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek 开发者平台 ↗</a><button class="button primary" type="button" data-action="usage-report">生成分享图</button></div></section><form id="usage-filter" class="filters usage-scope"><input type="hidden" name="period" value="${e(period)}"><input type="hidden" name="detailKind" value="${e(f.detailKind)}"><input type="hidden" name="pendingOnly" value="${e(f.pendingOnly)}">${period==='custom'?`<label>开始日期（北京）<input type="date" name="since" value="${e(f.since)}" required></label><label>结束日期（北京）<input type="date" name="until" value="${e(f.until)}" required></label>`:''}<label class="filter-wide">会话范围<input name="sessionKey" list="usage-sessions" value="${e(f.sessionKey)}" placeholder="全部会话；或 g-群号 / p-QQ号"><datalist id="usage-sessions">${(result.bySession || []).map(row=>`<option value="${e(row.sessionKey)}">${e(usageSession(row.sessionKey))}</option>`).join('')}</datalist></label><button class="button" type="submit">应用范围</button><button class="button subtle" type="button" data-action="reset-filters">重置</button></form>
+    <section class="panel usage-summary" aria-label="费用与用量摘要"><div class="usage-summary-main"><div class="usage-cost"><p>已计价预估费用 <span class="badge neutral">CNY</span></p><div class="usage-cost-value">${e(usageMoney(t))}</div><p class="field-hint">${delta===null?'暂无可比费用':`较上一时段${delta>=0?'增加':'减少'} ${Math.abs(delta).toFixed(1)}% · 截至相同进度`}</p></div><div class="usage-stat"><p>已报告 token</p><strong>${t.calls && t.unknownUsageCalls===t.calls?'未返回':e(number(t.totalTokens))}</strong><p class="field-hint">输入 ${t.calls && !t.promptKnownCalls?'未返回':e(number(t.promptTokens))} · 输出 ${t.calls && !t.completionKnownCalls?'未返回':e(number(t.completionTokens))}</p></div><div class="usage-stat"><p>API 调用</p><strong>${e(number(t.calls))}<small>次</small></strong><p class="field-hint">成功 ${e(number(t.successes))} · 失败 ${e(number(t.failures))} · 出图 ${e(number(t.images))} 张</p></div></div><div class="usage-summary-foot"><span>${e(usageSession(f.sessionKey))} · ${e(usageTime(range.since))} — ${e(usageTime(range.until))}（北京时间）</span><span>${e(number(t.pricedCalls))}/${e(number(t.calls))} 次已计价</span><button class="text-button" type="button" data-action="usage-pricing">计价说明</button></div></section>
+    ${t.pendingCostCalls?`<section class="usage-warning" aria-label="计价完整度"><strong>${e(number(t.pendingCostCalls))} 次费用待确认，未包含在上方金额中</strong><p>${e((result.pendingReasons || []).map(row=>`${row.reason} ${number(row.calls)} 次`).join('；'))}</p><button class="text-button" type="button" data-action="usage-pending">查看待确认调用 ↘</button></section>`:''}
+    ${!t.calls?`<section class="panel">${empty('所选范围暂无模型调用','尚未产生调用，与账本读取失败或上游未返回用量不同。','usage')}</section>`:`<div class="usage-panels"><section class="panel">${panelHead('费用走势', `按${range.interval==='hour'?'小时':'天'}汇总 · 仅含已计价费用 · 最后一个时段可能尚未结束`)}${usageChart(result)}<p class="usage-cache">输入缓存命中率 <strong>${e(cache)}</strong><span class="muted">基于有缓存拆分的调用；${e(number(t.cacheUnknownCalls))} 次未返回拆分</span></p></section><section class="panel">${panelHead('按用途分布','点击用途筛选明细；上方汇总范围不变。')}${usageKindRows(result)}</section></div><div class="usage-panels usage-session-panels"><section class="panel">${panelHead('会话费用排行','按已计价费用排序，最多显示 8 个会话。')}${usageSessionTable(result)}</section><section class="panel">${panelHead('每日额度与账号','额度为全局口径，不随当前会话筛选变化。')}<dl class="key-values"><div><dt>今日已报告 token</dt><dd>${today?e(number(today.totalTokens)):'不可用'}</dd></div><div><dt>每日 token 上限</dt><dd>${limits.maxTokensPerDay?e(number(limits.maxTokensPerDay)):'不限'}</dd></div><div><dt>今日 API 调用 / 上限</dt><dd>${today?e(number(today.calls)):'不可用'} / ${limits.maxCallsPerDay?e(number(limits.maxCallsPerDay)):'不限'}</dd></div><div><dt>进行中的请求</dt><dd>${e(number(monitor.inFlight?.length))}</dd></div><div><dt>下次重置（北京）</dt><dd>${e(usageTime(monitor.resetAt))}</dd></div></dl><p class="field-hint">Token 上限依据已报告用量；正在生成和未知用量可能使实际消耗超过阈值。</p><p class="field-hint">账号余额尚未接入。DeepSeek 账号可能还有其他应用消费，实际账单请到开发者平台查看。</p><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">查看账单 / 充值 ↗</a></section></div>${usageLedger(result)}`}</div>`;
+}
+function clearUsageReport() {
+  if (usageReportUrl) { URL.revokeObjectURL(usageReportUrl); usageReportUrl = undefined; }
+}
+async function showUsageReport(button) {
+  const sequence = state.sequence;
+  const range = state.usageDashboard?.range;
+  if (!range) return;
+  await withButton(button, async () => {
+    const blob = await api(`/usage/report${query({ period:range.period, since:range.since, until:range.until, sessionKey:range.sessionKey })}`, {responseType:'blob'});
+    if (sequence !== state.sequence || !state.token) return;
+    clearUsageReport();
+    usageReportUrl = URL.createObjectURL(blob);
+    showDialog('用量报告预览','USAGE / SHARE', `<p class="detail-caption">${range.sessionKey?'当前所选会话摘要':'管理员查看的全局摘要'}。不包含账号余额、QQ 号或其他会话明细；聊天工具默认只返回所在会话的报告。</p><img class="usage-report-image" src="${e(usageReportUrl)}" alt="所选范围的 Token 用量与预估费用报告"><div class="dialog-actions"><a class="button primary" href="${e(usageReportUrl)}" download="usage-report.png">下载 PNG</a></div>`);
+  });
+}
+function showUsagePricing() {
+  const pricing = state.usageDashboard?.pricing || {};
+  const priceRows = Object.values(pricing.models || {}).map(model => [1,2].map(factor => `<tr><td>${e(model.name)} · ${factor === 1 ? '空闲' : '高峰'}</td>${['cacheInputNano','inputNano','outputNano'].map(key => `<td>${e(number(model.offPeak[key] * factor / 1000))}</td>`).join('')}</tr>`).join('')).join('');
+  showDialog('计价说明','USAGE / PRICING', `<p class="detail-caption">本地预估费用与供应商账单分别查看。费用 = 缓存输入 × 命中单价 + 非缓存输入 × 未命中单价 + 输出 × 输出单价。</p><div class="table-wrap"><table><thead><tr><th>模型（元 / 百万 token）</th><th>缓存输入</th><th>非缓存输入</th><th>输出</th></tr></thead><tbody>${priceRows}</tbody></table></div><ul class="usage-pricing-notes"><li>价目核对日期 ${e(pricing.verifiedAt || '—')}。当前计费日历覆盖至 2026 年末，后续需更新。</li><li>北京时间工作日（不含法定节假日）09:00–12:00、14:00–18:00 为高峰。按请求开始时刻保存价目快照，跨时段请求的实际扣费以供应商为准。</li><li>缓存命中率按输入 token 加权；没有返回缓存拆分的调用不混入分母。</li><li>历史记录缺少供应商或价目依据、未知模型、中转接口、绘图未定价、用量缺失或拆分矛盾时，费用待确认，不当作免费。</li><li>每次 API 尝试分别计数，包含失败和重试；API 调用次数不等于用户消息数。</li></ul><a class="button" href="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/" target="_blank" rel="noopener noreferrer">查看官方价目表 ↗</a>`);
 }
 async function renderPrompt(sequence) {
   if (!promptConsole) {
@@ -590,6 +654,20 @@ document.addEventListener('click', async (event) => {
   if (action === 'first-page') { state.cursor = null; state.cursors = []; loadPage(); return; }
   if (action === 'event-detail') { showJson('接收事件详情', 'INBOX / EVENT', state.rows[index], '这里只展示已接收的数据。未知消息段会保留原始字段，不自动执行。'); return; }
   if (action === 'log-detail') { showJson('日志详情', 'LOGS / RECORD', state.rows[index]); return; }
+  if (action === 'usage-period') {
+    state.filters.usage.period = button.dataset.period;
+    if (button.dataset.period === 'custom') {
+      const local = new Date(Date.now()+8*3600000).toISOString().slice(0,10);
+      state.filters.usage.since ||= local; state.filters.usage.until ||= local;
+    }
+    loadPage(); return;
+  }
+  if (action === 'usage-session') { state.filters.usage.sessionKey=button.dataset.session; loadPage(); return; }
+  if (action === 'usage-kind') { state.filters.usage.detailKind=button.dataset.kind; state.filters.usage.pendingOnly=''; loadPage(); return; }
+  if (action === 'usage-pending') { state.filters.usage.pendingOnly='true'; state.filters.usage.detailKind=''; loadPage(); return; }
+  if (action === 'usage-chart') { $('#usage-chart-reading').textContent=button.dataset.reading; return; }
+  if (action === 'usage-report') { await showUsageReport(button); return; }
+  if (action === 'usage-pricing') { showUsagePricing(); return; }
   if (action === 'usage-detail') { showJson('调用详情', 'USAGE / CALL', state.rows[index]); return; }
   if (action === 'new-user' || action === 'edit-user') { showUserForm(action === 'edit-user' ? state.users[index] : null); return; }
   if (action === 'new-job' || action === 'edit-job') { showJobForm(action === 'edit-job' ? state.jobs[index] : null); return; }
@@ -616,6 +694,7 @@ document.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (form.id === 'config-form') { await saveConfig(form); return; }
   if (form.id === 'user-form' || form.id === 'job-form') { await saveDialogForm(form); return; }
+  if (form.id === 'usage-detail-filter') { Object.assign(state.filters.usage, Object.fromEntries(new FormData(form).entries())); loadPage(); return; }
   const page = form.id.replace('-filter', '');
   if (!state.filters[page]) return;
   const draft = Object.fromEntries(new FormData(form).entries());
@@ -651,7 +730,7 @@ $('#refresh').innerHTML = icon('refresh');
 $('#refresh').addEventListener('click', () => { if (canLeave()) { state.dirty = false; loadPage(); } });
 $('#close-dialog').addEventListener('click', closeDialog);
 $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) event.preventDefault(); });
-$('#detail-dialog').addEventListener('close', () => { if (lastFocus?.isConnected) lastFocus.focus(); });
+$('#detail-dialog').addEventListener('close', () => { clearUsageReport(); if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
 const navigationGroups = [
   ['运行排查', ['overview', 'events', 'logs', 'usage']],
