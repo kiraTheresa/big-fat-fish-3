@@ -24,7 +24,7 @@ export function publishReadiness(workspace, config, dirty = false) {
   return !dirty && pendingPublishTests(workspace, config).length === 0;
 }
 const sections = [
-  ['seed', '初始人设', '仅用于新建或重置会话；已有会话的人设继续独立演化。'],
+  ['seed', '角色模板 · 初始人设', '仅用于新建或重置会话；已有会话的人设继续独立演化。'],
   ['identity', '身份与消息格式', '所有会话共用的身份约定，以及如何理解群聊中的发言者。'],
   ['group', '群聊行为', '群聊回复的长度、节奏与表达方式。'],
   ['private', '私聊行为', '一对一对话的回复方式。'],
@@ -76,8 +76,8 @@ export function createPromptConsole({ api, state: appState, toast }) {
     $('#pp-style-description').textContent = styles[value].description;
     try { localStorage.setItem(STYLE_KEY, value); } catch { /* Restricted storage still allows in-memory switching. */ }
   }
-  function editor() {
-    const [key, title, hint] = sections.find((v) => v[0] === s.section);
+  function editor(section = s.section) {
+    const [key, title, hint] = sections.find((v) => v[0] === section);
     let body;
     if (key === 'context') {
       const ctx = s.config.context;
@@ -95,38 +95,70 @@ export function createPromptConsole({ api, state: appState, toast }) {
     const changes = configDiff(s.workspace.published.config, s.config);
     return changes.length ? `<p class="field-hint">${changes.length} 个字段有变化。发布前检查旧值与新值。</p>${changes.map((d) => `<details class="pp-diff"><summary>${escape(d.path)}</summary><div class="pp-diff-columns"><div><small>已发布</small><pre>${escape(d.before)}</pre></div><div><small>草稿</small><pre>${escape(d.after)}</pre></div></div></details>`).join('')}` : '<p class="field-hint">草稿与已发布配置一致。</p>';
   }
+  function cards() {
+    return sections.filter(([key]) => key !== 'json').map(([key]) => `<article class="panel pp-module" data-module="${key}">${editor(key)}</article>`).join('');
+  }
+  function syncEditing() {
+    $('#prompt-console').dataset.editing = String(!!s.editing);
+    root.querySelectorAll('[data-pp-field]').forEach((field) => {
+      if (field.tagName === 'TEXTAREA') field.readOnly = !s.editing || appState.saving;
+      else field.disabled = !s.editing || appState.saving;
+    });
+    root.querySelectorAll('[data-pp-action="variable"],[data-pp-action="apply-json"]').forEach((el) => { el.disabled = !s.editing || appState.saving; });
+    $('#pp-edit').hidden = !!s.editing;
+    $('#pp-save').hidden = $('#pp-cancel').hidden = !s.editing;
+    root.querySelectorAll('#pp-editor textarea').forEach((field) => { field.style.height = 'auto'; field.style.height = field.scrollHeight + 3 + 'px'; });
+  }
+  function switchView(value) {
+    if (!['cards', 'json'].includes(value)) return;
+    s.view = value; $('#prompt-console').dataset.view = value;
+    root.querySelectorAll('[data-pp-view]').forEach((el) => el.setAttribute('aria-pressed', String(el.dataset.ppView === value)));
+    if (value === 'cards') syncEditing();
+  }
   function shell() {
-    return `<div id="prompt-console" data-prompt-style="${appearance}">
-      <div class="pp-appearance-bar"><p id="pp-style-description">${styles[appearance].description}</p><div class="pp-style-switch" role="group" aria-label="编辑区密度" aria-describedby="pp-style-description">${Object.entries(styles).map(([key, style]) => `<button type="button" data-pp-style="${key}" aria-pressed="${key === appearance}">${style.label}</button>`).join('')}</div></div>
-      <section class="panel pp-versionbar"><div><span class="badge">全局配置</span> <strong>已发布 v${s.workspace.published.number}</strong><p id="pp-save-state" class="field-hint"></p></div><div class="pp-row">${button('save', '保存草稿', 'id="pp-save"')}${button('reload', '重新读取')}${button('publish', '发布版本', 'id="pp-publish" disabled')}</div></section>
-      <nav class="pp-flow" aria-label="工作台操作流程">${[['edit', '01', '编辑配置'], ['test', '02', '测试与评审'], ['release', '03', '检查与发布'], ['runs', '04', '运行记录']].map(([target, step, label]) => `<button type="button" data-pp-jump="${target}"><span>${step}</span>${label}</button>`).join('')}</nav>
+    return `<div id="prompt-console" class="pp-v4" data-prompt-style="${appearance}" data-view="${s.view ?? 'cards'}" data-editing="${!!s.editing}">
+      <section class="pp-page-controls"><div><span class="badge neutral">全局草稿</span> <strong>已发布 v${s.workspace.published.number}</strong><p id="pp-save-state" class="field-hint"></p></div><div class="pp-row"><div class="pp-style-switch" aria-label="页面显示方式"><button type="button" data-pp-view="cards" aria-pressed="${s.view !== 'json'}">模块正文</button><button type="button" data-pp-view="json" aria-pressed="${s.view === 'json'}">原始 JSON</button></div>${button('edit', '编辑 Edit', 'id="pp-edit"')}${button('cancel-edit', '取消', 'id="pp-cancel" hidden')}${button('save', '保存 Save', 'id="pp-save" hidden')}</div></section>
       <p id="pp-error" class="notice danger" role="alert" hidden></p>
-      <section class="panel pp-scenario"><div class="pp-row"><h2>测试场景</h2><span class="field-hint">快照固定后，可用同一份素材比较两个版本。</span></div><div class="pp-fields"><label>会话<select id="pp-session"><option value="new-group">全新群聊 · 使用初始人设</option><option value="new-private">全新私聊 · 使用初始人设</option>${s.sessions.map((key) => `<option value="${escape(key)}">${escape(key)}</option>`).join('')}</select></label><label>测试发言者 QQ（可留空）<input id="pp-actor" inputmode="numeric" placeholder="默认使用最近发言者"></label>${button('snapshot', '载入快照')}</div><p id="pp-snapshot-info" class="field-hint"></p>
-        <details><summary>查看人设与记忆 / 临时修改测试素材</summary><label class="pp-check"><input id="pp-persona-edit" type="checkbox">仅在本次测试中使用修改后的素材</label><div class="pp-diff-columns"><label>当前人设<textarea id="pp-character" rows="6" readonly></textarea></label><label>当前记忆<textarea id="pp-memory" rows="6" readonly></textarea></label></div></details></section>
-      <div class="pp-workbench" id="pp-edit-stage"><nav class="panel pp-sections" aria-label="Prompt 编辑内容">${sections.map(([key, label]) => `<button type="button" data-pp-section="${key}" aria-pressed="${key === s.section}">${label}</button>`).join('')}</nav><section class="panel pp-editor" id="pp-editor" tabindex="-1">${editor()}</section><section class="panel pp-preview"><div class="panel-header"><div><p class="eyebrow">REQUEST PREVIEW</p><h2>最终请求</h2><p id="pp-preview-state">载入场景后生成</p></div>${button('preview', '刷新')}</div><div id="pp-request-blocks"></div><details class="pp-json"><summary>请求 JSON · 可临时编辑后测试</summary><label class="pp-check"><input type="checkbox" id="pp-request-edit">临时实验（不作为发布依据）</label><textarea id="pp-request-json" class="mono" rows="18" readonly aria-label="最终请求 JSON"></textarea>${button('reset-request', '恢复自动组装')}${button('copy-request', '复制 JSON')}</details></section></div>
-      <section class="panel pp-test" id="pp-test-stage" tabindex="-1"><div class="panel-header"><div><p class="eyebrow">TEST BENCH</p><h2>测试与评审</h2><p>真实调用模型并计入用量。测试消息与记忆留在沙盒，不向 QQ 发送。</p></div></div><div class="pp-fields"><label>测试流程<select id="pp-kind"><option value="chat">聊天与工具调用</option><option value="distill">记忆 / 人设提炼</option></select></label><label>工具模式<select id="pp-mode"><option value="simulate">模拟绘图 · 记忆写入沙盒</option><option value="execute">真实绘图（计费用量）· 记忆写入沙盒</option></select></label></div><div class="pp-diff-columns"><label>输入消息<textarea id="pp-input" rows="3">记住，我不吃香菜。</textarea></label><label>预期表现<textarea id="pp-expected" rows="3" placeholder="例如：调用 remember_fact，确认保存；不调用 draw。"></textarea></label></div><div class="pp-row">${button('test', '测试当前草稿', 'id="pp-test"')}${button('compare', '对比发布版与草稿（各调用一次）', 'id="pp-compare"')}<span id="pp-running" role="status"></span></div><div id="pp-result"></div></section>
-      <section class="panel pp-release" id="pp-release-stage" tabindex="-1"><h2>检查与发布</h2><p id="pp-publish-reason" class="notice info" role="status"></p><div id="pp-diff">${diffView()}</div><label>发布说明<input id="pp-note" maxlength="1000" placeholder="这次改动改善了什么"></label><p class="field-hint">通用规则与工具配置用于后续请求；初始人设仅用于新建或重置会话。运行中的请求继续使用原版本。</p><details><summary>版本历史 / 回退</summary><div class="pp-row"><select id="pp-version">${[...s.workspace.versions].reverse().map((v) => `<option value="${escape(v.id)}">v${v.number} · ${escape(v.note || '无说明')}</option>`).join('')}</select>${button('restore', '载入为草稿')}</div><p class="field-hint">回退也经过测试和发布，不会直接覆盖线上配置。保留最近 50 个版本。</p></details></section>
-      <section class="panel pp-recent" id="pp-runs-stage" tabindex="-1"><div class="panel-header"><div><h2>最近实际请求与测试</h2><p>保留最近 50 次运行；密钥、图片数据及敏感 URL 参数会省略并标记。</p></div>${button('refresh-runs', '刷新记录')}</div><div id="pp-runs"></div></section>
+      <div class="pp-scenario-bar"><label>测试会话<select id="pp-session"><option value="new-group">全新群聊 · 初始人设</option><option value="new-private">全新私聊 · 初始人设</option>${s.sessions.map((key) => `<option value="${escape(key)}">${escape(key)}</option>`).join('')}</select></label><label>发言者 QQ<input id="pp-actor" inputmode="numeric" placeholder="最近发言者"></label>${button('snapshot', '载入场景')}<span class="field-hint">切换选择后载入，预览与试聊使用同一份材料。</span></div>
+      <div class="pp-v4-grid"><section class="pp-main" id="pp-edit-stage"><div class="pp-main-heading"><div><h2>上下文工作区</h2><p id="pp-preview-state" class="field-hint">载入场景后生成完整请求</p></div>${button('copy-request', '复制 JSON')}</div>
+      <div class="pp-cards-view"><div class="pp-scope-map"><div><small>01 · 初始模板</small><strong>全局默认人设</strong><span>新建或重置会话时采用</span></div><div><small>02 · 会话人设</small><strong id="pp-persona-source">等待载入</strong><span>各会话独立演化</span></div><div><small>03 · 临时扮演</small><strong>仅测试沙盒</strong><span>不改写模板与会话记忆</span></div></div>
+      <details class="pp-scope-details"><summary>人设影响哪些提示词？</summary><p>身份、自称、群聊 / 私聊表达、戳一戳和工具后的回复会使用人设。工具定义、权限与用户事实保持独立；后台提炼读取人设作为材料。</p><p>当前身份规则与语气示例也可能包含角色描述，更换初始人设时请一并检查。此处编辑的是全局默认模板，尚不提供多角色模板库。</p></details>
+      <div id="pp-editor" class="pp-editor" tabindex="-1">${cards()}</div>
+      <article class="panel pp-module pp-session-persona"><div class="panel-header"><div><p class="eyebrow">SESSION / READ ONLY</p><h2>当前会话人设</h2><p>来自固定测试快照；编辑初始模板不会覆盖已有会话。</p></div></div><pre id="pp-current-character" class="pp-readable"></pre></article>
+      <article class="panel pp-module"><div class="panel-header"><div><p class="eyebrow">SANDBOX ONLY</p><h2>临时扮演与测试材料</h2><p>替换本次测试的人设与记忆，不写入线上会话。取消勾选即恢复快照材料。</p></div></div><div class="pp-editor-body"><label class="pp-check"><input id="pp-persona-edit" type="checkbox">使用临时测试人设 / 记忆</label><label>临时人设（完整替换）<textarea id="pp-character" rows="6" readonly></textarea></label><label>会话记忆 / 临时测试记忆<textarea id="pp-memory" rows="6" readonly></textarea></label></div></article>
+      <details class="panel pp-assembled"><summary>完整组装正文与历史筛选明细</summary><p class="field-hint">上方配置同时包含群聊、私聊与提炼规则；实际请求按选中的流程与场景组装。</p><div id="pp-request-blocks"></div></details>
+      <details class="panel pp-config-json"><summary>高级 · 配置 JSON</summary>${editor('json')}</details></div>
+      <section class="pp-json-view"><p class="field-hint">完整请求体，包含全部 messages 与 tools；以当前选中的测试流程为准。</p><textarea id="pp-request-json" class="mono" rows="28" readonly aria-label="完整请求 JSON"></textarea><details class="pp-advanced"><summary>高级 · 请求 JSON 临时实验</summary><label class="pp-check"><input type="checkbox" id="pp-request-edit">临时编辑请求（不作为发布依据）</label>${button('reset-request', '恢复自动组装')}</details></section></section>
+      <section class="panel pp-test" id="pp-test-stage" tabindex="-1"><div class="panel-header"><div><h2>单次试聊</h2><p>真实调用模型并计入用量。测试消息与记忆留在沙盒，不向 QQ 发送。</p></div></div><div class="pp-test-inputs"><label>输入消息<textarea id="pp-input" rows="3">记住，我不吃香菜。</textarea></label><label>预期表现<textarea id="pp-expected" rows="3" placeholder="例如：调用 remember_fact，确认保存；不调用 draw。"></textarea></label></div><div class="pp-row">${button('test', '运行一次', 'id="pp-test"')}<span id="pp-running" role="status"></span></div><button type="button" class="text-button pp-request-link" data-pp-action="show-json">查看完整请求 JSON ↗</button><div id="pp-result"><p class="pp-idle">输入一句话，运行后在这里查看结果。</p></div><details class="pp-advanced"><summary>高级 · 流程、工具与版本对比</summary><div class="pp-fields"><label>测试流程<select id="pp-kind"><option value="chat">聊天与工具调用</option><option value="distill">记忆 / 人设提炼</option></select></label><label>工具模式<select id="pp-mode"><option value="simulate">模拟绘图 · 记忆写入沙盒</option><option value="execute">真实绘图（计费用量）· 记忆写入沙盒</option></select></label></div>${button('compare', '对比发布版与草稿（各调用一次）', 'id="pp-compare"')}<p class="field-hint">每次运行独立，输出不追加到会话历史。</p></details><details class="pp-advanced"><summary>高级 · 固定测试场景与快照</summary><p id="pp-snapshot-info" class="field-hint"></p><p class="field-hint">载入后固定历史、人设与时间，用同一份材料对比版本。</p>${button('snapshot', '重新载入快照')}</details></section>
+</div>
+      <details class="pp-delivery"><summary>检查、发布与运行记录</summary>
+      <section class="panel pp-release" id="pp-release-stage" tabindex="-1"><div class="pp-row"><h2>检查与发布</h2>${button('publish', '发布版本', 'id="pp-publish" disabled')}${button('reload', '重新读取')}</div><p id="pp-publish-reason" class="notice info" role="status"></p><div id="pp-diff">${diffView()}</div><label>发布说明<input id="pp-note" maxlength="1000" placeholder="这次改动改善了什么"></label><p class="field-hint">通用规则与工具配置用于后续请求；初始人设仅用于新建或重置会话。运行中的请求继续使用原版本。</p><details><summary>版本历史 / 回退</summary><div class="pp-row"><select id="pp-version">${[...s.workspace.versions].reverse().map((v) => `<option value="${escape(v.id)}">v${v.number} · ${escape(v.note || '无说明')}</option>`).join('')}</select>${button('restore', '载入为草稿')}</div><p class="field-hint">回退也经过测试和发布，不会直接覆盖线上配置。保留最近 50 个版本。</p></details></section>
+      <section class="panel pp-recent" id="pp-runs-stage" tabindex="-1"><div class="panel-header"><div><h2>最近实际请求与测试</h2><p>保留最近 50 次运行；密钥、图片数据及敏感 URL 参数会省略并标记。</p></div>${button('refresh-runs', '刷新记录')}</div><div id="pp-runs"></div></section></details>
+      <details class="pp-appearance-bar"><summary>显示密度</summary><p id="pp-style-description">${styles[appearance].description}</p><div class="pp-style-switch" aria-label="编辑区密度">${Object.entries(styles).map(([key, style]) => `<button type="button" data-pp-style="${key}" aria-pressed="${key === appearance}">${style.label}</button>`).join('')}</div></details>
     </div>`;
   }
+
   function updateStatus() {
     if (!current() || !$('#pp-save-state')) return;
     const dirty = appState.dirty;
     const tests = s.workspace.tests.filter((t) => t.revision === s.workspace.draft.revision && t.review?.passed && t.status === 'completed' && !t.override && t.target === 'draft');
     const canPublish = publishReadiness(s.workspace, s.config, dirty);
     $('#pp-save-state').textContent = dirty ? '有未保存修改 · 旧测试不能代表当前编辑内容' : `草稿已保存 · 当前版本 ${tests.length} 项测试评审通过`;
-    $('#pp-save').disabled = appState.saving || !dirty || !!s.invalidJson;
+    $('#pp-save').disabled = appState.saving || !!s.invalidJson;
     $('#pp-publish').disabled = appState.saving || !canPublish;
     const needs = pendingPublishTests(s.workspace, s.config);
-    $('#pp-publish-reason').textContent = dirty ? '下一步：保存草稿，再测试当前版本。' : canPublish ? '发布条件已满足。检查下方差异与发布说明后，可在顶部发布版本。' : `下一步：运行并评审通过${needs.join('、') || '当前草稿测试'}。`;
+    $('#pp-publish-reason').textContent = dirty ? '下一步：保存草稿，再测试当前版本。' : canPublish ? '发布条件已满足。检查下方差异与发布说明后，可发布版本。' : `下一步：运行并评审通过${needs.join('、') || '当前草稿测试'}。`;
     $('#pp-publish').title = $('#pp-publish-reason').textContent;
     $('#pp-test').disabled = $('#pp-compare').disabled = appState.saving || dirty || !s.snapshot;
     $('#pp-diff').innerHTML = diffView();
+    syncEditing();
   }
   function displaySnapshot() {
     if (!s.snapshot) return;
     $('#pp-session').value = s.snapshot.sessionKey ?? `new-${s.snapshot.event.message_type}`;
     $('#pp-actor').value = s.snapshot.event.user_id;
+    $('#pp-current-character').textContent = s.snapshot.persona.character ?? s.config.prompts.seed;
+    $('#pp-persona-source').textContent = s.snapshot.sessionKey ?? '全新会话 · 使用模板';
     $('#pp-character').value = s.snapshot.persona.character ?? s.config.prompts.seed;
     $('#pp-memory').value = s.snapshot.persona.memory;
     $('#pp-persona-edit').checked = false;
@@ -210,6 +242,17 @@ export function createPromptConsole({ api, state: appState, toast }) {
   async function action(node) {
     const name = node.dataset.ppAction;
     if (appState.saving) return;
+    if (name === 'show-json') { switchView('json'); $('#pp-request-json').scrollIntoView({ block: 'start' }); return; }
+    if (name === 'edit') { s.editing = true; s.editBackup = structuredClone(s.config); updateStatus(); return; }
+    if (name === 'cancel-edit') {
+      s.config = s.editBackup; s.editing = false; s.invalidJson = false; appState.dirty = false;
+      $('#pp-editor').innerHTML = cards();
+      root.querySelector('[data-pp-field="configJson"]').value = json(s.config);
+      if (!s.snapshot?.persona.character && !$('#pp-persona-edit').checked) $('#pp-character').value = s.config.prompts.seed;
+      if (s.snapshot) $('#pp-current-character').textContent = s.snapshot.persona.character ?? s.config.prompts.seed;
+      updateStatus(); await preview(); return;
+    }
+    if (name === 'save' && !appState.dirty) { s.editing = false; updateStatus(); return; }
     if (name === 'variable') {
       const field = root.querySelector('[data-pp-field="prompts.scene"]');
       field.setRangeText(`{{${node.dataset.variable}}}`, field.selectionStart, field.selectionEnd, 'end');
@@ -220,7 +263,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
     if (name === 'apply-json') {
       const value = JSON.parse(root.querySelector('[data-pp-field="configJson"]').value);
       await api('/prompt/preview', { method: 'POST', body: { ...caseBody(), config: value } });
-      s.config = value; s.invalidJson = false; setDirty(); await preview(); return;
+      s.config = value; s.invalidJson = false; $('#pp-editor').innerHTML = cards(); setDirty(); await preview(); return;
     }
     if (name === 'preview') { await preview(); return; }
     if (name === 'snapshot') { await loadSnapshot(); return; }
@@ -238,7 +281,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
     try {
       if (name === 'save') {
         s.workspace = await api('/prompt/draft', { method: 'PUT', body: { revision: s.workspace.draft.revision, config: s.config } });
-        appState.dirty = false;
+        appState.dirty = false; s.editing = false;
         $('#pp-result').innerHTML = '';
         $('#pp-running').textContent = '草稿已保存，请运行当前版本的测试。';
         await preview();
@@ -272,7 +315,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
   }
   async function reloadView() {
     s.workspace = await api('/prompt/workspace');
-    s.config = structuredClone(s.workspace.draft.config); s.invalidJson = false;
+    s.config = structuredClone(s.workspace.draft.config); s.invalidJson = false; s.editing = false;
     const holder = root;
     holder.innerHTML = shell();
     attach(holder);
@@ -283,9 +326,12 @@ export function createPromptConsole({ api, state: appState, toast }) {
     if (path) {
       if (path === 'configJson') s.invalidJson = true;
       else setValue(path, field.type === 'checkbox' ? field.checked : field.type === 'number' ? Number(field.value) : field.value);
+      if (field.tagName === 'TEXTAREA' && path !== 'configJson') { field.style.height = 'auto'; field.style.height = field.scrollHeight + 3 + 'px'; }
+      if (path !== 'configJson' && !s.invalidJson) root.querySelector('[data-pp-field="configJson"]').value = json(s.config);
       setDirty();
       if (path === 'prompts.seed' && !s.snapshot?.persona.character && !$('#pp-persona-edit').checked) $('#pp-character').value = s.config.prompts.seed;
     }
+    if (path === 'prompts.seed' && !s.snapshot?.persona.character) $('#pp-current-character').textContent = s.config.prompts.seed;
     if (field.id === 'pp-persona-edit') $('#pp-character').readOnly = $('#pp-memory').readOnly = !field.checked;
     if (field.id === 'pp-request-edit') { $('#pp-request-json').readOnly = !field.checked; if (!field.checked && s.preview) $('#pp-request-json').value = json(s.preview.request); }
     if (path || ['pp-input', 'pp-kind', 'pp-persona-edit', 'pp-character', 'pp-memory'].includes(field.id)) {
@@ -297,6 +343,8 @@ export function createPromptConsole({ api, state: appState, toast }) {
     root.addEventListener('input', onInput, { signal: listeners.signal });
     root.addEventListener('change', onInput, { signal: listeners.signal });
     root.addEventListener('click', (event) => {
+      const viewButton = event.target.closest('[data-pp-view]');
+      if (viewButton) { switchView(viewButton.dataset.ppView); return; }
       const jump = event.target.closest('[data-pp-jump]');
       if (jump) {
         const target = $({ edit: '#pp-editor', test: '#pp-test-stage', release: '#pp-release-stage', runs: '#pp-runs-stage' }[jump.dataset.ppJump]);
@@ -306,14 +354,6 @@ export function createPromptConsole({ api, state: appState, toast }) {
       }
       const styleButton = event.target.closest('[data-pp-style]');
       if (styleButton) { switchStyle(styleButton.dataset.ppStyle); return; }
-      const tab = event.target.closest('[data-pp-section]');
-      if (tab && !appState.saving) {
-        if (s.invalidJson) { showError(new Error('请先校验并应用配置 JSON，或重新读取以放弃修改。')); return; }
-        s.section = tab.dataset.ppSection;
-        $('#pp-editor').innerHTML = editor();
-        root.querySelectorAll('[data-pp-section]').forEach((el) => el.setAttribute('aria-pressed', String(el === tab)));
-        preview().catch(showError);
-      }
       const node = event.target.closest('[data-pp-action]');
       if (node) { $('#pp-error').hidden = true; action(node).catch(showError); }
     }, { signal: listeners.signal });
