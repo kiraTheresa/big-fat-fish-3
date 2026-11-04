@@ -1,7 +1,9 @@
-import { test, after, beforeEach } from 'node:test';
+import { test, after, beforeEach, mock } from 'node:test';
+import { chromium } from 'playwright';
+import { renderUsageShareContent } from '../web/usage-view.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startMockServer } from './mock-onebot.js';
@@ -23,7 +25,7 @@ Object.assign(process.env, { DATA_DIR: root, USAGE_DIR: join(root, 'usage'), PER
   DEEPSEEK_BASE_URL: `http://127.0.0.1:${model.address().port}`, ONEBOT_WS_URL: wire.url, ONEBOT_ACCESS_TOKEN: '', SEND_INTERVAL_MS: '1', API_TIMEOUT_MS: '1000' });
 const { config } = await import('../src/config.js');
 const { appendUsage } = await import('../src/store/usage-store.js');
-const { readUsageReport, renderUsageReport, sendUsageReport } = await import('../src/usage/report.js');
+const { readUsageReport, renderUsageReport, sendUsageReport, readUsageDashboardForExport, closeUsageReportBrowser } = await import('../src/usage/report.js');
 const { executeTool, parseToolArguments, toolDefinitions } = await import('../src/tools/registry.js');
 const { defaultPromptConfig } = await import('../src/prompt/defaults.js');
 const { setUser } = await import('../src/platform/permissions.js');
@@ -41,15 +43,15 @@ onebot.startConnection();
 await wire.waitForConnectionCount(1);
 for (;;) { try { await onebot.callApi('get_login_info', {}); break; } catch (e) { if (!e.message.includes('WS 未连接')) throw e; await new Promise(r => setTimeout(r,10)); } }
 const TOKEN = 'isolated-usage-report-api-token';
-const admin = await startAdminServer({ port: 0, token: TOKEN, services: { readUsageReport, readUsageDashboard } });
-after(async () => { await admin.close(); await drainSender(); onebot.stopConnection(); await wire.close(); model.closeAllConnections(); await new Promise(resolve => model.close(resolve)); await rm(root, { recursive: true, force: true }); });
+const admin = await startAdminServer({ port: 0, token: TOKEN, services: { readUsageReport, readUsageDashboard: readUsageDashboardForExport } });
+after(async () => { await admin.close(); await closeUsageReportBrowser(); await drainSender(); onebot.stopConnection(); await wire.close(); model.closeAllConnections(); await new Promise(resolve => model.close(resolve)); await rm(root, { recursive: true, force: true }); });
 beforeEach(async () => { await drainSender(); wire.frames.length=0; replies.length=0; requests.length=0; });
 let seq = 1;
 const event = (text, group = 900) => ({ post_type:'message', message_type:group ? 'group' : 'private', ...(group ? { group_id:group } : {}),
   user_id:42, self_id:10000, time:Math.floor(Date.now()/1000), message_id:seq++, sender:{nickname:'测试'},
   message:[...(group ? [{type:'at',data:{qq:'10000'}}] : []),{type:'text',data:{text}}] });
 const tool = (args = { period:'today' }, id = 'report') => ({ role:'assistant', content:null, tool_calls:[{id,type:'function',function:{name:'send_usage_report',arguments:JSON.stringify(args)}}] });
-const png = bytes => { assert.equal(bytes.subarray(0,8).toString('hex'),'89504e470d0a1a0a'); assert.equal(bytes.readUInt32BE(16),900);assert.equal(bytes.readUInt32BE(20),1140); };
+const png = bytes => { assert.equal(bytes.subarray(0,8).toString('hex'),'89504e470d0a1a0a'); assert.equal(bytes.readUInt32BE(16),1000);assert.ok(bytes.readUInt32BE(20)>200&&bytes.readUInt32BE(20)<=4096); };
 
 test('report PNG uses only summary data, with no raw session identifiers or extra admin fields', async () => {
   const overview = await readUsageDashboard({ sessionKey:'g-900' });
@@ -106,6 +108,60 @@ test('tool simulation reads no ledger; live tools reject cross-session args, blo
   await setUser('42',{role:'blocked'});
   try { assert.ok(!toolDefinitions(settings,'42').some(t=>t.function.name==='send_usage_report'));await assert.rejects(sendUsageReport(ctx),/有效的当前会话/); }
   finally { await setUser('42',{role:'user'}); }
+});
+
+test('exports freeze the current dashboard snapshot even after new calls; invalid dimensions and expired snapshots are rejected', async () => {
+  const snapshot = await readUsageDashboardForExport({sessionKey:'g-901'});
+  const first = await readUsageReport({snapshotId:snapshot.snapshotId});
+  await appendUsage('g-901',{time:Date.now(),total_tokens:999});
+  const frozen = await readUsageReport({snapshotId:snapshot.snapshotId});
+  assert.deepEqual(first,frozen);
+  assert.equal((await readUsageDashboard({sessionKey:'g-901'})).totals.calls,snapshot.totals.calls+1);
+  await assert.rejects(readUsageReport({snapshotId:'missing'}),{status:409});
+  await assert.rejects(readUsageReport({snapshotId:snapshot.snapshotId,width:'1000;bad'}),{status:400});
+  const now=Date.now();
+  const clock=mock.method(Date,'now',()=>now+5*60000+1);
+  try { await assert.rejects(readUsageReport({snapshotId:snapshot.snapshotId}),{status:409}); }
+  finally { clock.mock.restore(); }
+});
+
+test('Chromium output matches a screenshot of the shared HTML/CSS, including the normal cost chart', async () => {
+  await appendUsage('g-902',{time:Date.now(),total_tokens:123});
+  const overview=await readUsageDashboard({sessionKey:'g-902'});
+  overview.totals={...overview.totals,costNano:500000000,pricedCalls:1,pendingCostCalls:0};
+  overview.byKind=overview.byKind.map(row=>({...row,costNano:500000000,pricedCalls:1,pendingCostCalls:0}));
+  overview.byTime.at(-1).costNano=500000000; overview.byTime.at(-1).pricedCalls=1;
+  const actual=await renderUsageReport(overview);
+  const browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});
+  try {
+    const page=await browser.newPage({viewport:{width:1200,height:1000},deviceScaleFactor:1,colorScheme:'light',reducedMotion:'reduce'});
+    const css=await Promise.all(['styles.css','usage.css'].map(name=>readFile(new URL('../web/'+name,import.meta.url),'utf8')));
+    const html=renderUsageShareContent({...overview,scopeLabel:'当前群聊'},{capture:true});
+    assert.ok(html.includes('usage-chart-columns')); assert.ok(!html.includes('费用走势待确认'));
+    assert.ok(!html.includes('g-902'));
+    assert.ok(!renderUsageShareContent({...overview,pendingReasons:[{reason:'<img src="https://invalid.example/secret">',calls:1}]},{capture:true}).includes('<img'));
+    await page.setContent(`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css.join('\n')}#usage-share-content{width:1000px}</style></head><body>${html}</body></html>`);
+    await page.evaluate(()=>document.fonts.ready);
+    const expected=await page.locator('#usage-share-content').screenshot({type:'png',animations:'disabled',caret:'hide'});
+    assert.deepEqual(actual,expected,'The exported pixels must match the shared page component');
+  }finally{await browser.close()}
+});
+
+test('browser startup failures and a full capture queue return clear errors; the renderer recovers on the next request', async () => {
+  await closeUsageReportBrowser();
+  let release;
+  const gate=new Promise(resolve=>{release=resolve});
+  const launch=mock.method(chromium,'launch',async()=>{await gate;throw new Error('browser unavailable')});
+  try {
+    const overview=await readUsageDashboard({sessionKey:'g-900'});
+    const jobs=Array.from({length:4},()=>renderUsageReport(overview));
+    const settled=Promise.allSettled(jobs);
+    await assert.rejects(renderUsageReport(overview),{status:429});
+    release();
+    const results=await settled;
+    assert.ok(results.every(result=>result.status==='rejected'&&result.reason.status===503));
+  }finally{release();launch.mock.restore()}
+  png(await readUsageReport({sessionKey:'g-900'}));
 });
 
 test('scoped reports do not read other ledgers; a corrupt current ledger yields an error instead of a zero-cost image', async () => {

@@ -21,8 +21,7 @@ import { createMediaService } from '../admin/media-service.js';
 import { acquireRuntimeLock } from './runtime-lock.js';
 import { initializePrompts, getPromptWorkspace, savePromptDraft, restorePromptVersion, reviewPromptTest, publishPromptDraft } from '../prompt/store.js';
 import { createPromptService } from '../prompt/service.js';
-import { readUsageDashboard } from '../usage/overview.js';
-import { readUsageReport } from '../usage/report.js';
+import { readUsageDashboardForExport as readUsageDashboard, readUsageReport, closeUsageReportBrowser } from '../usage/report.js';
 
 export async function startPlatform({ admin = true, schedule = true } = {}) {
   const releaseLock = await acquireRuntimeLock(config.dataDir);
@@ -86,6 +85,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
         await scheduler.stop();
         await management?.close();
         await prompt.close();
+        await closeUsageReportBrowser();
         await flushEventStore();
         await flushMessageStore();
         await flushUsage();

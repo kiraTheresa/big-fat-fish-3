@@ -1,34 +1,102 @@
-import { renderAsync } from '@resvg/resvg-js';
+import { chromium } from 'playwright';
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { readUsageDashboard, USAGE_PERIODS } from './overview.js';
+import { renderUsageShareContent } from '../../web/usage-view.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 import { appendMessage } from '../store/message-store.js';
 import { canUseBot } from '../platform/permissions.js';
+import { config } from '../config.js';
 
-const xml = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]);
-const number = value => Number(value ?? 0).toLocaleString('zh-CN');
-const amount = totals => totals.calls && !totals.pricedCalls ? '待确认' : `¥${(totals.costNano / 1e9).toFixed(totals.costNano > 0 && totals.costNano < 10000000 ? 4 : 2)}`;
-const kinds = { chat: '文字对话', vision: '图片理解', distill: '记忆提炼', draw: '绘图' };
-const formatTime = value => new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value);
+const snapshots = new Map();
+let browserPromise;
+let captureChain = Promise.resolve();
+let queued = 0;
+const failure = (message, status) => Object.assign(new Error(message), { status });
 
-export async function renderUsageReport(overview) {
-  const { totals: t, range } = overview;
-  const scope = !range.sessionKey ? '全部会话' : range.sessionKey.startsWith('g-') ? '当前群聊' : range.sessionKey.startsWith('p-') ? '当前私聊' : '所选会话';
-  const period = { today: '今天', '7d': '近 7 天', '30d': '近 30 天' }[range.period] ?? '所选时段';
-  const text = (value, x, y, size = 23, color = '#202734', weight = 400, anchor = 'start') => `<text x="${x}" y="${y}" font-size="${size}" fill="${color}" font-weight="${weight}" text-anchor="${anchor}">${xml(value)}</text>`;
-  const lines = Object.entries(kinds).map(([kind, label]) => {
-    const row = overview.byKind.find(entry => entry.kind === kind) ?? { calls: 0, costNano: 0, pricedCalls: 0, pendingCostCalls: 0 };
-    return { label, ...row };
-  }).sort((a, b) => b.costNano - a.costNano).map((row, index) => {
-    const y = 651 + index * 73;
-    return text(row.label, 56, y) + text(`${number(row.calls)} 次`, 460, y, 21, '#616d7e') + text(amount(row), 844, y, 23, '#202734', 500, 'end')
-      + `<rect x="56" y="${y + 15}" width="788" height="5" rx="2" fill="#e9edf3"/><rect x="56" y="${y + 15}" width="${t.costNano ? 788 * row.costNano / t.costNano : 0}" height="5" rx="2" fill="#245bd6"/>`;
-  }).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1140" viewBox="0 0 900 1140"><rect width="900" height="1140" fill="#ffffff"/><rect width="900" height="8" fill="#245bd6"/><g font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif">${text('大肥鱼 / 用量报告',56,76,19,'#616d7e',500)}${text('Token 用量与费用',56,145,42,'#202734',600)}${text(`${scope} · ${period}`,56,190,24,'#616d7e')}<path d="M56 225H844M56 944H844" stroke="#dce1e8"/>${text('已计价预估费用 · CNY',56,283,22,'#616d7e')}${text(amount(t),56,385,88,'#202734',600)}${text(`${number(t.pricedCalls)} / ${number(t.calls)} 次已计价`,60,434,21,'#616d7e')}${text('已报告 token',56,507,22,'#616d7e')}${text(t.calls && t.unknownUsageCalls === t.calls ? '未返回' : number(t.totalTokens),56,557,37,'#202734',600)}${text('API 调用',535,507,22,'#616d7e')}${text(`${number(t.calls)} 次`,535,557,37,'#202734',600)}${text('按用途统计',56,609,24,'#202734',600)}${lines}${text(t.pendingCostCalls ? `${number(t.pendingCostCalls)} 次费用待确认，未包含在上方金额中` : t.calls ? '当前记录均有计价依据' : '所选范围暂无调用记录',56,992,21,t.pendingCostCalls ? '#94621e' : '#616d7e')}${text('本地估算，实际扣费以供应商账单为准。',56,1031,20,'#616d7e')}${text(`${formatTime(range.since)} — ${formatTime(range.until)} · 北京时间`,56,1092,19,'#616d7e')}</g></svg>`;
-  return (await renderAsync(svg, { font: { loadSystemFonts: true, defaultFontFamily: 'Noto Sans CJK SC' } })).asPng();
+// Only public aggregate fields enter the capture browser; no admin state or IDs.
+function reportSnapshot(overview) {
+  const { period, since, until, interval, sessionKey } = overview.range;
+  return structuredClone({ totals: overview.totals, previous: overview.previous, byKind: overview.byKind,
+    byTime: overview.byTime, pendingReasons: overview.pendingReasons, range: { period, since, until, interval },
+    scopeLabel: !sessionKey ? '全部会话' : sessionKey.startsWith('g-') ? '当前群聊' : sessionKey.startsWith('p-') ? '当前私聊' : '所选会话' });
+}
+
+export async function readUsageDashboardForExport(query) {
+  const overview = await readUsageDashboard(query);
+  const snapshotId = randomUUID();
+  for (const [id, item] of snapshots) if (item.expiresAt <= Date.now()) snapshots.delete(id);
+  while (snapshots.size >= 32) snapshots.delete(snapshots.keys().next().value);
+  snapshots.set(snapshotId, { data: reportSnapshot(overview), expiresAt: Date.now() + 5 * 60000 });
+  return { ...overview, snapshotId };
+}
+
+function captureSize({ width = 1000, viewportWidth = 1200 } = {}) {
+  width = Number(width); viewportWidth = Number(viewportWidth);
+  if (!Number.isInteger(width) || width < 280 || width > 2000 || !Number.isInteger(viewportWidth)
+    || viewportWidth < 320 || viewportWidth > 3840 || width > viewportWidth) throw failure('截图尺寸无效', 400);
+  return { width, viewportWidth };
+}
+
+function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = chromium.launch({ headless: true, timeout: 15000,
+      ...(config.chromeExecutable ? { executablePath: config.chromeExecutable } : {}) })
+      .then(browser => { browser.once('disconnected', () => { browserPromise = undefined; }); return browser; })
+      .catch(error => { browserPromise = undefined; throw error; });
+  }
+  return browserPromise;
+}
+
+async function capture(data, { width, viewportWidth }) {
+  let context;
+  try {
+    const browser = await getBrowser();
+    context = await browser.newContext({ viewport: { width: viewportWidth, height: 1000 }, deviceScaleFactor: 1,
+      colorScheme: 'light', reducedMotion: 'reduce', javaScriptEnabled: false, serviceWorkers: 'block' });
+    await context.route('**/*', route => route.abort());
+    const page = await context.newPage();
+    const styles = await Promise.all(['styles.css', 'usage.css'].map(name => readFile(new URL('../../web/' + name, import.meta.url), 'utf8')));
+    await page.setContent(`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${styles.join('\n')}#usage-share-content{width:${width}px}</style></head><body>${renderUsageShareContent(data, { capture: true })}</body></html>`, { waitUntil: 'load', timeout: 10000 });
+    await page.evaluate(() => document.fonts.ready);
+    const target = page.locator('#usage-share-content');
+    const bounds = await target.boundingBox();
+    if (!bounds || bounds.height > 4096) throw failure('截图内容过长，请缩小统计范围', 400);
+    return await target.screenshot({ type: 'png', animations: 'disabled', caret: 'hide', timeout: 10000 });
+  } catch (error) {
+    if (error.status) throw error;
+    throw failure('无法生成用量截图，请确认已安装 Chromium 且浏览器可以启动', 503);
+  } finally { if (context) await context.close().catch(() => {}); }
+}
+
+function enqueueCapture(data, options) {
+  const size = captureSize(options);
+  if (queued >= 4) return Promise.reject(failure('用量截图正在处理中，请稍后再试', 429));
+  queued++;
+  const result = captureChain.then(() => capture(data, size));
+  captureChain = result.catch(() => {});
+  return result.finally(() => { queued--; });
+}
+
+export async function renderUsageReport(overview, options) {
+  return enqueueCapture(reportSnapshot(overview), options);
 }
 
 export async function readUsageReport(query = {}) {
-  return renderUsageReport(await readUsageDashboard({ period: query.period, sessionKey: query.sessionKey, since: query.since, until: query.until, limit: 0 }));
+  if (query.snapshotId !== undefined) {
+    const snapshot = snapshots.get(query.snapshotId);
+    if (!snapshot || snapshot.expiresAt <= Date.now()) throw failure('统计快照已过期，请刷新用量页面后重试', 409);
+    return enqueueCapture(snapshot.data, query);
+  }
+  return renderUsageReport(await readUsageDashboard({ period: query.period, sessionKey: query.sessionKey, since: query.since, until: query.until, limit: 0 }), query);
+}
+
+export async function closeUsageReportBrowser() {
+  await captureChain;
+  const browser = browserPromise;
+  browserPromise = undefined;
+  if (browser) await (await browser).close();
+  snapshots.clear();
 }
 
 // Neither the model nor slash-command arguments can choose a different session.

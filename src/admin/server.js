@@ -10,6 +10,7 @@ const STATIC = new Map([['/', ['index.html', 'text/html']], ['/index.html', ['in
 STATIC.set('/media.js', ['media.js', 'text/javascript']);
 STATIC.set('/media.css', ['media.css', 'text/css']);
 STATIC.set('/usage.css', ['usage.css', 'text/css']);
+STATIC.set('/usage-view.js', ['usage-view.js', 'text/javascript']);
 const hash = (value) => createHash('sha256').update(value).digest();
 function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });

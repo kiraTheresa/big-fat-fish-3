@@ -96,6 +96,7 @@ export const config = {
   adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',
   adminPort: num(process.env.ADMIN_PORT, 3210),
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  chromeExecutable: process.env.CHROME_EXECUTABLE ?? '',
   logLevel: process.env.LOG_LEVEL ?? 'INFO',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   // ---- AIChat（LLM）----

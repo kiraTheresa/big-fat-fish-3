@@ -1,18 +1,22 @@
-# bot-core 生产镜像：Node 22 alpine（--env-file-if-exists 需 22.9+，见 package.json start 脚本）
-# 零构建步骤（JS ESM + resvg 预编译图片渲染）：COPY 白名单只带运行必需物，
+# bot-core 生产镜像：Node 22 Debian，使用 Playwright 支持的 Chromium 系统库。
+# 零前端构建步骤：COPY 白名单只带运行必需物，
 # test / data / napcat / .env / .trae 一概不进镜像（.dockerignore 双保险）。
 # 时区：不装系统 tzdata——Node 22 内置 full-ICU，TZ 环境变量（compose 注入
 # Asia/Shanghai）由 V8/ICU 直接解析，日志与记忆条目时间戳即为本地时区
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
-# PNG 用量报告需要中文字体；无需安装浏览器或启动管理台来截图。
-RUN apk add --no-cache font-noto-cjk
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
 # 先拷依赖清单再 npm ci：src 变更不invalidate依赖层，重建只重跑 COPY + 零安装
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+
+# 安装与锁定 Playwright 版本匹配的无头 Chromium，以及中文字体。
+RUN npx playwright install --with-deps chromium --only-shell \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
 
 # 运行必需：源码 + CHANGELOG（/version 指令的唯一版本数据源，version.js 现读）
 COPY CHANGELOG.md ./

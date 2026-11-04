@@ -1,3 +1,5 @@
+import { usageMoney, usageTime, usageSession, renderUsageShareContent } from './usage-view.js';
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const e = escapeHtml;
@@ -433,29 +435,6 @@ async function renderLogs(sequence) {
 }
 
 const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
-const usageMoney = (totals = {}) => totals.calls && !totals.pricedCalls ? '待确认'
-  : `¥${((totals.costNano || 0) / 1e9).toFixed(totals.costNano > 0 && totals.costNano < 10000000 ? 4 : 2)}`;
-const usageTime = (value, timeOnly = false) => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: timeOnly ? undefined : '2-digit', day: timeOnly ? undefined : '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : '—';
-const usageSession = (key) => key?.startsWith('g-') ? `群聊 · ${key.slice(2)}` : key?.startsWith('p-') ? `私聊 · ${key.slice(2)}` : key || '全部会话';
-function usageChart(result) {
-  if (result.totals?.calls && !result.totals.pricedCalls) return empty('费用走势待确认', '当前记录缺少可计价用量，不显示为零费用走势。', 'usage');
-  const buckets = result.byTime || [];
-  if (!buckets.length) return empty('暂无用量走势', '产生调用后显示当前时段的费用走势。', 'usage');
-  const max = Math.max(1, ...buckets.map(row => row.costNano || 0));
-  const tickEvery = Math.max(1, Math.ceil(buckets.length / 6));
-  return `<div class="usage-chart" role="group" aria-label="已计价预估费用走势"><div class="usage-chart-axis"><span>${e(usageMoney({costNano:max}))}</span><span>¥0</span></div><div class="usage-chart-columns">${buckets.map((row, i) => {
-    const label = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', ...(result.range?.interval === 'hour' ? { hour: '2-digit', hour12: false } : { month: '2-digit', day: '2-digit' }) }).format(row.time);
-    const reading = `${usageTime(row.time)} · ${usageMoney(row)} · ${number(row.totalTokens)} token · ${number(row.pendingCostCalls)} 次费用待确认`;
-    const height = (row.costNano || 0) / max * 98;
-    const tick = (i % tickEvery === 0 && i < buckets.length - 2) || i === buckets.length - 1;
-    return `<button class="usage-chart-bar" type="button" data-action="usage-chart" data-reading="${e(reading)}" aria-label="${e(reading)}" title="${e(reading)}"><svg viewBox="0 0 20 100" preserveAspectRatio="none" aria-hidden="true"><rect x="3" y="${100-height}" width="14" height="${height}" rx="1"/></svg><span>${tick ? e(label) : ''}</span></button>`;
-  }).join('')}</div></div><p class="field-hint" id="usage-chart-reading">选择柱形查看该时段费用；无完整用量的调用不作为零费用计入。</p>`;
-}
-function usageKindRows(result) {
-  const rows = result.byKind || [];
-  const max = Math.max(1, result.totals?.costNano || 0);
-  return rows.length ? [...rows].sort((a,b) => (b.costNano || 0) - (a.costNano || 0)).map(row => `<button class="usage-kind" type="button" data-action="usage-kind" data-kind="${e(row.kind)}"><span class="usage-kind-heading"><strong>${e(kindNames[row.kind] || row.kind)}</strong><span>${e(usageMoney(row))}</span></span><progress class="usage-progress" value="${Math.round((row.costNano || 0) / max * 1000) / 10}" max="100" aria-label="${e(kindNames[row.kind] || row.kind)}预估费用占比" aria-valuetext="${row.calls && !row.pricedCalls ? '费用待确认，暂无占比' : Math.round((row.costNano || 0) / max * 1000) / 10+'%'}"></progress><span class="usage-kind-note"><span>${e(number(row.calls))} 次 · ${row.kind === 'draw' || row.kind === 'image' ? '已返回 '+e(number(row.images))+' 张图片' : row.unknownUsageCalls === row.calls ? 'token 未返回' : e(number(row.totalTokens))+' token'}</span><span>${e(number(row.pendingCostCalls))} 次待确认</span></span></button>`).join('') : empty('暂无调用用途', '统计包含聊天、识图、记忆提炼与绘图。', 'usage');
-}
 function usageSessionTable(result) {
   const rows = [...(result.bySession || [])].sort((a,b) => (b.costNano || 0) - (a.costNano || 0) || b.calls - a.calls).slice(0,8);
   return rows.length ? `<div class="table-wrap"><table><thead><tr><th>会话</th><th>已报告 token</th><th>预估费用</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td><span class="cell-main">${e(usageSession(row.sessionKey))}</span><span class="cell-sub">${e(number(row.calls))} 次调用 · ${e(number(row.pendingCostCalls))} 次待确认</span></td><td>${row.unknownUsageCalls === row.calls ? '未返回' : e(number(row.totalTokens))}</td><td class="usage-number">${e(usageMoney(row))}</td><td class="cell-actions"><button class="text-button" type="button" data-action="usage-session" data-session="${e(row.sessionKey)}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('暂无会话用量', '统计覆盖全部记录，此处最多展示费用最高的 8 个会话。', 'usage');
@@ -480,16 +459,11 @@ async function renderUsage(sequence) {
   const monitor = status.usage || {};
   const today = monitor.today;
   const limits = monitor.policy?.limits || {};
-  const previous = result.previous;
-  const delta = t.pricedCalls && !t.pendingCostCalls && previous?.pricedCalls && !previous.pendingCostCalls && previous.costNano > 0 ? (t.costNano-previous.costNano)/previous.costNano*100 : null;
-  const cache = t.cacheReportedPromptTokens ? `${(t.cacheHitTokens/t.cacheReportedPromptTokens*100).toFixed(1)}%` : '未返回';
-  const range = result.range || {};
   const period = f.period || 'today';
   const periods = [['today','今天'],['7d','近 7 天'],['30d','近 30 天'],['custom','自定义']];
   return `<div class="usage-workbench"><section class="usage-toolbar" aria-label="用量筛选"><div class="usage-periods" role="group" aria-label="统计时段">${periods.map(([value,label])=>`<button type="button" class="button${period===value?' primary':''}" aria-pressed="${period===value}" data-action="usage-period" data-period="${value}">${label}</button>`).join('')}</div><div class="usage-top-actions"><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek 开发者平台 ↗</a><button class="button primary" type="button" data-action="usage-report">生成分享图</button></div></section><form id="usage-filter" class="filters usage-scope"><input type="hidden" name="period" value="${e(period)}"><input type="hidden" name="detailKind" value="${e(f.detailKind)}"><input type="hidden" name="pendingOnly" value="${e(f.pendingOnly)}">${period==='custom'?`<label>开始日期（北京）<input type="date" name="since" value="${e(f.since)}" required></label><label>结束日期（北京）<input type="date" name="until" value="${e(f.until)}" required></label>`:''}<label class="filter-wide">会话范围<input name="sessionKey" list="usage-sessions" value="${e(f.sessionKey)}" placeholder="全部会话；或 g-群号 / p-QQ号"><datalist id="usage-sessions">${(result.bySession || []).map(row=>`<option value="${e(row.sessionKey)}">${e(usageSession(row.sessionKey))}</option>`).join('')}</datalist></label><button class="button" type="submit">应用范围</button><button class="button subtle" type="button" data-action="reset-filters">重置</button></form>
-    <section class="panel usage-summary" aria-label="费用与用量摘要"><div class="usage-summary-main"><div class="usage-cost"><p>已计价预估费用 <span class="badge neutral">CNY</span></p><div class="usage-cost-value">${e(usageMoney(t))}</div><p class="field-hint">${delta===null?'暂无可比费用':`较上一时段${delta>=0?'增加':'减少'} ${Math.abs(delta).toFixed(1)}% · 截至相同进度`}</p></div><div class="usage-stat"><p>已报告 token</p><strong>${t.calls && t.unknownUsageCalls===t.calls?'未返回':e(number(t.totalTokens))}</strong><p class="field-hint">输入 ${t.calls && !t.promptKnownCalls?'未返回':e(number(t.promptTokens))} · 输出 ${t.calls && !t.completionKnownCalls?'未返回':e(number(t.completionTokens))}</p></div><div class="usage-stat"><p>API 调用</p><strong>${e(number(t.calls))}<small>次</small></strong><p class="field-hint">成功 ${e(number(t.successes))} · 失败 ${e(number(t.failures))} · 出图 ${e(number(t.images))} 张</p></div></div><div class="usage-summary-foot"><span>${e(usageSession(f.sessionKey))} · ${e(usageTime(range.since))} — ${e(usageTime(range.until))}（北京时间）</span><span>${e(number(t.pricedCalls))}/${e(number(t.calls))} 次已计价</span><button class="text-button" type="button" data-action="usage-pricing">计价说明</button></div></section>
-    ${t.pendingCostCalls?`<section class="usage-warning" aria-label="计价完整度"><strong>${e(number(t.pendingCostCalls))} 次费用待确认，未包含在上方金额中</strong><p>${e((result.pendingReasons || []).map(row=>`${row.reason} ${number(row.calls)} 次`).join('；'))}</p><button class="text-button" type="button" data-action="usage-pending">查看待确认调用 ↘</button></section>`:''}
-    ${!t.calls?`<section class="panel">${empty('所选范围暂无模型调用','尚未产生调用，与账本读取失败或上游未返回用量不同。','usage')}</section>`:`<div class="usage-panels"><section class="panel">${panelHead('费用走势', `按${range.interval==='hour'?'小时':'天'}汇总 · 仅含已计价费用 · 最后一个时段可能尚未结束`)}${usageChart(result)}<p class="usage-cache">输入缓存命中率 <strong>${e(cache)}</strong><span class="muted">基于有缓存拆分的调用；${e(number(t.cacheUnknownCalls))} 次未返回拆分</span></p></section><section class="panel">${panelHead('按用途分布','点击用途筛选明细；上方汇总范围不变。')}${usageKindRows(result)}</section></div><div class="usage-panels usage-session-panels"><section class="panel">${panelHead('会话费用排行','按已计价费用排序，最多显示 8 个会话。')}${usageSessionTable(result)}</section><section class="panel">${panelHead('每日额度与账号','额度为全局口径，不随当前会话筛选变化。')}<dl class="key-values"><div><dt>今日已报告 token</dt><dd>${today?e(number(today.totalTokens)):'不可用'}</dd></div><div><dt>每日 token 上限</dt><dd>${limits.maxTokensPerDay?e(number(limits.maxTokensPerDay)):'不限'}</dd></div><div><dt>今日 API 调用 / 上限</dt><dd>${today?e(number(today.calls)):'不可用'} / ${limits.maxCallsPerDay?e(number(limits.maxCallsPerDay)):'不限'}</dd></div><div><dt>进行中的请求</dt><dd>${e(number(monitor.inFlight?.length))}</dd></div><div><dt>下次重置（北京）</dt><dd>${e(usageTime(monitor.resetAt))}</dd></div></dl><p class="field-hint">Token 上限依据已报告用量；正在生成和未知用量可能使实际消耗超过阈值。</p><p class="field-hint">账号余额尚未接入。DeepSeek 账号可能还有其他应用消费，实际账单请到开发者平台查看。</p><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">查看账单 / 充值 ↗</a></section></div>${usageLedger(result)}`}</div>`;
+    ${renderUsageShareContent(result)}
+    ${t.calls ? `<div class="usage-panels usage-session-panels"><section class="panel">${panelHead('会话费用排行','按已计价费用排序，最多显示 8 个会话。')}${usageSessionTable(result)}</section><section class="panel">${panelHead('每日额度与账号','额度为全局口径，不随当前会话筛选变化。')}<dl class="key-values"><div><dt>今日已报告 token</dt><dd>${today?e(number(today.totalTokens)):'不可用'}</dd></div><div><dt>每日 token 上限</dt><dd>${limits.maxTokensPerDay?e(number(limits.maxTokensPerDay)):'不限'}</dd></div><div><dt>今日 API 调用 / 上限</dt><dd>${today?e(number(today.calls)):'不可用'} / ${limits.maxCallsPerDay?e(number(limits.maxCallsPerDay)):'不限'}</dd></div><div><dt>进行中的请求</dt><dd>${e(number(monitor.inFlight?.length))}</dd></div><div><dt>下次重置（北京）</dt><dd>${e(usageTime(monitor.resetAt))}</dd></div></dl><p class="field-hint">Token 上限依据已报告用量；正在生成和未知用量可能使实际消耗超过阈值。</p><p class="field-hint">账号余额尚未接入。DeepSeek 账号可能还有其他应用消费，实际账单请到开发者平台查看。</p><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">查看账单 / 充值 ↗</a></section></div>${usageLedger(result)}` : ''}</div>`;
 }
 function clearUsageReport() {
   if (usageReportUrl) { URL.revokeObjectURL(usageReportUrl); usageReportUrl = undefined; }
@@ -499,7 +473,10 @@ async function showUsageReport(button) {
   const range = state.usageDashboard?.range;
   if (!range) return;
   await withButton(button, async () => {
-    const blob = await api(`/usage/report${query({ period:range.period, since:range.since, until:range.until, sessionKey:range.sessionKey })}`, {responseType:'blob'});
+    const snapshotId = state.usageDashboard.snapshotId;
+    if (!snapshotId) throw new Error('用量快照不可用，请刷新页面后重试。');
+    const width = Math.round($('#usage-share-content').getBoundingClientRect().width);
+    const blob = await api(`/usage/report${query({ snapshotId, width, viewportWidth: window.innerWidth })}`, {responseType:'blob'});
     if (sequence !== state.sequence || !state.token) return;
     clearUsageReport();
     usageReportUrl = URL.createObjectURL(blob);
