@@ -5,9 +5,9 @@ import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { redactText } from './utils/logger.js';
 import { chatStreamOptions, readChatStream } from './utils/chat-stream.js';
 
-export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system', tools, toolChoice, stream = config.chatStream && kind !== 'distill', onAttempt, onDelta, allowEmptyContent = false } = {}) {
+export async function chatCompletion(messages, { model = config.deepseekModel, kind = 'chat', sessionKey = 'system', tools, toolChoice, stream = config.chatStream && kind !== 'distill', onAttempt, onDelta, allowEmptyContent = false, logContext = {} } = {}) {
   const baseUrl = config.deepseekBaseUrl;
-  const attempt = await beginUsage({ kind, model, sessionKey, baseUrl });
+  const attempt = await beginUsage({ kind, model, sessionKey, baseUrl, traceId: logContext.traceId, source: logContext.source });
   let usage = null;
   let responseModel;
   let httpStatus;

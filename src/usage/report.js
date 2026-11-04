@@ -100,14 +100,14 @@ export async function closeUsageReportBrowser() {
 }
 
 // Neither the model nor slash-command arguments can choose a different session.
-export async function sendUsageReport({ event, sessionKey }, period = 'today') {
+export async function sendUsageReport({ event, sessionKey, logContext }, period = 'today') {
   if (!Object.hasOwn(USAGE_PERIODS, period)) throw new Error('统计时段需为 today、7d 或 30d');
   const group = event?.message_type === 'group';
   const id = group ? event.group_id : event?.message_type === 'private' ? event.user_id : null;
   if (!/^\d{1,20}$/.test(String(id)) || !/^\d{1,20}$/.test(String(event?.user_id)) || sessionKey !== `${group ? 'g' : 'p'}-${id}` || !canUseBot(event)) throw new Error('缺少有效的当前会话，不能读取其他会话用量');
   const bytes = await readUsageReport({ period, sessionKey });
   const segments = [{ type: 'image', data: { file: `base64://${bytes.toString('base64')}` } }];
-  const result = group ? await sendGroup(event.group_id, segments) : await sendPrivate(event.user_id, segments);
+  const result = group ? await sendGroup(event.group_id, segments, logContext) : await sendPrivate(event.user_id, segments, logContext);
   if (result.ok) appendMessage({ sessionKey, time: Math.floor(Date.now() / 1000), message_type: event.message_type,
     ...(group ? { group_id: event.group_id } : {}), user_id: event.user_id, raw_message: `[用量报告] ${period} · 当前会话`, bot: true });
   return { ok: result.ok, ...(result.ok ? { messageId: result.messageId } : {}), message: result.ok ? '当前会话的用量报告已发送，OneBot 已确认' : '用量报告发送失败或结果未知，未自动补发' };

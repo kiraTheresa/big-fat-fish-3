@@ -65,4 +65,8 @@ test('角色修改实际阻断触发器但保留事件；配置和任务经 API 
   const logs = await (await request('/api/logs')).json();
   assert.ok(logs.items.some((row) => row.message.includes('[admin]')));
   assert.ok(!JSON.stringify(logs).includes(process.env.ADMIN_TOKEN));
+  for (const event of ['admin.settings.updated', 'admin.user.updated', 'admin.user.reset']) {
+    const row = logs.items.find(row => row.event === event);
+    assert.ok(row, event); assert.equal(row.source, 'admin'); assert.ok(row.traceId);
+  }
 });

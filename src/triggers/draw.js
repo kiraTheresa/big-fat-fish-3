@@ -56,7 +56,7 @@ export default {
     await ctx.reply(`收到～本鱼在画「${summary}」啦，稍等哦`);
 
     try {
-      const { b64 } = await generateImage(prompt, { sessionKey });
+      const { b64 } = await generateImage(prompt, { sessionKey, logContext: ctx.logContext });
 
       deliverGeneratedImage(ctx, b64, prompt);
     } catch (err) {

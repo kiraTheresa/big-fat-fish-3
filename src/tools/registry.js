@@ -41,14 +41,14 @@ export function parseToolArguments(name, raw) {
   return args;
 }
 // Both slash commands and natural-language tools use the same image / memory gateways.
-export async function executeTool(name, args, { sessionKey, actorId, speaker, memory, mode = 'live', onImage, onImageAttempt, nowMs = Date.now(), event, memeTurn, reportTurn }, settings) {
+export async function executeTool(name, args, { logContext, sessionKey, actorId, speaker, memory, mode = 'live', onImage, onImageAttempt, nowMs = Date.now(), event, memeTurn, reportTurn }, settings) {
   if (!toolAvailability(settings, actorId).find((t) => t.name === name)?.available) throw new Error('工具已停用或当前用户不可用');
   if (name === 'send_usage_report') {
     if (mode !== 'live') return { ok: true, simulated: true, message: '用量报告模拟成功，未查询真实账本、未向 QQ 发送图片' };
     if (!reportTurn) throw new Error('缺少当前用量报告上下文');
     if (reportTurn.attempted) throw new Error('本轮已尝试发送用量报告，不能重复发送');
     reportTurn.attempted = true;
-    const result = await sendUsageReport({ event, sessionKey }, args.period);
+    const result = await sendUsageReport({ event, sessionKey, logContext }, args.period);
     if (result.ok) reportTurn.sent = true;
     return result;
   }
@@ -74,13 +74,13 @@ export async function executeTool(name, args, { sessionKey, actorId, speaker, me
     if (memeTurn.sendAttempted) throw new Error('本轮已经尝试发送一个表情，不能重复发送');
     if (!memeTurn.candidates?.has(args.id)) throw new Error('只能发送本轮 search_memes 返回的候选 ID');
     memeTurn.sendAttempted = true;
-    const result = await sendStoredMeme({ event, sessionKey }, args.id);
+    const result = await sendStoredMeme({ event, sessionKey, logContext }, args.id);
     if (result.ok) memeTurn.sent = true;
     return result;
   }
   if (name === 'draw') {
     if (mode === 'simulate') return { ok: true, simulated: true, message: '模拟绘图成功，未调用图片 API' };
-    const { b64 } = await generateImage(args.prompt, { sessionKey, onAttempt: onImageAttempt });
+    const { b64 } = await generateImage(args.prompt, { sessionKey, onAttempt: onImageAttempt, logContext });
     if (onImage) await onImage(b64, args.prompt);
     return { ok: true, message: mode === 'live' ? '图片已生成并进入发送队列' : '图片已生成，可在测试结果中查看' };
   }

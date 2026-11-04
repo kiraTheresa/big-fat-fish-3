@@ -99,6 +99,7 @@ export default {
 
   async handle(ctx, { poke = false } = {}) {
     const { event, sessionKey } = ctx;
+    const logContext = ctx.logContext ?? { traceId: randomUUID(), sessionKey, source: 'live' };
 
     const version = getPublishedPrompt();
     const settings = version.config;
@@ -109,6 +110,7 @@ export default {
       (visionEnabled && extractImages(event).length > 0 ? '（对方发来了一张图片，没有附加文字，请根据图片内容简短回应。）' : '') ||
       (event.message_type === 'group' && matchAt(event) ? '（对方 @ 了你，没有附加文字，请简短回应。）' : '');
     if (content === '') {
+      logger.event('chat.skipped', { ...logContext, outcome: 'skipped', reason: 'empty_content' });
       logger.info(`[chat] ${sessionKey} 消息无文本内容，忽略`);
       return;
     }
@@ -117,6 +119,7 @@ export default {
     // 冷却管「开始响应」，出口加工链的随机延迟管「发出节奏」，两者互不干扰
     const last = cooldowns.get(sessionKey) ?? 0;
     if (Date.now() - last < config.behavior.chat.cooldownMs) {
+      logger.event('chat.skipped', { ...logContext, outcome: 'skipped', reason: 'cooldown' });
       logger.info(`[chat] 会话 ${sessionKey} 冷却中，跳过`);
       return;
     }
@@ -136,10 +139,10 @@ export default {
     }
     const messages = built.request.messages;
     const trace = [];
-    const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
+    const run = { id: randomUUID(), traceId: logContext.traceId, createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
     let imageAttempts = 0;
     let imageFailed = false;
-    const toolContext = { sessionKey, event, memeTurn: {}, reportTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
+    const toolContext = { logContext, sessionKey, event, memeTurn: {}, reportTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
       onImageAttempt(entry) {
         if (entry.phase === 'error') imageFailed = true;
         if (entry.phase !== 'request') return;
@@ -152,7 +155,7 @@ export default {
         imageFailed = false;
         ctx.reply(progress);
       },
-      onImage: (b64, prompt) => deliverGeneratedImage(ctx, b64, prompt) };
+      onImage: (b64, prompt) => deliverGeneratedImage({ ...ctx, logContext }, b64, prompt) };
 
     // ---- 图片上下文：图源判定 → 现拉 base64（不落盘）----
     // 任一步失败（无图源/历史查询挂/下载挂）均 visionB64=null，messages 原样走纯文本——
@@ -199,8 +202,8 @@ export default {
         bot: true,
       });
       for (const seg of segments) {
-        if (isGroup) sendGroup(event.group_id, seg);
-        else sendPrivate(event.user_id, seg);
+        if (isGroup) sendGroup(event.group_id, seg, logContext);
+        else sendPrivate(event.user_id, seg, logContext);
       }
     };
 
@@ -230,17 +233,22 @@ export default {
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
       if (segments.length) persistAndSend(reply, segments);
+      logger.event('chat.response.ready', { ...logContext, operationId: run.id, outcome: 'generated', data: { textSegments: segments.length } });
       run.status = 'completed';
       run.content = reply;
 
     } catch (err) {
       run.status = 'failed';
       run.error = err.message;
+      logger.event('chat.response.failed', { ...logContext, operationId: run.id, level: 'WARN', outcome: 'failed', reason: err.code ?? 'generation_failed', data: { error: err.message } });
       logger.warn(`[chat] LLM 调用失败: ${err.message}`);
       // 兜底文案不是 LLM 输出：不走加工链（不延迟，出错要立刻让人知道），但存储与
       // 发送仍走统一出口（与既有行为等价：回存一条 bot 行 + 发一条）
       const failureReply = err.name === 'UsageLimitError' ? `本鱼暂时不能调用模型：${err.message}。` : FALLBACK_REPLY;
-      if (!toolContext.reportTurn.sent) persistAndSend(failureReply, [failureReply]);
+      if (!toolContext.reportTurn.sent) {
+        logger.event('chat.fallback.queued', { ...logContext, operationId: run.id, outcome: 'fallback' });
+        persistAndSend(failureReply, [failureReply]);
+      }
     } finally {
       await saveRun(run).catch((error) => logger.warn(`[prompt] 请求记录保存失败: ${error.code ?? 'storage error'}`));
     }

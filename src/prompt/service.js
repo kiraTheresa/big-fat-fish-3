@@ -103,13 +103,13 @@ export function createPromptService() {
       const memory = { value: snap.persona.memory };
       try {
         if (kind === 'chat') {
-          const result = await runToolConversation(request, settings, { sessionKey: 'p-prompt-test', actorId: snap.event.user_id, speaker: snap.event.sender.nickname, mode, memory, nowMs: snap.nowMs,
+          const result = await runToolConversation(request, settings, { logContext: { traceId: run.id, source: 'test' }, sessionKey: 'p-prompt-test', actorId: snap.event.user_id, speaker: snap.event.sender.nickname, mode, memory, nowMs: snap.nowMs,
             onImage: async (b64, prompt) => { const index = run.imageCount ?? 0; await saveRunImage(run.id, index, b64, prompt); run.imageCount = index + 1; } }, { trace: run.trace });
           run.content = result.content;
           run.sandboxMemory = memory.value;
           if (run.trace.some((e) => e.phase === 'tool' && !e.result?.ok)) throw new Error('存在工具失败，请检查执行过程');
         } else {
-          const result = await chatCompletion(request.messages, { model: request.model, kind: 'distill', sessionKey: 'p-prompt-test', onAttempt: (entry) => run.trace.push(entry) });
+          const result = await chatCompletion(request.messages, { model: request.model, kind: 'distill', sessionKey: 'p-prompt-test', logContext: { traceId: run.id, source: 'test' }, onAttempt: (entry) => run.trace.push(entry) });
           run.content = result.content;
           const patch = parsePatch(result.content);
           if (!patch || !patchKeepsLockedLines(snap.persona.memory, patch.memory) || !patchKeepsLockedLines(snap.persona.character, patch.character)) throw new Error('提炼输出格式不正确或丢失明确保存的内容');

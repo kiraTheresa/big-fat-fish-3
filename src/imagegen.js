@@ -5,8 +5,8 @@ import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { logger, redactText } from './utils/logger.js';
 import { saveGeneratedImage } from './store/media-store.js';
 
-export async function generateImage(prompt, { sessionKey = 'system', onAttempt } = {}) {
-  const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey });
+export async function generateImage(prompt, { sessionKey = 'system', onAttempt, logContext = {} } = {}) {
+  const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey, traceId: logContext.traceId, source: logContext.source });
   let usage = null;
   let httpStatus;
   let images = 0;

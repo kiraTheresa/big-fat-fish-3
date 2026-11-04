@@ -160,7 +160,7 @@ export async function sendStoredMeme(ctx, id) {
     ? ['emoji_id', 'emoji_package_id', 'key', 'summary'] : ['id', 'resultId', 'chainCount']);
   const message = [{ type: asset.memeType, data }];
   const result = ctx.event.message_type === 'group'
-    ? await sendGroup(ctx.event.group_id, message) : await sendPrivate(ctx.event.user_id, message);
+    ? await sendGroup(ctx.event.group_id, message, ctx.logContext) : await sendPrivate(ctx.event.user_id, message, ctx.logContext);
   try { await recordMemeUse(ctx.sessionKey, id, { ok: result.ok, ...(result.ok ? {} : { errorCode: 'SEND_FAILED' }) }); }
   catch { logger.warn('[meme] 表情使用记录保存失败'); }
   if (!result.ok) return { ok: false, id, error: '表情发送失败或结果未知，请稍后明确要求重试' };

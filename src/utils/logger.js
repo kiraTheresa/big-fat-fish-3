@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
+const EVENT_FIELDS = ['traceId', 'operationId', 'sessionKey', 'source', 'outcome', 'reason', 'elapsedMs', 'data'];
 const LEVELS = { DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 };
 let settings = { dataDir: null, secrets: [], level: 'INFO', retentionDays: 14 };
 let writeChain = Promise.resolve();
@@ -64,10 +65,29 @@ function log(level, args) {
   const now = new Date();
   const safeArgs = args.map((arg) => safeValue(arg));
   const message = safeArgs.map((arg) => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ').slice(0, 8000);
-  const time = now.toLocaleTimeString('zh-CN', { hour12: false });
-  console.log(`[${time}] ${level} ${message}`);
+  return writeEntry({ id: randomUUID(), time: now.toISOString(), level, message });
+}
+
+function businessEvent(event, fields = {}) {
+  if (typeof event !== 'string' || !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(event) || event.length > 120) throw new TypeError('Invalid business event');
+  const level = fields.level ?? 'INFO';
+  if (!Object.hasOwn(LEVELS, level)) throw new TypeError('Invalid event level');
+  if (fields.elapsedMs !== undefined && (!Number.isFinite(fields.elapsedMs) || fields.elapsedMs < 0)) throw new TypeError('Invalid event duration');
+  const metadata = safeValue(Object.fromEntries(EVENT_FIELDS.filter(key => fields[key] !== undefined).map(key => [key, fields[key]])));
+  if (metadata.data && Buffer.byteLength(JSON.stringify(metadata.data)) > 16384) metadata.data = { omitted: true, reason: 'size_limit' };
+  const entry = { ...metadata, schemaVersion: 1, id: randomUUID(), time: new Date().toISOString(), level, event, message: redactText(fields.message ?? event) };
+  // Business facts must survive diagnostic log-level changes.
+  writeEntry(entry);
+  return entry.id;
+}
+
+function writeEntry(entry) {
+  const time = new Date(entry.time).toLocaleTimeString('zh-CN', { hour12: false });
+  if (LEVELS[entry.level] >= LEVELS[settings.level]) {
+    const details = entry.event ? ' ' + JSON.stringify(Object.fromEntries(EVENT_FIELDS.filter(key => entry[key] !== undefined).map(key => [key, entry[key]]))) : '';
+    console.log(`[${time}] ${entry.level} ${entry.message}${details}`);
+  }
   if (!settings.dataDir) return;
-  const entry = { id: randomUUID(), time: now.toISOString(), level, message };
   const options = { ...settings };
   pendingWrites++;
   writeChain = writeChain.then(async () => {
@@ -94,6 +114,7 @@ function log(level, args) {
 }
 
 export const logger = {
+  event: businessEvent,
   debug: (...args) => log('DEBUG', args),
   info: (...args) => log('INFO', args),
   warn: (...args) => log('WARN', args),
@@ -128,9 +149,15 @@ function parseBefore(before) {
 
 // Newest appended first. before accepts an opaque item.cursor (lossless) or a
 // legacy timestamp (strictly older times). Filters are literal text/exact levels.
-export async function readLogs({ level, q = '', limit = 100, before } = {}) {
+export async function readLogs({ level, q = '', limit = 100, before, since, until, event, traceId, operationId, sessionKey, source, outcome } = {}) {
   await flushLogs();
   const boundary = parseBefore(before);
+  const parseTime = (value, fallback) => value === undefined ? fallback : typeof value === 'number' ? value : Date.parse(value);
+  const from = parseTime(since, -Infinity);
+  const to = parseTime(until, Infinity);
+  if ((since !== undefined && !Number.isFinite(from)) || (until !== undefined && !Number.isFinite(to)) || from > to) throw new Error('Invalid log time range');
+  const filters = Object.entries({ event, traceId, operationId, sessionKey, source, outcome }).filter(([, value]) => value !== undefined);
+  if (filters.some(([, value]) => typeof value !== 'string' || !value || value.length > 160)) throw new Error('Invalid log filter');
   if (!settings.dataDir) return [];
   const directory = join(settings.dataDir, 'logs');
   const cap = Math.max(1, Math.min(1000, Number(limit) || 100));
@@ -156,10 +183,12 @@ export async function readLogs({ level, q = '', limit = 100, before } = {}) {
         if (!entry || typeof entry.message !== 'string' || !LEVELS[entry.level]) continue;
         const time = Date.parse(entry.time);
         if (!Number.isFinite(time) || time >= boundary.time || (expectedLevel && entry.level !== expectedLevel)) continue;
+        if (time < from || time > to || filters.some(([key, value]) => entry[key] !== value)) continue;
         if (query && !entry.message.toLowerCase().includes(query)) continue;
         rows.push({
           id: typeof entry.id === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(entry.id) ? entry.id : `legacy-${day}-${lineNumber}`,
           cursor: encodeCursor(day, lineNumber),
+          ...safeValue(Object.fromEntries(['schemaVersion', 'event', ...EVENT_FIELDS].filter(key => entry[key] !== undefined).map(key => [key, entry[key]]))),
           time: entry.time, level: entry.level, message: redactText(entry.message),
         });
         if (rows.length > cap - items.length) rows.shift();

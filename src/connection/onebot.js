@@ -117,7 +117,7 @@ function settle(echo, frame) {
   pending.delete(echo);
   clearTimeout(entry.timer);
   if (frame.retcode === 0) entry.resolve(frame.data);
-  else entry.reject(new Error(`OneBot API 失败: ${frame.wording || `retcode=${frame.retcode}`}`));
+  else entry.reject(Object.assign(new Error(`OneBot API 失败: ${frame.wording || `retcode=${frame.retcode}`}`), { code: 'ONEBOT_REJECTED' }));
 }
 
 // 调用 OneBot API：发送 {action, params, echo}，按 echo 匹配响应。
@@ -125,12 +125,12 @@ function settle(echo, frame) {
 export function callApi(action, params = {}) {
   return new Promise((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      reject(new Error('WS 未连接'));
+      reject(Object.assign(new Error('WS 未连接'), { code: 'ONEBOT_NOT_CONNECTED' }));
       return;
     }
     const echo = String(++echoSeq);
     const timer = setTimeout(() => {
-      if (pending.delete(echo)) reject(new Error(`API 调用超时: ${action}`));
+      if (pending.delete(echo)) reject(Object.assign(new Error(`API 调用超时: ${action}`), { code: 'ONEBOT_TIMEOUT' }));
     }, config.apiTimeoutMs);
     pending.set(echo, { resolve, reject, timer });
     ws.send(JSON.stringify({ action, params, echo }));
@@ -147,7 +147,7 @@ export function stopConnection() {
   }
   for (const entry of pending.values()) {
     clearTimeout(entry.timer);
-    entry.reject(new Error('连接已停止，API 调用中止'));
+    entry.reject(Object.assign(new Error('连接已停止，API 调用中止'), { code: 'ONEBOT_STOPPED' }));
   }
   pending.clear();
   if (ws) {

@@ -172,3 +172,30 @@ Prompt 工作台提供编辑、测试与评审、检查与发布、运行记录�
 - 戳一戳结合当前人设、记忆与对话历史生成一句短回复，跳过图片识别、工具和随机回复延迟，不分段、不引用通知；使用文字对话的能力开关和额度。
 - `chat.cooldownMs` 默认 2000 毫秒。聊天和戳一戳按会话共用，从开始响应计时，窗口内后续触发静默跳过；随机回复延迟仍是另一项设置。
 - 首次配置可用 `CHAT_COOLDOWN_MS` 指定冷却，`config.json` 同名行为字段覆盖环境初值；面板保存后以面板为准。旧管理配置启动时自动补齐新增字段，下次保存时持久化。
+
+
+### 业务事件与链路查询
+
+业务事件统一通过 `logger.event(event, fields)` 写入现有 `data/logs/YYYY-MM-DD.jsonl`。旧的 `logger.info/warn/error/debug` 和旧日志读取继续兼容，不迁移或补写历史记录。
+
+- 公共字段：`schemaVersion`、`id`、`time`、`level`、`event`、`message`。
+- 关联字段：`traceId` 标识一次业务处理，`operationId` 标识某次模型调用、工具执行或发送。模型操作 ID 与用量账本 ID 相同；入站事件、消息记录和线上 Prompt run 保存关联的 traceId。
+- 业务字段：`sessionKey`、`source`（`live` / `test` / `scheduled` / `admin` / `system`）、`outcome`、`reason`、`elapsedMs`，扩展元数据放在 `data`。
+- 业务事件固定落盘，不受 `LOG_LEVEL` 过滤；终端输出与普通诊断日志仍受级别控制。沿用日志保留策略、脱敏、串行写入与写入故障状态。写盘失败不会自动补发消息或重跑模型；业务日志不是可靠消息队列或账本事务。
+- 不记录完整请求、工具参数、回复正文或图片。敏感键脱敏，扩展数据超过 16 KiB 时省略。用量、协议原文和 Prompt 调试详情仍由原存储负责。
+
+关键事件包括 `handler.started/finished/skipped/match_failed`、`chat.skipped`、`chat.response.ready/failed`、`chat.fallback.queued`、`model.request.started/finished/rejected`、`tool.started/finished` 、`reply.queued/started/finished`、`distill.started/finished` 及成功的 `admin.settings.updated` / `admin.user.updated` / `admin.user.reset`。未命中触发器、权限拒绝和聊天冷却分别使用稳定原因码；业务结果不依赖解析中文日志。
+
+发送队列保存每条消息的关联字段，出队时使用原字段，避免多个会话并发时串线。`reply.finished.outcome=confirmed` 仅表示 OneBot 返回成功和有效消息 ID，不代表用户已读；明确拒绝或未连接记 `failed`，超时、中止或无有效消息 ID 记 `unknown`，均不自动重发。`data.waitMs` 为队列等待时间，发送事件的 `elapsedMs` 包含排队时间。
+
+`handler.finished.outcome=completed` 只表示处理器返回，不能当作最终回复成功；模型失败后可能发送兜底，一轮也可能产生多个工具或发送。当前不额外计算整轮回复成功率。模型事件耗时沿用用量账本口径，包括准入预留后的准备和网关处理，不是纯上游推理时间。绘图、表情与用量报告发送也沿用同一发送通道。
+
+鉴权后的 `GET /api/logs` 增加精确筛选：`traceId`、`operationId`、`event`、`sessionKey`、`source`、`outcome`；支持 `since` / `until`（毫秒时间戳或日期时间字符串，含边界），可与原有 `level`、`q`、`limit`、`before` 游标组合。示例：
+
+```text
+/api/logs?traceId=<本轮ID>&limit=100
+/api/logs?event=model.request.finished&outcome=failed&source=live
+/api/logs?event=reply.finished&outcome=unknown
+```
+
+查询结果按追加顺序从新到旧分页，沿用原有 `cursor` / `nextCursor`。看完整链路需继续获取后续页，并按时间/追加顺序阅读。日志文件按 UTC 日期分割，查询时间应使用带时区的时间或毫秒时间戳。历史中断仅能依据已有记录和用量预留识别，不能把缺少终结事件视为成功。

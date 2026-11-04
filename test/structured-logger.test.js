@@ -108,3 +108,51 @@ test('new persisted log rows have stable unique IDs returned by later reads', as
   const persisted = (await readFile(join(identityRoot, 'logs', file), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(first.map((row) => row.id), persisted.reverse().map((row) => row.id));
 });
+
+
+test('business events retain structured fields below the diagnostic level, redact payloads and support exact filters', async () => {
+  const eventRoot = join(root, 'events');
+  configureLogger({ dataDir: eventRoot, level: 'ERROR', secrets: ['event-secret'] });
+  logger.info('diagnostic filtered');
+  const id = logger.event('model.request.finished', { traceId: 'trace-a', operationId: 'attempt-a', sessionKey: 'g-1', source: 'live',
+    outcome: 'failed', reason: 'upstream_busy', elapsedMs: 263,
+    data: { httpStatus: 503, prompt: 'private text', apiKey: 'event-secret', error: 'Bearer event-secret' } });
+  logger.event('reply.finished', { traceId: 'trace-b', operationId: 'send-b', outcome: 'confirmed' });
+  const rows = await readLogs({ traceId: 'trace-a', event: 'model.request.finished', outcome: 'failed', source: 'live', sessionKey: 'g-1', operationId: 'attempt-a' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, id);
+  assert.equal(rows[0].schemaVersion, 1);
+  assert.equal(rows[0].elapsedMs, 263);
+  assert.equal(rows[0].data.httpStatus, 503);
+  assert.equal(rows[0].data.prompt, '[REDACTED]');
+  assert.equal((await readLogs({ traceId: 'trace' })).length, 0);
+  assert.equal((await readLogs()).length, 2);
+  const persisted = await readFile(join(eventRoot, 'logs', rows[0].time.slice(0, 10) + '.jsonl'), 'utf8');
+  for (const value of ['event-secret', 'private text', 'diagnostic filtered']) assert.ok(!persisted.includes(value));
+  assert.equal((await readLogs({ since: rows[0].time, until: rows[0].time, traceId: 'trace-a' })).length, 1);
+  await assert.rejects(readLogs({ since: 'invalid' }), /Invalid log time/);
+  await assert.rejects(readLogs({ since: Infinity }), /Invalid log time/);
+  await assert.rejects(readLogs({ traceId: {} }), /Invalid log filter/);
+  assert.throws(() => logger.event('invalid name'), /Invalid business event/);
+  assert.throws(() => logger.event('valid.event', { elapsedMs: -1 }), /Invalid event duration/);
+});
+
+test('business events preserve cursor pagination, cap detail size and expose write failures without recursion', async () => {
+  const eventRoot = join(root, 'event-pagination');
+  configureLogger({ dataDir: eventRoot, level: 'ERROR' });
+  for (let i = 0; i < 4; i++) logger.event('reply.finished', { traceId: 'page-trace', data: { i } });
+  const first = await readLogs({ traceId: 'page-trace', limit: 2 });
+  logger.event('reply.finished', { traceId: 'page-trace', data: { i: 4 } });
+  const second = await readLogs({ traceId: 'page-trace', limit: 2, before: first.at(-1).cursor });
+  assert.equal(new Set([...first, ...second].map(row => row.id)).size, 4);
+  assert.deepEqual([...first, ...second].map(row => row.data.i), [3, 2, 1, 0]);
+  logger.event('payload.received', { traceId: 'large', data: Object.fromEntries(Array.from({length: 8}, (_, i) => [i, 'word '.repeat(900)])) });
+  assert.equal((await readLogs({ traceId: 'large' }))[0].data.omitted, true);
+  const invalidRoot = join(root, 'event-no-directory');
+  await writeFile(invalidRoot, 'file');
+  configureLogger({ dataDir: invalidRoot });
+  logger.event('reply.finished', { outcome: 'confirmed' });
+  await flushLogs();
+  assert.equal(getLogStats().pendingWrites, 0);
+  assert.equal(typeof getLogStats().lastError, 'string');
+});
