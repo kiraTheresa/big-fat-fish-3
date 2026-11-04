@@ -129,10 +129,9 @@ test('D 带空白命中：raw_message="  ping  " 去除首尾空白后仍回 pon
   assert.equal(frame.params.group_id, 555002);
 });
 
-test('E 完整流通路径日志（G7）：启动 → 已连接 → 收到消息 → 触发器命中 → 发送确认 按序出现', { timeout: 10000 }, async () => {
-  // 用例 A 的 pong 早已应答完成，四段日志此刻必然齐备；waitUntil 兜底等待最后一段落定
+test('E 开发者日志：启动 → 已连接 → 触发器命中 → 平台确认，省略入站消息并保留关联', { timeout: 10000 }, async () => {
   await waitUntil(() =>
-    ['已连接 OneBot 服务', '收到消息: [g-', '触发器命中: ping', '发送确认: message_id='].every((seg) =>
+    ['已连接 OneBot 服务', '触发器命中', '平台已确认'].every((seg) =>
       logLines.some((line) => line.includes(seg))
     )
   );
@@ -141,16 +140,18 @@ test('E 完整流通路径日志（G7）：启动 → 已连接 → 收到消息
   const firstIndex = (seg) => logLines.findIndex((line) => line.includes(seg));
   const iStart = logLines.findIndex((line) => line.includes('Bot 核心启动') && line.includes(server.url));
   const iConn = firstIndex('已连接 OneBot 服务');
-  const iRecv = firstIndex('收到消息: [g-');
-  const iHit = firstIndex('触发器命中: ping');
-  const iAck = firstIndex('发送确认: message_id=');
+  const iHit = logLines.findIndex(line => line.includes('触发器命中') && line.includes('ping'));
+  const iAck = firstIndex('平台已确认');
 
   assert.ok(iStart !== -1, `启动日志应出现且含目标 wsUrl：${logLines.join(' | ')}`);
-  assert.ok(iConn !== -1 && iRecv !== -1 && iHit !== -1 && iAck !== -1, '四段流通路径日志均应出现');
+  assert.ok(iConn !== -1 && iHit !== -1 && iAck !== -1, '关键流通路径日志均应出现');
   assert.ok(iStart < iConn, `启动日志应先于「已连接」（${iStart} < ${iConn}）`);
-  assert.ok(iConn < iRecv, `「已连接」应先于「收到消息」（${iConn} < ${iRecv}）`);
-  assert.ok(iRecv < iHit, `「收到消息」应先于「触发器命中」（${iRecv} < ${iHit}）`);
+  assert.ok(iConn < iHit, '连接后才触发处理');
   assert.ok(iHit < iAck, `「触发器命中」应先于「发送确认」（${iHit} < ${iAck}）`);
+  assert.ok(!logLines.some(line => line.includes('收到消息:')));
+  const context = logLines[iHit].match(/\[([^\]]+ g-741883823)\]/)?.[1];
+  assert.ok(context, '命中日志包含短链路 ID 与会话');
+  assert.ok(logLines[iAck].includes(`[${context}]`), '确认与命中关联同一轮');
 });
 
 test('F E2E 落盘（G6 + aichat 回存演进）：g-741883823.jsonl 恰 2 行（入站 ping + bot pong）', { timeout: 10000 }, async () => {

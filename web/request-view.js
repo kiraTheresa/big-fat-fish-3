@@ -1,4 +1,5 @@
 import { usageTime, usageSession } from './usage-view.js';
+import { describeLog } from '../src/utils/log-format.js';
 
 const e = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const number = value => Number(value ?? 0).toLocaleString('zh-CN');
@@ -78,6 +79,8 @@ export function renderRequestDetail(row) {
 }
 
 export function renderRequestTrace(rows, nextCursor, traceId) {
-  const labels = { 'handler.started': '处理器开始', 'handler.finished': '处理器返回', 'handler.skipped': '跳过处理', 'model.request.started': '模型请求开始', 'model.request.finished': '模型请求结束', 'model.request.rejected': '模型准入拒绝', 'tool.started': '工具开始', 'tool.finished': '工具结束', 'reply.queued': '回复入队', 'reply.started': '回复发送开始', 'reply.finished': '回复发送结果', 'chat.fallback.queued': '兜底回复入队', 'chat.response.ready': '回复已生成', 'chat.response.failed': '回复生成失败', 'distill.started': '提炼开始', 'distill.finished': '提炼结束' };
-  return `<p class="detail-caption">按已获取记录的发生顺序展示。处理器返回不等于回复已发送，平台确认不等于用户已读。</p>${rows.length ? `<ol class="request-trace">${[...rows].reverse().map(row => `<li><div><time>${e(traceTime(row.time))}</time><strong>${e(labels[row.event] ?? row.event ?? row.message)}</strong><span>${e(outcomes[row.outcome] ?? row.outcome ?? '')}</span></div><p>${e([row.elapsedMs === undefined ? '' : seconds(row.elapsedMs), row.reason ? requestReasons[row.reason] ?? row.reason : '', row.data?.name, row.data?.model, row.data?.httpStatus ? 'HTTP ' + row.data.httpStatus : '', row.data?.error].filter(Boolean).join(' · '))}</p></li>`).join('')}</ol>` : empty('未找到关联日志，可能尚未采集或已按保留策略清理')}${nextCursor ? `<div class="dialog-actions"><button class="button" type="button" data-action="request-trace-more" data-trace="${e(traceId)}" data-before="${e(nextCursor)}">加载更早的链路记录</button></div>` : ''}`;
+  return `<p class="detail-caption">按已获取记录的发生顺序展示。处理器返回不等于回复已发送，平台确认不等于用户已读。</p>${rows.length ? `<ol class="request-trace">${[...rows].reverse().map(row => {
+    const info = describeLog(row);
+    return `<li><div><time>${e(traceTime(row.time))}</time><strong>${e(info.title)}</strong><span>${e(info.result)}</span></div><p>${e([row.elapsedMs === undefined ? '' : seconds(row.elapsedMs), info.detail].filter(Boolean).join(' · '))}</p></li>`;
+  }).join('')}</ol>` : empty('未找到关联日志，可能尚未采集或已按保留策略清理')}${nextCursor ? `<div class="dialog-actions"><button class="button" type="button" data-action="request-trace-more" data-trace="${e(traceId)}" data-before="${e(nextCursor)}">加载更早的链路记录</button></div>` : ''}`;
 }

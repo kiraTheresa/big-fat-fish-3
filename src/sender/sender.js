@@ -52,7 +52,6 @@ async function drain() {
           && !(typeof data?.message_id === 'string' && /^-?\d{1,20}$/.test(data.message_id))) {
           throw Object.assign(new Error('OneBot 发送响应缺少有效消息 ID，发送结果未知'), { code: 'ONEBOT_INVALID_RESPONSE' });
         }
-        logger.info(`发送确认: message_id=${data?.message_id}`);
         // callApi resolve 即 retcode=0 路径：仅成功确认的出站 id 入集（replyQuote 的
         // 「引用 bot 消息」判定依据）；失败重发会拿到新 id，各按各的确认入集
         recordBotMessageId(data?.message_id);
@@ -63,7 +62,6 @@ async function drain() {
         logger.event('reply.finished', { ...context, operationId, level: 'WARN', outcome: ['ONEBOT_REJECTED', 'ONEBOT_NOT_CONNECTED'].includes(err.code) ? 'failed' : 'unknown',
           reason: err.code ?? 'send_result_unknown', elapsedMs: Math.max(0, Date.now() - queuedAt), data: { waitMs, error: err.message } });
         failed++;
-        logger.warn(`发送失败: ${err.message}`); // 单条失败不阻断队列
         resolve({ ok: false, error: err.message });
       }
       await delay(config.sendIntervalMs); // 固定间隔：两条出站帧之间至少间隔 sendIntervalMs

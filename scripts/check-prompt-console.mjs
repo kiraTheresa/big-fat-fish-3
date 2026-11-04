@@ -79,7 +79,7 @@ try {
   page.on('dialog', (dialog) => dialog.accept());
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-    for (const name of ['overview', 'events', 'logs', 'usage', 'config', 'jobs', 'users']) {
+    for (const name of ['overview', 'logs', 'usage', 'config', 'jobs', 'users']) {
       await page.locator(`#navigation [data-page="${name}"]`).click();
       await page.waitForFunction(() => document.querySelector('#content').getAttribute('aria-busy') === 'false');
       assert.equal(await page.locator('.error-state').count(), 0, name);

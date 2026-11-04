@@ -55,6 +55,8 @@ test('concurrent chat traces join ingress, model attempts and queued replies wit
     const rows = await readLogs({ sessionKey, limit: 100 });
     const started = rows.find(row => row.event === 'handler.started');
     assert.ok(started);
+    assert.equal(rows.find(row => row.event === 'chat.matched').reason, 'private');
+    assert.equal(rows.find(row => row.event === 'model.response.received').outcome, 'text');
     traces.push(started.traceId);
     assert.ok(rows.every(row => row.traceId === started.traceId));
     for (const event of ['handler.finished', 'model.request.started', 'model.request.finished', 'reply.queued', 'reply.started', 'reply.finished']) assert.ok(rows.some(row => row.event === event), event);
@@ -112,6 +114,10 @@ test('tool executions and reused results retain trace identity without logging a
   assert.equal(rows.length, 2); assert.equal(rows.filter(row => row.data.reused).length, 1);
   assert.ok(rows.every(row => row.source === 'test'));
   assert.ok(!JSON.stringify(rows).includes('DO_NOT_LOG_TOOL_ARGUMENT'));
+  const all = await readLogs({ traceId: 'tool-trace' });
+  assert.deepEqual(all.find(row => row.event === 'model.tools.offered').data.names, ['remember_fact']);
+  assert.equal(all.filter(row => row.event === 'model.response.received' && row.outcome === 'tools').length, 2);
+  assert.equal(all.find(row => row.event === 'model.response.received').outcome, 'text');
 });
 
 test('authenticated log API exposes structured trace filters and rejects invalid time ranges', async () => {
@@ -126,7 +132,32 @@ test('authenticated log API exposes structured trace filters and rejects invalid
     const { items } = await response.json();
     assert.equal(items.length, 2); assert.ok(items.every(row => row.traceId === 'tool-trace'));
     assert.equal((await fetch(base + '?since=2027-01-01&until=2026-01-01', { headers })).status, 400);
+    const failures = await (await fetch(base + '?failuresOnly=true&traceId=send-timeout', { headers })).json();
+    assert.equal(failures.items.length, 1);
+    assert.equal(failures.items[0].outcome, 'unknown');
+    assert.equal((await fetch(base + '?failuresOnly=invalid', { headers })).status, 400);
   } finally { await admin.close(); }
+});
+
+test('chat match reasons preserve short-circuit conditions without invoking the model or logging message content', async () => {
+  const group = { ...message(999), message_type: 'group', group_id: 999, message: [{ type: 'at', data: { qq: '10000' } }, { type: 'text', data: { text: '大肥鱼' } }] };
+  const context = { traceId: 'match-reasons', sessionKey: 'g-999', source: 'live' };
+  const original = structuredClone(config.behavior.trigger);
+  const key = config.deepseekApiKey;
+  const before = llm.requests.length;
+  try {
+    assert.equal(chat.match(group, context), true);
+    config.behavior.trigger.at.enabled = false;
+    assert.equal(chat.match(group, context), true);
+    config.behavior.trigger.nameCall.enabled = false;
+    assert.equal(chat.match(group, context), false);
+    config.deepseekApiKey = '';
+    assert.equal(chat.match(group, context), false);
+  } finally { config.behavior.trigger = original; config.deepseekApiKey = key; }
+  assert.equal(llm.requests.length, before);
+  const rows = await readLogs({ traceId: 'match-reasons' });
+  assert.deepEqual(rows.map(row => row.reason), ['no_api_key', 'no_group_condition', 'nameCall', 'at']);
+  assert.doesNotMatch(JSON.stringify(rows), /DO_NOT_LOG_USER_TEXT|大肥鱼/);
 });
 
 

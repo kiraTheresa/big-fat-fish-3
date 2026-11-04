@@ -35,7 +35,7 @@ import { extractImages } from '../utils/extract-images.js';
 import { fetchImageAsB64, mimeOfB64 } from '../utils/fetch-image.js';
 import { callApi } from '../connection/onebot.js';
 import { logger } from '../utils/logger.js';
-import { matchGroupChat } from './chat-conditions.js';
+import { findGroupChatCondition } from './chat-conditions.js';
 import { chatReplyChain } from './chat-reply-chain.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 
@@ -89,12 +89,19 @@ const cooldowns = new Map();
 
 export default {
   name: 'chat',
-  match(event) {
-    if (event.post_type !== 'message') return false;
-    if (config.deepseekApiKey === '') return false; // 未配置 LLM：本触发器不生效
-    if (event.message_type === 'private') return true;
-    // 群聊：条件组合器任一命中即触发（非群聊事件组合器内恒 false）
-    return matchGroupChat(event);
+  match(event, logContext) {
+    let condition;
+    let reason;
+    if (event.post_type !== 'message') reason = 'not_message';
+    else if (config.deepseekApiKey === '') reason = 'no_api_key';
+    else {
+      condition = event.message_type === 'private' ? 'private' : findGroupChatCondition(event);
+      reason = condition ?? 'no_group_condition';
+    }
+    if (logContext) logger.event(condition ? 'chat.matched' : 'chat.not_matched', {
+      ...logContext, level: condition ? 'INFO' : 'DEBUG', reason,
+    });
+    return condition !== undefined;
   },
 
   async handle(ctx, { poke = false } = {}) {
@@ -111,7 +118,6 @@ export default {
       (event.message_type === 'group' && matchAt(event) ? '（对方 @ 了你，没有附加文字，请简短回应。）' : '');
     if (content === '') {
       logger.event('chat.skipped', { ...logContext, outcome: 'skipped', reason: 'empty_content' });
-      logger.info(`[chat] ${sessionKey} 消息无文本内容，忽略`);
       return;
     }
 
@@ -120,7 +126,6 @@ export default {
     const last = cooldowns.get(sessionKey) ?? 0;
     if (Date.now() - last < config.behavior.chat.cooldownMs) {
       logger.event('chat.skipped', { ...logContext, outcome: 'skipped', reason: 'cooldown' });
-      logger.info(`[chat] 会话 ${sessionKey} 冷却中，跳过`);
       return;
     }
     cooldowns.set(sessionKey, Date.now());
@@ -168,7 +173,7 @@ export default {
         try {
           visionB64 = await fetchImageAsB64(imageUrl, config.visionFetchTimeoutMs);
         } catch (err) {
-          logger.warn(`[chat] 图片现拉失败，回退纯文本: ${err.message}`);
+          logger.event('chat.vision.degraded', { ...logContext, level: 'WARN', outcome: 'degraded', reason: 'image_download_failed', data: { error: err.message } });
         }
       }
     }
@@ -215,7 +220,7 @@ export default {
         } catch (err) {
           if (err.toolStarted) throw err; // 已执行工具后不能回退重跑，否则可能重复副作用
           // 保留一次纯文本回退，同一模型重试，不再按图片切换模型。
-          logger.warn(`[chat] 带图请求失败，回退纯文本: ${err.message}`);
+          logger.event('chat.vision.degraded', { ...logContext, level: 'WARN', outcome: 'degraded', reason: 'vision_request_failed', data: { error: err.message } });
         }
       }
       if (reply === undefined) {
@@ -241,7 +246,6 @@ export default {
       run.status = 'failed';
       run.error = err.message;
       logger.event('chat.response.failed', { ...logContext, operationId: run.id, level: 'WARN', outcome: 'failed', reason: err.code ?? 'generation_failed', data: { error: err.message } });
-      logger.warn(`[chat] LLM 调用失败: ${err.message}`);
       // 兜底文案不是 LLM 输出：不走加工链（不延迟，出错要立刻让人知道），但存储与
       // 发送仍走统一出口（与既有行为等价：回存一条 bot 行 + 发一条）
       const failureReply = err.name === 'UsageLimitError' ? `本鱼暂时不能调用模型：${err.message}。` : FALLBACK_REPLY;

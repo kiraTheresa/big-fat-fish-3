@@ -47,9 +47,13 @@ export const chatConditions = [
 
 // 群聊组合判定（chat.js 消费）：非群聊一律 false（组合器只负责群聊层）；
 // 任一条件 enabled && 命中即触发——「条件全关」时恒 false，群聊消息静默。
-export function matchGroupChat(event) {
-  if (event.message_type !== 'group') return false;
-  return chatConditions.some(
+export function findGroupChatCondition(event) {
+  if (event.message_type !== 'group') return undefined;
+  return chatConditions.find(
     (cond) => config.behavior.trigger[cond.name]?.enabled === true && cond.match(event)
-  );
+  )?.name;
+}
+
+export function matchGroupChat(event) {
+  return findGroupChatCondition(event) !== undefined;
 }

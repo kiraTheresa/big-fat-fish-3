@@ -1,5 +1,6 @@
 import { usageMoney, usageTime, usageSession, renderUsageShareContent } from './usage-view.js';
 import { renderRequestsView, renderRequestDetail, renderRequestTrace } from './request-view.js';
+import { describeLog } from '../src/utils/log-format.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -50,7 +51,7 @@ const pages = {
   config: ['配置与能力', '管理能力开关、调用预算与运行参数。', 'CONFIGURATION'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
-  logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
+  logs: ['运行日志', '默认关注失败，也可查看全部级别的日志与本轮业务链路。', 'LOGS'],
   usage: ['Token 用量与费用', '查看预估费用、用量来源、调用结果与会话统计。', 'USAGE'],
   requests: ['请求与稳定性', '观察模型调用频率、耗时与失败原因，沿业务链路定位问题。', 'REQUESTS'],
 };
@@ -60,7 +61,7 @@ const state = {
   token: '', tokenExpiresAt: 0, page: pages[initialPage] ? initialPage : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
-  filters: { requests: { period: 'today', kind: '', source: '', sessionKey: '' }, events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { period: 'today', since: '', until: '', detailKind: '', pendingOnly: '', sessionKey: '' } },
+  filters: { requests: { period: 'today', kind: '', source: '', sessionKey: '' }, events: { postType: '', sessionKey: '' }, logs: { failuresOnly: 'true', level: '', q: '', sessionKey: '' }, usage: { period: 'today', since: '', until: '', detailKind: '', pendingOnly: '', sessionKey: '' } },
   requestDashboard: null, requestTrace: null, requestTraceVersion: 0,
 };
 let promptConsole;
@@ -324,17 +325,10 @@ function eventTypeBadge(type) {
   const labels = { message: '消息', message_sent: '发送事件', notice: '通知', request: '请求', meta_event: '元事件', unknown: '未知事件' };
   return pill(labels[type] || type, { notice: 'blue', request: 'violet', meta_event: 'neutral', message_sent: 'neutral', unknown: 'warning' }[type] || '');
 }
-function recentEvents(items) {
-  if (!items.length) return empty('暂无接收事件', 'QQ 接收的消息、通知和其他事件会出现在这里。');
-  return `<div class="event-list">${items.slice(0, 6).map((row) => {
-    const info = eventInfo(row);
-    return `<div class="event-row"><span class="event-icon">${icon(info.postType === 'meta_event' ? 'pulse' : 'events')}</span><div class="event-text"><strong>${e(info.text || `${info.type} · ${info.types.join(' / ') || '事件已接收'}`)}</strong><p>${e(info.session)} · ${e(info.sender)}</p></div><time>${e(date(info.time, true))}</time></div>`;
-  }).join('')}</div>`;
-}
-
 async function renderOverview(sequence) {
-  const [status, events] = await Promise.all([api('/status'), api('/events?limit=6').catch(() => null)]);
+  const [status, failures] = await Promise.all([api('/status'), api('/logs?limit=6&failuresOnly=true').catch(() => null)]);
   if (sequence !== state.sequence) return '';
+  state.rows = failures?.items || [];
   updateStatus(status);
   const connection = connectionInfo(status.connection);
   const usage = status.usage?.today || status.usage?.totals || status.usage || {};
@@ -344,10 +338,18 @@ async function renderOverview(sequence) {
   const jobs = Array.isArray(status.scheduler?.jobs) ? status.scheduler.jobs.length : status.scheduler?.jobs ?? 0;
   const failed = usage.failures ?? 0;
   const storage = status.storage || {};
-  return `${persistenceError ? `<div class="notice error">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可查看消息接收与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">检查日志</button></div></section>
+  return `${persistenceError ? `<div class="notice error" role="alert">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可检查失败与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">查看失败</button></div></section>
     <div class="metrics-grid">${metric('运行时间', duration(status.uptimeSeconds), `启动于 ${date(status.startedAt)}`, 'pulse')}${metric('今日调用', usageNumber(usage.calls), ledgerAvailable ? `下次重置 ${date(status.usage?.resetAt)}` : '用量账本当前不可读取', 'usage', '次')}${metric('今日 Token', usageNumber(usage.totalTokens), ledgerAvailable ? `${number(usage.unknownUsageCalls)} 次调用未返回完整用量` : '暂时无法汇总已知用量', 'config')}${metric('计划任务', number(jobs), status.scheduler?.running ? '调度器正在运行' : '调度器未运行', 'jobs', '项')}</div>
-    <div class="overview-grid"><section class="panel">${panelHead('最近收到', '最近 6 条接收事件，按时间倒序。', pageLink('events', '全部事件'))}${events ? recentEvents(events.items || []) : '<div class="notice error">事件列表暂时无法读取，请到消息收件箱重试。</div>'}</section>
-    <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>日志已写入</dt><dd>${e(number(status.logStats?.written))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看日志</button></div></section></div><div class="summary-strip"><span>本次进程接收<strong>${e(number(status.events?.received))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
+    <div class="overview-grid"><section class="panel">${panelHead('最近失败', '最近 6 条失败、降级或结果未知的记录。', pageLink('logs', '全部失败'))}${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到失败日志重试。</div>'}</section>
+    <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>发送队列</dt><dd>${e(number(status.sender?.queued))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看失败</button></div></section></div><div class="summary-strip"><span>待发送<strong>${e(number(status.sender?.queued))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
+}
+
+function recentFailures(items) {
+  if (!items.length) return empty('暂无失败记录', '当前保留范围内没有失败、降级或结果未知的记录。', 'logs');
+  return `<div class="event-list">${items.map((row, index) => {
+    const info = describeLog(row);
+    return `<div class="event-row failure-row"><span class="event-icon">${icon('warning')}</span><div class="event-text"><strong>${e(info.title)} · ${e(info.result)}</strong><p>${e(row.sessionKey || '系统')} · ${e(info.detail || row.message)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
+  }).join('')}</div>`;
 }
 
 function pagination(nextCursor, count) {
@@ -427,18 +429,25 @@ async function renderJobs(sequence) {
     ${state.jobs.length ? `<div class="table-wrap"><table><thead><tr><th>任务</th><th>执行计划</th><th>下次执行</th><th>上次结果</th><th>状态与管理</th></tr></thead><tbody>${state.jobs.map((job, index) => `<tr><td><span class="cell-main job-name">${e(job.name)}</span><span class="cell-sub">${e(jobTypes[job.type] || job.type)}</span></td><td>${e(scheduleText(job.schedule))}</td><td class="mono">${job.enabled ? e(date(job.nextRunAt)) : job.schedule?.kind === 'once' && job.lastRunAt ? '已执行' : '已暂停'}</td><td>${job.lastStatus ? pill(({ success: '成功', completed: '完成', failed: '失败', error: '失败', interrupted: '已中断', running: '执行中', skipped: '已跳过' })[job.lastStatus] || job.lastStatus, ['error', 'failed', 'interrupted'].includes(job.lastStatus) ? 'danger' : 'neutral') : '<span class="muted">尚未执行</span>'}<span class="cell-sub">${e(date(job.lastRunAt))}</span>${job.lastError ? `<button type="button" class="text-button" data-action="job-error" data-index="${index}">查看原因</button>` : ''}</td><td class="cell-actions"><button type="button" class="button small" data-action="toggle-job" data-index="${index}" aria-label="${job.enabled ? '暂停' : '启用'} ${e(job.name)}">${job.enabled ? '暂停' : '启用'}</button><button type="button" class="button small" data-action="edit-job" data-index="${index}">编辑</button><button type="button" class="button small subtle" data-action="delete-job" data-index="${index}">删除</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有计划任务', '创建一个定期任务，让数据维护或记忆提炼按时运行。', 'jobs')}</section>`;
 }
 
-function logLevel(level) {
-  const normalized = String(level || 'info').toLowerCase();
-  return pill(normalized.toUpperCase(), ['error', 'fatal'].includes(normalized) ? 'danger' : normalized === 'warn' ? 'warning' : normalized === 'debug' ? 'neutral' : 'blue');
-}
 async function renderLogs(sequence) {
   const f = state.filters.logs;
-  const result = await api(`/logs${query({ limit: 50, ...f, before: state.cursor })}`);
+  const failuresOnly = f.failuresOnly !== 'false';
+  const result = await api(`/logs${query({ limit: 50, ...f, failuresOnly, before: state.cursor })}`);
   if (sequence !== state.sequence) return '';
   state.rows = result.items || [];
   state.nextCursor = result.nextCursor;
-  return `<section class="panel">${panelHead('日志流', '按级别和关键词定位运行线索。')}<form id="logs-filter" class="filters"><label>日志级别<select name="level">${selectOptions([['', '全部级别'], ['debug', 'DEBUG'], ['info', 'INFO'], ['warn', 'WARN'], ['error', 'ERROR']], f.level)}</select></label><label class="filter-wide">关键词<input name="q" value="${e(f.q)}" placeholder="搜索日志内容" autocomplete="off"></label><button type="submit" class="button">搜索</button><button type="button" class="button subtle" data-action="reset-filters">重置</button></form>
-    ${state.rows.length ? `<div class="table-wrap"><table class="log-table"><thead><tr><th>时间</th><th>级别</th><th>内容</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => `<tr><td><time class="mono">${e(date(row.time ?? row.timestamp))}</time></td><td>${logLevel(row.level)}</td><td class="log-message mono">${e(row.message || '')}</td><td class="cell-actions"><button type="button" class="button small" data-action="log-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有符合条件的日志', '试试其他级别或关键词，也可以等待下一次运行记录。', 'logs')}${pagination(result.nextCursor, state.rows.length)}</section>`;
+  return `<section class="panel">${panelHead(failuresOnly ? '失败记录' : '全部日志', failuresOnly ? '展示失败、降级与结果未知；正常跳过不计入。需要调试时可切换到全部日志。' : '查看已记录的各级日志，包括未命中、跳过与成功步骤；可继续按级别筛选。')}<form id="logs-filter" class="filters"><label>查看范围<select name="failuresOnly">${selectOptions([['true', '仅看失败'], ['false', '全部日志']], String(failuresOnly))}</select></label><label>日志级别<select name="level">${selectOptions([['', '全部级别'], ['debug', 'DEBUG'], ['info', 'INFO'], ['warn', 'WARN'], ['error', 'ERROR']], f.level)}</select></label><label>会话<input name="sessionKey" value="${e(f.sessionKey)}" placeholder="例如 g-123" autocomplete="off"></label><label class="filter-wide">关键词<input name="q" value="${e(f.q)}" placeholder="搜索阶段、原因或链路 ID" autocomplete="off"></label><button type="submit" class="button">搜索</button><button type="button" class="button subtle" data-action="reset-filters">重置</button></form>
+    ${state.rows.length ? `<div class="table-wrap"><table class="log-table"><thead><tr><th>时间 / 会话</th><th>阶段 / 结果</th><th>原因 / 过程</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => {
+      const info = describeLog(row);
+      return `<tr><td><time class="mono">${e(date(row.time))}</time><span class="cell-sub mono">${e(row.sessionKey || '系统 / 历史未记录')}</span></td><td><span class="cell-main">${e(info.title)}</span><span class="cell-sub">${e(info.result)} · ${e(row.level)}</span></td><td class="log-message">${e(info.detail || row.message)}</td><td class="cell-actions"><button type="button" class="button small" data-action="log-detail" data-index="${index}">查看</button></td></tr>`;
+    }).join('')}</tbody></table></div>` : empty(failuresOnly ? '没有符合条件的失败记录' : '没有符合条件的日志', '可调整范围或清除筛选；只展示保留范围内已记录的日志。', 'logs')}${pagination(result.nextCursor, state.rows.length)}</section>`;
+}
+
+function showLogDetail(row) {
+  const info = describeLog(row);
+  state.requestTraceVersion++;
+  state.requestTrace = null;
+  showDialog('日志详情', 'LOGS / RECORD', `<dl class="key-values"><div><dt>时间</dt><dd>${e(date(row.time))}</dd></div><div><dt>会话</dt><dd>${e(row.sessionKey || '系统 / 历史未记录')}</dd></div><div><dt>阶段 / 结果</dt><dd>${e(info.title)} · ${e(info.result)}</dd></div><div><dt>原因 / 过程</dt><dd>${e(info.detail || row.message)}</dd></div></dl><p class="field-hint">此处是单个阶段的结果；后续是否降级、兜底或发送成功，请查看本轮链路。</p>${row.traceId ? `<div class="dialog-actions"><button type="button" class="button" data-action="request-trace" data-trace="${e(row.traceId)}">查看本轮业务链路</button></div>` : '<p class="field-hint">此记录没有链路 ID，无法可靠关联后续结果。</p>'}<details><summary>原始记录（已脱敏）</summary><pre class="json-block">${e(JSON.stringify(row, null, 2))}</pre></details>`);
 }
 
 const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
@@ -666,12 +675,13 @@ document.addEventListener('click', async (event) => {
   if (action === 'reload-config') { if (canLeave()) { state.dirty = false; loadPage(); } return; }
   if (action === 'reset-filters') {
     for (const key of Object.keys(state.filters[state.page])) state.filters[state.page][key] = '';
+    if (state.page === 'logs') state.filters.logs.failuresOnly = 'true';
     state.cursor = null; state.cursors = []; loadPage(); return;
   }
   if (action === 'next-page') { state.cursors.push(state.cursor); state.cursor = state.nextCursor; loadPage(); return; }
   if (action === 'first-page') { state.cursor = null; state.cursors = []; loadPage(); return; }
   if (action === 'event-detail') { showJson('接收事件详情', 'INBOX / EVENT', state.rows[index], '这里只展示已接收的数据。未知消息段会保留原始字段，不自动执行。'); return; }
-  if (action === 'log-detail') { showJson('日志详情', 'LOGS / RECORD', state.rows[index]); return; }
+  if (action === 'log-detail') { showLogDetail(state.rows[index]); return; }
   if (action === 'request-detail') {
     state.requestTraceVersion++;
     state.requestTrace = null;
@@ -787,7 +797,7 @@ $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) ev
 $('#detail-dialog').addEventListener('close', () => { clearUsageReport(); if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
 const navigationGroups = [
-  ['运行排查', ['overview', 'requests', 'usage', 'events', 'logs']],
+  ['运行排查', ['overview', 'logs', 'requests', 'usage']],
   ['开发调试', ['prompt']],
   ['素材收藏', ['images', 'memes']],
   ['实例管理', ['config', 'jobs', 'users']],

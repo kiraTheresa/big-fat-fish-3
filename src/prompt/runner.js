@@ -16,11 +16,14 @@ export async function runToolConversation(request, settings, context, { trace = 
   try {
     for (let round = 0; round <= settings.execution.maxToolRounds; round++) {
       const exhausted = round === settings.execution.maxToolRounds || count >= settings.execution.maxToolCalls;
+      logger.event('model.tools.offered', { ...context.logContext, level: round === 0 ? 'INFO' : 'DEBUG',
+        data: { names: [...allowed], round, toolChoice: exhausted ? 'none' : 'auto' } });
       const result = await completion(messages, { logContext: context.logContext, model: request.model, kind: context.kind ?? 'chat', sessionKey: context.sessionKey, tools: request.tools, toolChoice: exhausted ? 'none' : undefined, allowEmptyContent: imageSent(),
         onAttempt: (entry) => trace.push({ ...entry, round }) });
       const message = result.message ?? { role: 'assistant', content: result.content };
       const calls = message.tool_calls;
       if (!Array.isArray(calls) || !calls.length) {
+        logger.event('model.response.received', { ...context.logContext, outcome: typeof message.content === 'string' && message.content.trim() ? 'text' : 'empty', data: { round } });
         if (imageSent() && (message.content == null || message.content.trim?.() === '')) return { content: '', trace, toolStarted };
         if (typeof message.content !== 'string' || !message.content.trim()) throw new Error('模型未返回可发送的回复');
         return { content: message.content, trace, toolStarted };
@@ -31,6 +34,7 @@ export async function runToolConversation(request, settings, context, { trace = 
       const ids = calls.map((call) => call.id);
       if (new Set(ids).size !== ids.length || ids.some((id) => seenIds.has(id))) throw new Error('模型重复使用工具调用 ID，已停止以避免重复操作');
       ids.forEach((id) => seenIds.add(id));
+      logger.event('model.response.received', { ...context.logContext, outcome: 'tools', data: { names: calls.map(call => call.function.name), round } });
       messages.push({ ...message, role: 'assistant', content: message.content ?? null });
       for (const call of calls) {
         const name = call.function.name;

@@ -164,13 +164,10 @@ test('match 抛异常：记 ERROR，同事件后序触发器仍被尝试、后�
     `match 异常应记 ERROR：${logs.join(' | ')}`
   );
   assert.ok(fallbackRan, 'match 异常的触发器作废后，后序触发器仍应被尝试');
-  // 顺带验证「完整流通路径」中间两段日志：收到消息（含 sessionKey）→ 触发器命中（含触发器名）
+  assert.equal(logs.filter(line => line.includes('match 异常')).length, 1, '同一失败不重复输出文字和结构化事件');
+  assert.ok(!logs.some(line => line.includes('收到消息')), '不刷入站消息日志');
   assert.ok(
-    logs.some((line) => line.includes('收到消息') && line.includes('[g-123]')),
-    `收到消息应记 INFO 且含 sessionKey：${logs.join(' | ')}`
-  );
-  assert.ok(
-    logs.some((line) => line.includes('触发器命中') && line.includes('em-fallback')),
+    logs.some((line) => line.includes('触发器命中') && line.includes('em-fallback') && line.includes('g-123')),
     `命中应记 INFO 且含触发器名：${logs.join(' | ')}`
   );
 

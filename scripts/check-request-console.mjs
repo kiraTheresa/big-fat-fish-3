@@ -30,6 +30,15 @@ logger.event('handler.started', { traceId: 'trace-ui', source: 'live' });
 for (let i = 0; i < 101; i++) logger.event('tool.started', { traceId: 'trace-ui', operationId: `tool-${i}`, source: 'live' });
 logger.event('model.request.finished', { traceId: 'trace-ui', source: 'live', outcome: 'failed', data: { httpStatus: 503 } });
 logger.event('reply.finished', { traceId: 'trace-ui', source: 'live', outcome: 'confirmed' });
+for (let i = 0; i < 51; i++) logger.event('reply.finished', { traceId: `log-history-${i}`, sessionKey: 'g-logs', outcome: 'unknown', reason: 'ONEBOT_TIMEOUT' });
+for (const reason of ['FEATURE_DISABLED', 'USAGE_LIMIT']) logger.event('model.request.rejected', { level: 'WARN', outcome: 'rejected', reason });
+logger.event('chat.skipped', { level: 'WARN', outcome: 'skipped', reason: 'cooldown' });
+logger.event('model.request.rejected', { sessionKey: 'g-logs', level: 'WARN', outcome: 'rejected', reason: 'USAGE_STORAGE' });
+logger.event('chat.vision.degraded', { sessionKey: 'g-logs', level: 'WARN', outcome: 'degraded', reason: 'image_download_failed' });
+logger.event('chat.not_matched', { traceId: 'log-debug-only', sessionKey: 'g-logs', level: 'DEBUG', reason: 'no_group_condition' });
+logger.event('tool.finished', { traceId: 'log-tool-only', sessionKey: 'g-logs', level: 'WARN', outcome: 'failed',
+  data: { name: 'remember_fact', error: 'Storage failed <script>bad</script> Bearer should-not-appear' } });
+logger.event('reply.finished', { traceId: 'log-tool-only', sessionKey: 'g-logs', outcome: 'confirmed' });
 let browser;
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
@@ -62,7 +71,7 @@ try {
   await page.waitForSelector('.request-trace');
   assert.match(await page.locator('.request-trace').innerText(), /平台已确认/);
   await page.locator('[data-action="request-trace-more"]').click();
-  await page.waitForFunction(() => document.querySelector('.request-trace').textContent.includes('处理器开始'));
+  await page.waitForFunction(() => document.querySelector('.request-trace').textContent.includes('触发器命中'));
   assert.equal(await page.locator('#detail-dialog').evaluate(el => el.scrollTop), 0);
   await shot('requests-trace');
   await page.keyboard.press('Escape');
@@ -110,6 +119,65 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width}px page overflow`);
     await shot(`requests-${width}`);
   }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  assert.equal(await page.locator('#navigation [data-page="events"]').count(), 0);
+  await page.locator('#navigation [data-page="logs"]').click();
+  await page.waitForSelector('.log-table');
+  assert.equal(await page.locator('.log-table tbody tr').count(), 50);
+  assert.doesNotMatch(await page.locator('#content').innerText(), /冷却中|能力已停用|达到调用预算|should-not-appear/);
+  await page.locator('[data-action="next-page"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.log-table tbody tr').length === 5);
+  await page.locator('[data-action="first-page"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.log-table tbody tr').length === 50);
+  await page.locator('#logs-filter input[name="sessionKey"]').fill('g-logs');
+  await page.locator('#logs-filter input[name="q"]').fill('remember_fact');
+  await page.locator('#logs-filter button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.log-table tbody tr').length === 1);
+  await shot('failures-desktop');
+  await page.locator('[data-action="log-detail"]').click();
+  assert.match(await page.locator('#dialog-content').innerText(), /Storage failed/);
+  assert.equal(await page.locator('#dialog-content script').count(), 0);
+  await page.locator('[data-action="request-trace"]').click();
+  await page.waitForSelector('.request-trace');
+  assert.match(await page.locator('.request-trace').innerText(), /remember_fact/);
+  assert.match(await page.locator('.request-trace').innerText(), /平台已确认/);
+  assert.equal(await page.locator('.request-trace li').count(), 2, 'Failure trace has no model API record');
+  await shot('failure-trace');
+  await page.keyboard.press('Escape');
+  await page.locator('#logs-filter input[name="q"]').fill('no-such-failure');
+  await page.locator('#logs-filter button[type="submit"]').click();
+  await page.waitForSelector('.empty-state');
+  await page.locator('[data-action="reset-filters"]').click();
+  await page.waitForSelector('.log-table');
+  await page.locator('#logs-filter select[name="failuresOnly"]').selectOption('false');
+  await page.locator('#logs-filter select[name="level"]').selectOption('debug');
+  await page.locator('#logs-filter button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.log-table tbody tr').length === 1);
+  assert.match(await page.locator('.log-table').innerText(), /chat 未命中/);
+  assert.match(await page.locator('#content h2').innerText(), /全部日志/);
+  await shot('logs-debug-desktop');
+  await page.locator('#logs-filter select[name="level"]').selectOption('info');
+  await page.locator('#logs-filter input[name="sessionKey"]').fill('g-logs');
+  await page.locator('#logs-filter input[name="q"]').fill('平台已确认');
+  await page.locator('#logs-filter button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('.log-table')?.textContent.includes('平台已确认'));
+  assert.equal(await page.locator('.log-table tbody tr').count(), 1);
+  await page.locator('[data-action="reset-filters"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.log-table tbody tr').length === 50);
+  assert.equal(await page.locator('#logs-filter select[name="failuresOnly"]').inputValue(), 'true');
+  assert.equal(await page.locator('#logs-filter select[name="level"]').inputValue(), '');
+  for (const width of [1440, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const name of ['overview', 'logs']) {
+      await page.locator(`#navigation [data-page="${name}"]`).click();
+      await page.waitForFunction(() => document.querySelector('#content').getAttribute('aria-busy') === 'false');
+      assert.equal(await page.locator('.error-state').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${name} at ${width}px overflow`);
+      await shot(`${name}-${width}`);
+    }
+  }
+  await page.locator('#navigation [data-page="requests"]').click();
+  await page.waitForSelector('.request-summary');
   const file = join(dir, 'usage', 'g-100.jsonl');
   const original = await readFile(file, 'utf8');
   await writeFile(file, '{broken');
@@ -120,5 +188,5 @@ try {
   await page.locator('[data-action="retry"]').click();
   await page.waitForSelector('.request-summary');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'PASS', checks: ['real dashboard API', 'login', 'scope/session filters', 'pagination with full summaries', 'failure drilldown and reset', 'call detail', 'trace pagination', 'date presets and custom dates', 'chart drilldown', 'empty state', '320/390/768/1440px overflow', 'ledger failure and recovery', 'no page errors'] }));
+  console.log(JSON.stringify({ result: 'PASS', checks: ['real dashboard and log APIs', 'login', 'scope/session filters', 'pagination with full summaries', 'failure drilldown and reset', 'call detail', 'trace pagination', 'date presets and custom dates', 'chart drilldown', 'failure filtering and pagination', 'all logs with DEBUG and INFO filters', 'reset restores failure view', 'tool failure trace without model record', 'inbox removed from navigation', 'empty state', 'overview/logs/requests 320/390/768/1440px overflow', 'ledger failure and recovery', 'redaction and no page errors'] }));
 } finally { await browser?.close(); await platform.stop(); await rm(dir, { recursive: true, force: true }); }

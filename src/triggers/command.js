@@ -233,7 +233,7 @@ export default {
     // 权限错误）在此统一掐掉；管理员未 @ 同样不执行（寻址未明确，宁可漏响应
     // 不乱响应）
     if (ctx.event.message_type === 'group' && !matchAt(ctx.event)) {
-      logger.info(`[command] ${ctx.sessionKey} 群聊指令未 @ 本鱼，静默忽略`);
+      logger.event('handler.skipped', { ...ctx.logContext, sessionKey: ctx.sessionKey, outcome: 'skipped', reason: 'group_at_required', data: { trigger: 'command' } });
       return;
     }
 

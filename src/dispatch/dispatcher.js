@@ -32,8 +32,6 @@ export async function dispatch(input) {
     return;
   }
 
-  logger.info(`收到消息: [${sessionKey}] id=${event.message_id ?? 'unknown'} types=${messageTypes.join(',')}`);
-
   // 存储钩子（§6.3 旁听者）：打标后、进触发器链前，不 await，写失败只记 WARN
   const snapshot = {
     traceId: logContext.traceId,
@@ -80,15 +78,13 @@ export async function dispatch(input) {
   for (const trigger of getTriggers()) {
     let matched = false;
     try {
-      matched = trigger.match(event);
+      matched = trigger.match(event, logContext);
     } catch (err) {
       logger.event('handler.match_failed', { ...logContext, level: 'ERROR', outcome: 'failed', reason: 'match_error', data: { trigger: trigger.name, error: err.message } });
-      logger.error(`触发器 ${trigger.name} match 异常: ${err.message}`);
       continue; // 本触发器作废，继续尝试下一个
     }
     if (!matched) continue;
 
-    logger.info(`触发器命中: ${trigger.name}`);
     const startedAt = Date.now();
     const operationId = randomUUID();
     const fields = { ...logContext, operationId, data: { trigger: trigger.name, messageId: event.message_id } };
@@ -97,7 +93,6 @@ export async function dispatch(input) {
       await trigger.handle(ctx);
       logger.event('handler.finished', { ...fields, outcome: 'completed', elapsedMs: Math.max(0, Date.now() - startedAt) });
     } catch (err) {
-      logger.error(`触发器 ${trigger.name} 处理异常: ${err.message}`);
       logger.event('handler.finished', { ...fields, level: 'ERROR', outcome: 'failed', reason: 'handler_error', elapsedMs: Math.max(0, Date.now() - startedAt), data: { ...fields.data, error: err.message } });
     }
     return; // 命中即停：一条消息只触发一个触发器

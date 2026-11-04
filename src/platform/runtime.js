@@ -29,7 +29,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
   const releaseLock = await acquireRuntimeLock(config.dataDir);
   try {
     const startedAt = Date.now();
-    configureLogger({ dataDir: config.dataDir, level: config.logLevel, retentionDays: config.retentionDays, secrets: [config.accessToken, config.deepseekApiKey, config.imageApiKey, config.adminToken] });
+    configureLogger({ dataDir: config.dataDir, level: config.logLevel, sessionKey: config.logSession, retentionDays: config.retentionDays, secrets: [config.accessToken, config.deepseekApiKey, config.imageApiKey, config.adminToken] });
     await initializeMediaStore();
     await initializeMemeLibrary();
     await initializeSettings(setUsagePolicy);
@@ -57,10 +57,10 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
       media: createMediaService(),
       prompt: { ...prompt, workspace: getPromptWorkspace, saveDraft: savePromptDraft, restore: restorePromptVersion, review: reviewPromptTest, publish: publishPromptDraft },
       getSettings,
-      updateSettings: async (value) => { const result = await updateSettings(value); logger.info('[admin] 行为配置与用量策略已保存', { revision: result.revision }); logger.event('admin.settings.updated', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { revision: result.revision } }); return result; },
+      updateSettings: async (value) => { const result = await updateSettings(value); logger.event('admin.settings.updated', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { revision: result.revision } }); return result; },
       listUsers,
-      setUser: async (id, value) => { const result = await setUser(id, value); logger.info('[admin] 用户权限已修改', { id, role: result.role }); logger.event('admin.user.updated', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { userId: id, role: result.role } }); return result; },
-      deleteUser: async (id) => { const result = await deleteUser(id); logger.info('[admin] 用户恢复默认权限', { id }); logger.event('admin.user.reset', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { userId: id } }); return result; },
+      setUser: async (id, value) => { const result = await setUser(id, value); logger.event('admin.user.updated', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { userId: id, role: result.role } }); return result; },
+      deleteUser: async (id) => { const result = await deleteUser(id); logger.event('admin.user.reset', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { userId: id } }); return result; },
       scheduler,
       readEvents,
       readLogs: async (query) => { const items = await readLogs(query); return { items, nextCursor: items.length >= (query.limit ?? 100) ? items.at(-1).cursor : null }; },

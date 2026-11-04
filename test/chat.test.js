@@ -365,7 +365,8 @@ test('LLM 失败兜底：HTTP 500 → reply 固定文案 + WARN 日志', { timeo
       (f) => f.action === 'send_msg' && f.params?.user_id === 5001 && f.params?.message === FALLBACK
     );
     assert.ok(frame, '兜底文案应出站');
-    await waitUntil(() => logs.some((line) => line.includes('WARN') && line.includes('LLM 调用失败')));
+    await waitUntil(() => logs.some((line) => line.includes('WARN') && line.includes('回复生成失败')));
+    assert.equal(logs.filter(line => line.includes('回复生成失败')).length, 1, '同一生成失败只输出一次');
   } finally {
     console.log = originalLog;
     llmServer.setReply('MOCK_LLM_REPLY');

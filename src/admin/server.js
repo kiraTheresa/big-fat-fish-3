@@ -13,6 +13,7 @@ STATIC.set('/usage.css', ['usage.css', 'text/css']);
 STATIC.set('/usage-view.js', ['usage-view.js', 'text/javascript']);
 STATIC.set('/request-view.js', ['request-view.js', 'text/javascript']);
 STATIC.set('/requests.css', ['requests.css', 'text/css']);
+STATIC.set('/src/utils/log-format.js', ['../src/utils/log-format.js', 'text/javascript']);
 const hash = (value) => createHash('sha256').update(value).digest();
 function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });

@@ -98,6 +98,7 @@ export const config = {
   adminToken: process.env.ADMIN_TOKEN ?? '',
   chromeExecutable: process.env.CHROME_EXECUTABLE ?? '',
   logLevel: process.env.LOG_LEVEL ?? 'INFO',
+  logSession: process.env.LOG_SESSION ?? '',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   // ---- AIChat（LLM）----
   // DeepSeek API Key（留空 = chat 触发器不生效）

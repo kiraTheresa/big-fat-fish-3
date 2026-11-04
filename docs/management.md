@@ -29,15 +29,14 @@ Prompt 工作台提供编辑、测试与评审、检查与发布、运行记录�
 
 | 页面 | 可执行的操作 |
 |---|---|
-| 总览 | 查看 WebSocket、心跳、运行时间、任务、入站事件及模型用量 |
-| 事件收件箱 | 按类型、会话筛选，分页查看完整事件及消息段 |
+| 总览 | 查看连接、运行时间、最近失败、发送积压及模型用量 |
 | 配置 | 编辑触发条件、戳一戳短回复提示词、对话冷却、回复延迟/分段/引用、模型功能开关及每日上限 |
 | Prompt 工作台 | 全局草稿、请求预览、会话快照测试、人工评审、发布 / 回退与工具调用观察；见 [操作说明](prompt-console.md) |
 | 绘图作品 | 浏览生成图片，搜索、按来源会话筛选、分页、查看提示词等详情及下载本地原图 |
 | 表情收藏 | 浏览已记录的表情，搜索、按来源会话和收藏状态筛选、分页、查看详情及下载本地原图 |
 | 用户权限 | 登记 QQ，设为普通用户、管理员或封禁，恢复默认权限 |
 | 调度 | 新建、修改、暂停、删除单次或间隔任务；查看执行结果 |
-| 日志 | 按级别、关键词筛选结构化日志 |
+| 运行日志 | 默认仅看失败，可切换全部日志并筛选 DEBUG/INFO/WARN/ERROR、会话与关键词；从详情进入完整业务链路 |
 | 请求与稳定性 | 查看模型请求频率、耗时、失败原因与业务链路；支持日期、用途、来源和会话筛选 |
 | Token 用量与费用 | 今天 / 近 7 天 / 近 30 天 / 自定义日期，按会话查看预估费用、计价完整度、走势、用途与会话排行，筛选明细并下载 PNG 摘要 |
 
@@ -55,7 +54,7 @@ Prompt 工作台提供编辑、测试与评审、检查与发布、运行记录�
 
 ## 记忆提炼失败与退避
 
-日志中的 `[distill] 连续失败退避中` 表示后台记忆提炼连续失败后暂缓调用模型，满一小时后自动恢复尝试，不会阻止普通聊天或表情工具。常见原因包括模型出错、补丁格式不正确或改动了锁定记忆；应查看退避前的 WARN。两个记忆文件的 `- [` 锁定行都必须原样保留，旧发布模板也会追加这一固定约束；容量压缩仅针对非锁定内容，校验失败时不覆盖原文件。
+日志中的“连续失败退避中”（DEBUG）表示后台记忆提炼连续失败后暂缓调用模型，满一小时后自动恢复尝试，不会阻止普通聊天或表情工具。常见原因包括模型出错、补丁格式不正确或改动了锁定记忆；应查看退避前的失败记录。两个记忆文件的 `- [` 锁定行都必须原样保留，旧发布模板也会追加这一固定约束；容量压缩仅针对非锁定内容，校验失败时不覆盖原文件。
 
 ## 配置优先级与生效
 
@@ -182,19 +181,24 @@ Prompt 工作台提供编辑、测试与评审、检查与发布、运行记录�
 - 公共字段：`schemaVersion`、`id`、`time`、`level`、`event`、`message`。
 - 关联字段：`traceId` 标识一次业务处理，`operationId` 标识某次模型调用、工具执行或发送。模型操作 ID 与用量账本 ID 相同；入站事件、消息记录和线上 Prompt run 保存关联的 traceId。
 - 业务字段：`sessionKey`、`source`（`live` / `test` / `scheduled` / `admin` / `system`）、`outcome`、`reason`、`elapsedMs`，扩展元数据放在 `data`。
-- 业务事件固定落盘，不受 `LOG_LEVEL` 过滤；终端输出与普通诊断日志仍受级别控制。沿用日志保留策略、脱敏、串行写入与写入故障状态。写盘失败不会自动补发消息或重跑模型；业务日志不是可靠消息队列或账本事务。
+- 业务事件和普通 WARN/ERROR 固定落盘，不受终端 `LOG_LEVEL` / `LOG_SESSION` 过滤；普通 INFO/DEBUG 诊断仍受级别控制。沿用日志保留策略、脱敏、串行写入与写入故障状态。写盘失败不会自动补发消息或重跑模型；业务日志不是可靠消息队列或账本事务。
 - 不记录完整请求、工具参数、回复正文或图片。敏感键脱敏，扩展数据超过 16 KiB 时省略。用量、协议原文和 Prompt 调试详情仍由原存储负责。
 
-关键事件包括 `handler.started/finished/skipped/match_failed`、`chat.skipped`、`chat.response.ready/failed`、`chat.fallback.queued`、`model.request.started/finished/rejected`、`tool.started/finished` 、`reply.queued/started/finished`、`distill.started/finished` 及成功的 `admin.settings.updated` / `admin.user.updated` / `admin.user.reset`。未命中触发器、权限拒绝和聊天冷却分别使用稳定原因码；业务结果不依赖解析中文日志。
+关键事件包括 `handler.started/finished/skipped/match_failed`、`chat.matched/not_matched/skipped`、`chat.response.ready/failed`、`chat.vision.degraded`、`chat.fallback.queued`、`model.request.started/finished/rejected`、`model.tools.offered`、`model.response.received`、`tool.started/finished`、`reply.queued/started/finished`、`distill.started/finished` 及成功的管理操作。chat 命中原因记录私聊、@、名字呼唤或引用；群聊按既有顺序短路，只记录首个命中条件。工具已提供、模型选择工具与工具实际结果分别记录；复用结果不代表再次执行。
+
+终端默认 `LOG_LEVEL=INFO`，显示命中、命中后跳过、模型请求、工具选择/结果和平台发送确认，不刷入站消息、心跳与元数据 JSON。`DEBUG` 额外显示未命中、处理器返回和发送队列细节；可配合 `LOG_SESSION=g-123` 限定终端会话，其他会话的失败仍按级别显示，完整链路继续落盘。例如 `LOG_LEVEL=DEBUG LOG_SESSION=g-123 npm start`。终端时间使用北京时间。
+
+前端撤掉消息收件箱导航与概览消息流，原协议事件存储、`GET /api/events` 和旧 `#events` 地址继续保留。运行日志默认“仅看失败”，也可切换“全部日志”查看已落盘的 DEBUG/INFO/WARN/ERROR；重置筛选会恢复仅看失败。概览始终聚焦最近失败。失败记录以阶段为单位展示，不代表失败消息数：失败、未知、降级、部分完成及用量账本写入失败均可出现；正常跳过、能力停用和预算拒绝不计入。历史纯文字 WARN/ERROR 无法精确分类，仍保留展示。日志详情可按 traceId 查看包括成功步骤在内的整轮链路；无 ID 的旧记录不推测关联。
 
 发送队列保存每条消息的关联字段，出队时使用原字段，避免多个会话并发时串线。`reply.finished.outcome=confirmed` 仅表示 OneBot 返回成功和有效消息 ID，不代表用户已读；明确拒绝或未连接记 `failed`，超时、中止或无有效消息 ID 记 `unknown`，均不自动重发。`data.waitMs` 为队列等待时间，发送事件的 `elapsedMs` 包含排队时间。
 
 `handler.finished.outcome=completed` 只表示处理器返回，不能当作最终回复成功；模型失败后可能发送兜底，一轮也可能产生多个工具或发送。当前不额外计算整轮回复成功率。模型事件耗时沿用用量账本口径，包括准入预留后的准备和网关处理，不是纯上游推理时间。绘图、表情与用量报告发送也沿用同一发送通道。
 
-鉴权后的 `GET /api/logs` 增加精确筛选：`traceId`、`operationId`、`event`、`sessionKey`、`source`、`outcome`；支持 `since` / `until`（毫秒时间戳或日期时间字符串，含边界），可与原有 `level`、`q`、`limit`、`before` 游标组合。示例：
+鉴权后的 `GET /api/logs` 支持精确筛选：`traceId`、`operationId`、`event`、`sessionKey`、`source`、`outcome`；支持 `failuresOnly=true`（按业务结果筛选失败，分页前过滤，默认 false）、`since` / `until`（毫秒时间戳或日期时间字符串，含边界），可与 `level`、`q`、`limit`、`before` 游标组合。关键词匹配文案、阶段、原因、工具/模型名、会话和链路 ID。示例：
 
 ```text
 /api/logs?traceId=<本轮ID>&limit=100
+/api/logs?failuresOnly=true&sessionKey=g-123
 /api/logs?event=model.request.finished&outcome=failed&source=live
 /api/logs?event=reply.finished&outcome=unknown
 ```

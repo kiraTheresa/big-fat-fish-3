@@ -156,3 +156,35 @@ test('business events preserve cursor pagination, cap detail size and expose wri
   assert.equal(getLogStats().pendingWrites, 0);
   assert.equal(typeof getLogStats().lastError, 'string');
 });
+
+test('failure filtering includes unknown, degradation and storage errors, excludes normal skips and policy denials before pagination', async () => {
+  configureLogger({ dataDir: join(root, 'failures'), level: 'ERROR', sessionKey: 'g-other' });
+  logger.warn('historical-style warning');
+  logger.event('reply.finished', { traceId: 'failure-trace', outcome: 'unknown', data: { error: 'confirmation timeout' } });
+  logger.event('chat.vision.degraded', { traceId: 'failure-trace', outcome: 'degraded' });
+  logger.event('model.request.finished', { traceId: 'failure-trace', outcome: 'success', data: { ledgerSaved: false } });
+  logger.event('model.request.rejected', { outcome: 'rejected', reason: 'USAGE_STORAGE', data: { error: 'ledger damaged' } });
+  for (const reason of ['FEATURE_DISABLED', 'USAGE_LIMIT']) {
+    logger.event('model.request.rejected', { level: 'WARN', outcome: 'rejected', reason });
+    logger.event('chat.response.failed', { level: 'WARN', outcome: 'failed', reason });
+  }
+  logger.event('handler.skipped', { level: 'WARN', outcome: 'skipped', reason: 'permission_denied' });
+  logger.event('chat.skipped', { level: 'WARN', outcome: 'skipped', reason: 'cooldown' });
+  logger.event('tool.finished', { outcome: 'success' });
+  logger.event('tool.finished', { outcome: 'failed', reason: 'FEATURE_DISABLED' });
+  const first = await readLogs({ failuresOnly: 'true', limit: 2 });
+  const second = await readLogs({ failuresOnly: true, limit: 2, before: first.at(-1).cursor });
+  const third = await readLogs({ failuresOnly: true, limit: 2, before: second.at(-1).cursor });
+  const rows = [...first, ...second, ...third];
+  assert.equal(rows.length, 6);
+  assert.equal(new Set(rows.map(row => row.id)).size, 6);
+  assert.equal(rows[0].event, 'tool.finished', '实际工具失败不能因原因码与策略拒绝相同而被隐藏');
+  assert.equal(rows[1].reason, 'USAGE_STORAGE');
+  assert.equal(rows.at(-1).message, 'historical-style warning');
+  assert.equal((await readLogs({ failuresOnly: true, traceId: 'failure-trace' })).length, 3);
+  assert.equal((await readLogs({ failuresOnly: true, q: 'confirmation timeout' })).length, 1);
+  assert.equal((await readLogs({ failuresOnly: true, q: '用量账本写入失败' })).length, 1);
+  assert.ok((await readLogs({ failuresOnly: 'false' })).length > rows.length);
+  await assert.rejects(readLogs({ failuresOnly: 'invalid' }), /Invalid failuresOnly/);
+  configureLogger({ sessionKey: '' });
+});

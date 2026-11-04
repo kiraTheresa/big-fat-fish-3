@@ -40,7 +40,7 @@ export default {
 
     // 群聊未 @ 本鱼时静默；私聊直接使用。
     if (event.message_type === 'group' && !matchAt(event)) {
-      logger.info(`[draw] ${sessionKey} 群聊 /draw 未 @ 本鱼，静默忽略`);
+      logger.event('handler.skipped', { ...ctx.logContext, sessionKey, outcome: 'skipped', reason: 'group_at_required', data: { trigger: 'draw' } });
       return;
     }
 
