@@ -5,7 +5,7 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
-## [Unreleased]
+## [0.36.0] - 2026-11-09
 
 ### feat
 
@@ -13,13 +13,17 @@ Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` throug
 - PNG usage reports rendered with Playwright / Chromium from the shared web view; browser export uses the displayed statistics snapshot.
 - Structured business logs correlate triggers, model attempts, tools and sends. The console focuses on failures and links to complete traces.
 - Request and stability view adds request frequency, known-result failure rate, successful-request P95, detail filtering and trace navigation.
+- The Prompt workbench uses continuous module cards, a page-wide request JSON view, and in-place draft editing. The single-run test pane uses the existing test sandbox.
+- The management toolbar can temporarily allow inline styles for Codex browser annotations on direct localhost and LAN connections. Changing the setting requires the management token.
+
+### fix
+
+- Compose can publish the management console on a separate host port via `ADMIN_PUBLISH_PORT`. The container listens on the configured `ADMIN_PORT`.
 
 ### chore
 
 - Deployment guidance includes Clash / Mihomo routing rules for the configured model and QQ media hosts.
 - Documentation now has one task-oriented index, feature-completion update milestones, separate usage and observability guides, and archived verification records. Daily changes use focused validation.
-
-These entries summarize development after 0.30.0; no new release number is assigned here. As of the 2026-11-04 documentation review, commit titles reach 0.33.0 while the first numbered changelog entry and package versions remain 0.30.0. The runtime `/version` follows the numbered changelog, not commit titles.
 
 ## [0.30.0] - 2026-10-30
 

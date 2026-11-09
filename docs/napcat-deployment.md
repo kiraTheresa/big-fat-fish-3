@@ -81,6 +81,8 @@ Chromium 按需启动，不影响普通文字聊天的启动；生成报告时�
 
 修改源码或默认 Prompt 后，运行 `docker compose up -d --build bot` 重建 Bot。只修改 `.env` 时运行 `docker compose up -d bot`；同时修改连接令牌时也需 `docker compose up -d napcat`。单纯 `restart` 不会重新加载容器环境。
 
+如果 Docker 提示宿主的 `3210` 端口已被占用，可在 `.env` 设置 `ADMIN_PUBLISH_PORT=3211` 后运行 `docker compose up -d bot`，再访问 `http://127.0.0.1:3211`。容器内部仍监听 `ADMIN_PORT`。从宿主机 Bot 切换到容器时，先停止旧 Bot，避免两个实例同时使用 `data/` 和同一 QQ 会话。
+
 `docker compose ps` 查看容器状态，`docker compose logs --tail=100 bot` 查看连接及启动结果。连接成功后可在 QQ 发 `ping` 检查收发链路，再按 [使用指南](usage.md) 测试聊天。只收到 `pong` 不能证明模型接口已正常工作。模型失败、发送结果未知和请求耗时的排查见 [日志与排障](observability.md)。
 
 Bot 数据默认在 `data/`，QQ 登录数据在 `napcat/`；备份时停止 Bot 并复制完整配置和数据，自定义路径也需一起保存，具体见 [持久化说明](management.md#持久化)。
