@@ -44,7 +44,11 @@
       <div class="workspace">
         <header class="page-header">
           <div><p class="eyebrow" id="page-eyebrow">WORKSPACE / OVERVIEW</p><h1 id="page-title">运行概览</h1><p class="page-description" id="page-description">检查连接、调用和任务状态，进入常用工具。</p></div>
-          <div class="header-actions"><span id="connection-status" class="pill"><span class="status-dot neutral"></span>读取连接状态</span><button id="refresh" class="icon-button glass" type="button" aria-label="刷新当前页面" title="刷新当前页面"></button></div>
+          <div class="header-actions">
+            <button id="annotation-preview" class="button small" type="button" data-action="annotation-preview" aria-label="批注兼容" aria-pressed="false" title="作用于此实例的本机和局域网页面，刷新后生效" hidden>批注兼容 · 关</button>
+            <span id="connection-status" class="pill"><span class="status-dot neutral"></span>读取连接状态</span>
+            <button id="refresh" class="icon-button glass" type="button" aria-label="刷新当前页面" title="刷新当前页面"></button>
+          </div>
         </header>
         <div class="view-toolbar"><span id="updated-at" class="muted">等待更新</span><label id="live-control" class="live-control"><input type="checkbox" id="auto-refresh">每 20 秒更新</label></div>
         <main id="content" tabindex="-1" aria-live="polite" aria-busy="false"></main>

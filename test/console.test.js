@@ -18,7 +18,7 @@ function harness(responder = () => ({}), { signedIn = true, storage = new Map(),
   let timerId = 0;
   const node = (selector) => {
     if (!nodes.has(selector)) nodes.set(selector, {
-      innerHTML: '', textContent: '', hidden: false, value: '', disabled: false, open: false, name: '',
+      innerHTML: '', textContent: '', hidden: false, value: '', disabled: false, open: false, name: '', dataset: {},
       listeners: new Map(),
       classList: { toggle() {} }, addEventListener(event, callback) { this.listeners.set(event, callback); }, setAttribute() {}, removeAttribute() {},
       focus() {}, contains() { return false; }, close() { this.open = false; }, showModal() { this.open = true; },
@@ -76,6 +76,29 @@ const LOGIN_TTL = 30 * 60 * 1000;
 const LOGIN_START = 1800000000000;
 const loginRecord = (expiresAt = LOGIN_START + LOGIN_TTL) => JSON.stringify({ token: 'remembered-token', expiresAt });
 const loginStorage = (record = loginRecord()) => new Map([[LOGIN_KEY, record]]);
+
+test('批注开关保护未保存修改，成功后重新载入文档', async () => {
+  const ui = harness(() => ({ available: true, enabled: true }));
+  await ui.ready;
+  let reloads = 0;
+  ui.context.location.reload = () => { reloads++; };
+  ui.run('updateStatus({ annotationPreview: { available: true, enabled: false } })');
+  const button = ui.node('#annotation-preview');
+  assert.equal(button.hidden, false);
+  button.dataset.action = 'annotation-preview';
+  const click = () => ui.documentListeners.get('click')({
+    target: { closest: (selector) => selector === '[data-action]' ? button : null },
+  });
+  ui.run('state.dirty = true');
+  await click();
+  assert.equal(ui.calls.length, 0);
+  ui.run('state.dirty = false');
+  await click();
+  assert.equal(ui.calls[0].url, '/api/annotation-preview');
+  assert.equal(ui.calls[0].options.body, '{"enabled":true}');
+  assert.equal(button.dataset.enabled, 'true');
+  assert.equal(reloads, 1);
+});
 
 test('成功验证后才记住令牌 30 分钟，刷新自动验证并进入，刷新不续期', async () => {
   const data = fixtures();

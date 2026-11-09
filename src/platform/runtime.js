@@ -78,7 +78,10 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
     };
     let management;
     if (admin && config.adminToken) {
-      management = await startAdminServer({ host: config.adminHost, port: config.adminPort, token: config.adminToken, services });
+      management = await startAdminServer({
+        host: config.adminHost, port: config.adminPort, token: config.adminToken, services,
+        annotationPreview: config.adminAnnotationPreview,
+      });
       logger.info(`管理网站已启动，监听 ${config.adminHost}:${management.port}`);
     } else if (admin) logger.info('管理网站未启用：请在 .env 配置 ADMIN_TOKEN（至少 24 字符）');
     if (schedule) scheduler.start();

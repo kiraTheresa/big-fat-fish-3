@@ -4,8 +4,25 @@ import { readFile } from 'node:fs/promises';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { BlockList } from 'node:net';
 
 const WEB_DIR = fileURLToPath(new URL('../../web/', import.meta.url));
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+const ANNOTATION_CSP = CSP.replace("style-src 'self';", "style-src 'self' 'unsafe-inline';");
+const localNetworks = new BlockList();
+localNetworks.addSubnet('127.0.0.0', 8);
+localNetworks.addSubnet('10.0.0.0', 8);
+localNetworks.addSubnet('172.16.0.0', 12);
+localNetworks.addSubnet('192.168.0.0', 16);
+localNetworks.addAddress('::1', 'ipv6');
+localNetworks.addSubnet('fc00::', 7, 'ipv6');
+localNetworks.addSubnet('fe80::', 10, 'ipv6');
+
+function allowsAnnotationPreview(req) {
+  if (req.headers.forwarded || req.headers['x-forwarded-for']) return false;
+  const address = req.socket.remoteAddress;
+  return !!address && localNetworks.check(address, address.includes(':') ? 'ipv6' : 'ipv4');
+}
 const STATIC = new Map([['/', ['index.html', 'text/html']], ['/index.html', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']], ['/prompt.js', ['prompt.js', 'text/javascript']], ['/style.css', ['style.css', 'text/css']], ['/styles.css', ['styles.css', 'text/css']]]);
 STATIC.set('/media.js', ['media.js', 'text/javascript']);
 STATIC.set('/media.css', ['media.css', 'text/css']);
@@ -31,15 +48,16 @@ async function body(req, limit = 65536) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw Object.assign(new Error('JSON 格式不正确'), { status: 400 }); }
 }
-export async function startAdminServer({ host = '127.0.0.1', port = 3210, token, services, webDir = WEB_DIR }) {
+export async function startAdminServer({ host = '127.0.0.1', port = 3210, token, services, webDir = WEB_DIR, annotationPreview = false }) {
   if (typeof token !== 'string' || token.length < 24) throw new Error('ADMIN_TOKEN 至少需要 24 个字符');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('ADMIN_PORT 不正确');
   const expected = hash(token);
+  let annotationEnabled = annotationPreview;
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', CSP);
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname === '/healthz' && req.method === 'GET') return reply(res, 200, { ok: true });
@@ -48,6 +66,9 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
         const asset = STATIC.get(url.pathname);
         if (!asset) return reply(res, 404, { error: '页面不存在' });
         const contents = await readFile(join(webDir, asset[0]));
+        if (asset[1] === 'text/html' && annotationEnabled && allowsAnnotationPreview(req)) {
+          res.setHeader('Content-Security-Policy', ANNOTATION_CSP);
+        }
         res.writeHead(200, { 'Content-Type': `${asset[1]}; charset=utf-8` });
         return res.end(req.method === 'HEAD' ? undefined : contents);
       }
@@ -93,7 +114,18 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
         const handlers = { 'PUT draft': 'saveDraft', 'POST restore': 'restore', 'POST review': 'review', 'POST publish': 'publish', 'POST snapshot': 'snapshot', 'POST preview': 'preview', 'POST tests': 'startTest' };
         if (handlers[action]) return reply(res, action === 'POST tests' ? 202 : 200, await prompt[handlers[action]](await body(req, 524288)));
       }
-      if (route === 'GET /api/status') return reply(res, 200, await services.status());
+      if (route === 'GET /api/status') {
+        const status = await services.status();
+        const available = allowsAnnotationPreview(req);
+        return reply(res, 200, { ...status, annotationPreview: { available, enabled: available && annotationEnabled } });
+      }
+      if (route === 'PUT /api/annotation-preview') {
+        if (!allowsAnnotationPreview(req)) return reply(res, 403, { error: '请从本机或局域网直接访问工作台。' });
+        const value = await body(req, 1024);
+        if (typeof value?.enabled !== 'boolean') return reply(res, 400, { error: '批注兼容开关必须是布尔值。' });
+        annotationEnabled = value.enabled;
+        return reply(res, 200, { available: true, enabled: annotationEnabled });
+      }
       if (route === 'GET /api/config') return reply(res, 200, services.getSettings());
       if (route === 'PUT /api/config') return reply(res, 200, await services.updateSettings(await body(req)));
       if (route === 'GET /api/events') return reply(res, 200, await services.readEvents(query));

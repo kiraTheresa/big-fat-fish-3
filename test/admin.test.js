@@ -14,6 +14,34 @@ const admin = await startAdminServer({ port: 0, token: TOKEN, services: {
 const base = `http://127.0.0.1:${admin.port}`;
 const headers = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
 after(() => admin.close());
+test('鉴权后的批注开关仅影响本机或局域网直连 HTML，可关闭恢复', async (t) => {
+  const header = 'content-security-policy';
+  const strict = (await fetch(base)).headers.get(header);
+  assert.match(strict, /style-src 'self';/);
+  const preview = await startAdminServer({ host: '0.0.0.0', port: 0, token: TOKEN, services: { status: () => ({}) } });
+  t.after(() => preview.close());
+  const previewBase = `http://127.0.0.1:${preview.port}`;
+  const forwarded = { 'X-Forwarded-For': '198.51.100.5' };
+  const setPreview = (enabled, requestHeaders = headers) => fetch(`${previewBase}/api/annotation-preview`, {
+    method: 'PUT', headers: requestHeaders, body: JSON.stringify({ enabled }),
+  });
+  assert.equal((await setPreview(true, { 'Content-Type': 'application/json' })).status, 401);
+  assert.equal((await setPreview(true, { ...headers, Origin: 'https://example.test' })).status, 403);
+  assert.equal((await setPreview(true, { ...headers, ...forwarded })).status, 403);
+  assert.equal((await setPreview('true')).status, 400);
+  assert.equal((await fetch(previewBase)).headers.get(header), strict);
+  assert.deepEqual(await (await setPreview(true)).json(), { available: true, enabled: true });
+  assert.equal((await fetch(`${previewBase}/index.html`)).headers.get(header),
+    strict.replace("style-src 'self';", "style-src 'self' 'unsafe-inline';"));
+  assert.equal((await fetch(previewBase, { headers: forwarded })).headers.get(header), strict);
+  const status = await fetch(`${previewBase}/api/status`, { headers });
+  assert.equal(status.headers.get(header), strict);
+  assert.deepEqual((await status.json()).annotationPreview, { available: true, enabled: true });
+  const proxiedStatus = await fetch(`${previewBase}/api/status`, { headers: { ...headers, ...forwarded } });
+  assert.deepEqual((await proxiedStatus.json()).annotationPreview, { available: false, enabled: false });
+  assert.equal((await setPreview(false)).status, 200);
+  assert.equal((await fetch(previewBase)).headers.get(header), strict);
+});
 test('健康检查公开，所有管理 API 必须鉴权且响应不可缓存', async () => {
   assert.equal((await fetch(`${base}/healthz`)).status, 200);
   assert.equal((await fetch(`${base}/api/status`)).status, 401);

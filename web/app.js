@@ -246,6 +246,14 @@ function connectionInfo(connection) {
 function updateStatus(status) {
   const value = connectionInfo(status?.connection);
   $('#connection-status').innerHTML = `<span class="status-dot ${value.dot}"></span>${e(value.text)}`;
+  updateAnnotationPreview(status?.annotationPreview);
+}
+function updateAnnotationPreview(preview) {
+  const button = $('#annotation-preview');
+  button.hidden = preview?.available !== true;
+  button.dataset.enabled = String(preview?.enabled === true);
+  button.setAttribute('aria-pressed', button.dataset.enabled);
+  button.textContent = `批注兼容 · ${preview?.enabled ? '开' : '关'}`;
 }
 function markDirty() {
   state.dirty = true;
@@ -672,6 +680,16 @@ document.addEventListener('click', async (event) => {
   const index = Number(button.dataset.index);
   if (action === 'close-dialog') { closeDialog(); return; }
   if (action === 'retry') { loadPage(); return; }
+  if (action === 'annotation-preview') {
+    if (state.dirty || state.saving) { toast('请先结束当前编辑或保存，再切换批注兼容。'); return; }
+    await withButton(button, async () => {
+      const preview = await api('/annotation-preview', { method: 'PUT', body: { enabled: button.dataset.enabled !== 'true' } });
+      updateAnnotationPreview(preview);
+      if (state.dirty || state.saving) toast('批注设置已切换。请处理当前修改，再重新载入网页。');
+      else location.reload();
+    });
+    return;
+  }
   if (action === 'reload-config') { if (canLeave()) { state.dirty = false; loadPage(); } return; }
   if (action === 'reset-filters') {
     for (const key of Object.keys(state.filters[state.page])) state.filters[state.page][key] = '';
