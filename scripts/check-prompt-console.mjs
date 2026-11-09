@@ -35,10 +35,9 @@ try {
   await page.locator('.login-submit').click();
   await page.waitForSelector('#pp-request-blocks .pp-budget');
   await screenshot('prompt-desktop');
-  await page.locator('[data-pp-jump="release"]').click();
-  assert.equal(await page.evaluate(() => document.activeElement.id), 'pp-release-stage');
+  await page.locator('.pp-delivery > summary').click();
   assert.match(await page.locator('#pp-publish-reason').innerText(), /聊天测试/);
-  await page.locator('[data-pp-jump="edit"]').click();
+  await page.locator('#pp-edit').click();
   const seed = page.locator('[data-pp-field="prompts.seed"]');
   await seed.fill('# 大肥鱼\n一条喜欢海洋、简短说话的鱼。');
   await page.waitForTimeout(600);
@@ -53,18 +52,19 @@ try {
   assert.match(await page.locator('#pp-publish-reason').innerText(), /已满足/);
   await page.locator('#pp-note').fill('隔离实例端到端测试');
   await page.locator('#pp-publish').click();
-  await page.waitForFunction(() => document.querySelector('.pp-versionbar').textContent.includes('v1'));
+  await page.waitForFunction(() => document.querySelector('.pp-page-controls').textContent.includes('v1'));
   await page.waitForFunction(() => !document.querySelector('#pp-test').disabled);
-  await page.locator('[data-pp-section="context"]').click();
+  await page.locator('#pp-edit').click();
   await page.locator('[data-pp-field="context.historyLimit"]').fill('8');
   await page.waitForTimeout(600);
   assert.equal(await page.locator('#pp-publish').isDisabled(), true);
   await page.locator('#pp-save').click();
   await page.waitForFunction(() => !document.querySelector('#pp-test').disabled);
+  await page.locator('.pp-test > .pp-advanced > summary').first().click();
   await page.locator('#pp-compare').click();
   await page.waitForFunction(() => document.querySelectorAll('.pp-run').length === 2 && !document.querySelector('#pp-test').disabled);
   assert.equal(await page.locator('[data-pp-action="pass"]').count(), 1);
-  await page.locator('[data-pp-section="tools"]').click();
+  await page.locator('#pp-edit').click();
   assert.equal(await page.locator('[data-pp-field="tools.draw.enabled"]').isChecked(), true);
   await page.waitForFunction(() => document.querySelector('[data-pp-tool-status="draw"]').textContent.includes('未配置'));
   await page.locator('[data-pp-field="tools.remember_fact.enabled"]').uncheck();
@@ -79,7 +79,7 @@ try {
   page.on('dialog', (dialog) => dialog.accept());
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-    for (const name of ['overview', 'events', 'logs', 'usage', 'config', 'jobs', 'users']) {
+    for (const name of ['overview', 'logs', 'usage', 'config', 'jobs', 'users']) {
       await page.locator(`#navigation [data-page="${name}"]`).click();
       await page.waitForFunction(() => document.querySelector('#content').getAttribute('aria-busy') === 'false');
       assert.equal(await page.locator('.error-state').count(), 0, name);

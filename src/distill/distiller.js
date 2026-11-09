@@ -10,6 +10,7 @@
 // 提炼中的会话进程内防重入（runningSet）。量纲约定：消息 JSONL 的 time 是秒级，与
 // distillSilenceMs（毫秒）比较需 ×1000，distillMark 水位存秒级（与消息 time 同量纲）。
 // 由 index.js 在 config.deepseekApiKey !== '' 时启动，进程退出时清理。
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../config.js';
@@ -135,6 +136,11 @@ async function recordDistillFail(sessionKey) {
 export async function distillSession(sessionKey, newMessages) {
   if (runningSet.has(sessionKey)) return; // 防重入：同会话提炼在途，本轮跳过
   runningSet.add(sessionKey);
+  const logContext = { traceId: randomUUID(), sessionKey, source: 'scheduled' };
+  const startedAt = Date.now();
+  let outcome = 'failed';
+  let reason = 'invalid_patch';
+  let data = {};
   try {
     // 失败退避检查（提炼三件套之三）：连续 ≥ 2 次全失败且冷却未过 → 本轮直接跳过、
     // 不再真调 LLM（确定性失败重试只会重复烧钱）；到期自动恢复尝试，无需人工干预
@@ -143,18 +149,19 @@ export async function distillSession(sessionKey, newMessages) {
       const sinceFail = Date.now() - (state.distillFailAt ?? 0);
       if (sinceFail < DISTILL_BACKOFF_MS) {
         const remainMin = Math.ceil((DISTILL_BACKOFF_MS - sinceFail) / 60000);
-        logger.info(`[distill] 会话 ${sessionKey} 连续失败退避中，剩余约 ${remainMin} 分钟`);
+        outcome = 'skipped'; reason = 'backoff';
+        data = { retryInMinutes: remainMin };
         return;
       }
     }
 
+    logger.event('distill.started', logContext);
     // 现有人设（首访自动落种子）：本次演化的底稿
     const persona = await getPersona(sessionKey);
-    const { content } = await chatCompletion(buildMessages(persona, newMessages), { kind: 'distill', sessionKey });
+    const { content } = await chatCompletion(buildMessages(persona, newMessages), { kind: 'distill', sessionKey, logContext });
 
     const patch = parsePatch(content);
     if (patch === null) {
-      logger.warn(`[distill] 会话 ${sessionKey} 提炼输出非合法 JSON 补丁，跳过（水位不动）`);
       await recordDistillFail(sessionKey);
       return;
     }
@@ -164,7 +171,7 @@ export async function distillSession(sessionKey, newMessages) {
     // 与其他全失败同路径（水位不动 + 计失败退避）。character 侧：未用过 /character 时
     // 锁定行为空、恒通过（存量行为不变）；种子/演化散文无 `- [` 行，不误伤
     if (!patchKeepsLockedLines(persona.memory, patch.memory) || !patchKeepsLockedLines(persona.character, patch.character)) {
-      logger.warn(`[distill] 会话 ${sessionKey} 补丁丢失锁定条目（/remember 或 /character 行），拒绝（水位不动）`);
+      reason = 'locked_content_missing';
       await recordDistillFail(sessionKey);
       return;
     }
@@ -173,7 +180,7 @@ export async function distillSession(sessionKey, newMessages) {
     // character 超限仅拒该文件、memory 超限由 store 兜底裁剪，互不连坐
     const applied = await applyPersonaPatch(sessionKey, patch);
     if (!applied.character && !applied.memory) {
-      logger.warn(`[distill] 会话 ${sessionKey} 人设补丁两文件均未落盘，跳过（水位不动）`);
+      reason = 'patch_not_written';
       await recordDistillFail(sessionKey);
       return;
     }
@@ -182,11 +189,9 @@ export async function distillSession(sessionKey, newMessages) {
     // 对话——这批消息已消化，重试只会把同一批再喂 LLM 一次；未落盘文件的遗留问题靠
     // 下轮新对话 + 预算反馈（user 侧字节数/净减警示）自然修复。水位推进优先于完美
     // 主义，这是掐断死循环的关键一环。
-    if (!applied.character || !applied.memory) {
-      logger.warn(
-        `[distill] 会话 ${sessionKey} 补丁部分落盘（character=${applied.character}, memory=${applied.memory}），水位仍推进`
-      );
-    }
+    outcome = applied.character && applied.memory ? 'success' : 'partial';
+    reason = outcome === 'partial' ? 'partial_patch' : undefined;
+    data = { characterWritten: applied.character, memoryWritten: applied.memory };
     // 保留秒级兼容水位；群聊另按本地接收时间和记录 ID 推进，合并期间发生的新调用。
     const maxTime = newMessages.reduce((max, rec) => Math.max(max, rec.time ?? 0), 0);
     await updateState(sessionKey, (current) => ({
@@ -196,10 +201,12 @@ export async function distillSession(sessionKey, newMessages) {
 
   } catch (err) {
     // 任何异常（LLM 超时/网络等）：水位与文件不动，下轮扫描重试（受退避保护）
-    logger.warn(`[distill] 会话 ${sessionKey} 提炼失败: ${err.message}`);
+    outcome = 'failed'; reason = err.code ?? 'distill_failed';
+    data = { error: err.message };
     await recordDistillFail(sessionKey); // 异常同为全失败：计入退避
   } finally {
     runningSet.delete(sessionKey);
+    logger.event('distill.finished', { ...logContext, level: ['failed', 'partial'].includes(outcome) ? 'WARN' : 'INFO', outcome, reason, data, elapsedMs: Math.max(0, Date.now() - startedAt) });
   }
 }
 

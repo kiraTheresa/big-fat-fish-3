@@ -101,10 +101,11 @@ test('失败续发：首条失败记 WARN（含 wording），第二条仍成功�
   }
 
   assert.ok(
-    logs.some((line) => line.includes('WARN') && line.includes('发送失败')),
+    logs.some((line) => line.includes('WARN') && line.includes('回复发送结果') && line.includes('失败')),
     `首条失败应记 WARN：${logs.join(' | ')}`
   );
   assert.ok(logs.some((line) => line.includes('mock failure')), '失败信息应包含 wording');
+  assert.equal(logs.filter(line => line.includes('mock failure')).length, 1, '同一发送失败只输出一次');
 
   // 唯一收口：全程不允许出现 send_group_msg / send_private_msg 直调
   assert.ok(

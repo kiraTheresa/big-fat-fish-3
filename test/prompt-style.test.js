@@ -98,3 +98,63 @@ test('测试进行中仍可切换；浏览器禁止持久化时不影响切换�
     assert.equal(ui.node('#prompt-console').dataset.promptStyle, 'relaxed');
   } finally { ui.controller.clear(); globalThis.localStorage = original; }
 });
+
+// Page-wide presentation and in-place edit cancellation must not mutate server drafts.
+test('页面级正文 / JSON 切换在编辑中保留表单与试聊；取消只还原配置', async () => {
+  const ui = harness();
+  const click = async (dataset, selector) => {
+    ui.handlers.click({ target: { closest: (query) => query === selector ? { dataset } : null } });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  try {
+    const html = await ui.controller.render(1);
+    assert.match(html, /data-pp-view="cards"/);
+    assert.match(html, /data-module="seed"/);
+    assert.match(html, /data-module="private"/);
+    ui.controller.attach(ui.root);
+    await new Promise((resolve) => setImmediate(resolve));
+    await click({ ppAction: 'edit' }, '[data-pp-action]');
+    const field = ui.node('[data-pp-field="prompts.seed"]');
+    field.dataset.ppField = 'prompts.seed'; field.value = '临时编辑的人设';
+    ui.handlers.input({ target: field });
+    ui.node('#pp-input').value = '不要丢掉这句试聊';
+    const count = ui.calls.length;
+    await click({ ppView: 'json' }, '[data-pp-view]');
+    assert.equal(ui.node('#prompt-console').dataset.view, 'json');
+    assert.equal(ui.node('#prompt-console').dataset.editing, 'true');
+    assert.equal(ui.appState.dirty, true);
+    assert.equal(ui.calls.length, count);
+    await click({ ppView: 'cards' }, '[data-pp-view]');
+    await click({ ppAction: 'cancel-edit' }, '[data-pp-action]');
+    assert.equal(ui.appState.dirty, false);
+    assert.equal(ui.node('#prompt-console').dataset.editing, 'false');
+    assert.equal(ui.node('#pp-input').value, '不要丢掉这句试聊');
+    assert.equal(ui.calls.some((call) => call.options?.method === 'PUT'), false);
+    const latest = ui.calls.filter((call) => call.path === '/prompt/preview').at(-1);
+    assert.equal(latest.options.body.config.prompts.seed, defaultPromptConfig().prompts.seed);
+  } finally { ui.controller.clear(); }
+});
+
+test('保存失败保留编辑内容与 dirty 状态，不关闭编辑或解锁发布', async () => {
+  const ui = harness();
+  const click = async (name) => {
+    ui.handlers.click({ target: { closest: (selector) => selector === '[data-pp-action]' ? { dataset: { ppAction: name } } : null } });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  try {
+    await ui.controller.render(1); ui.controller.attach(ui.root);
+    await new Promise((resolve) => setImmediate(resolve));
+    await click('edit');
+    const field = ui.node('[data-pp-field="prompts.seed"]');
+    field.dataset.ppField = 'prompts.seed'; field.value = '保存失败也应保留的内容';
+    ui.handlers.input({ target: field });
+    // The harness rejects PUT /prompt/draft; simulate a failed save without a server write.
+    await click('save');
+    assert.equal(ui.appState.dirty, true);
+    assert.equal(ui.appState.saving, false);
+    assert.equal(field.value, '保存失败也应保留的内容');
+    assert.equal(ui.node('#prompt-console').dataset.editing, 'true');
+    assert.equal(ui.node('#pp-publish').disabled, true);
+    assert.equal(ui.node('#pp-error').hidden, false);
+  } finally { ui.controller.clear(); }
+});

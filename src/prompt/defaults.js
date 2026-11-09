@@ -35,6 +35,7 @@ export function defaultPromptConfig({ historyLimit = 20, budgetBytes = 12000 } =
       save_meme: { enabled: true, ...toolDescriptions.save_meme },
       search_memes: { enabled: true, ...toolDescriptions.search_memes },
       send_meme: { enabled: true, ...toolDescriptions.send_meme },
+      send_usage_report: { enabled: true, ...toolDescriptions.send_usage_report },
     },
     execution: { maxToolRounds: 3, maxToolCalls: 4 },
   };

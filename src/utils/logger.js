@@ -6,9 +6,11 @@ import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { describeLog, isLogFailure } from './log-format.js';
 
+const EVENT_FIELDS = ['traceId', 'operationId', 'sessionKey', 'source', 'outcome', 'reason', 'elapsedMs', 'data'];
 const LEVELS = { DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 };
-let settings = { dataDir: null, secrets: [], level: 'INFO', retentionDays: 14 };
+let settings = { dataDir: null, secrets: [], level: 'INFO', sessionKey: '', retentionDays: 14 };
 let writeChain = Promise.resolve();
 let lastCleanupDay = null;
 let pendingWrites = 0;
@@ -60,14 +62,42 @@ function safeValue(value, depth = 0, seen = new WeakSet()) {
 }
 
 function log(level, args) {
-  if (LEVELS[level] < LEVELS[settings.level]) return;
+  if (LEVELS[level] < LEVELS[settings.level] && LEVELS[level] < LEVELS.WARN) return;
   const now = new Date();
   const safeArgs = args.map((arg) => safeValue(arg));
   const message = safeArgs.map((arg) => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ').slice(0, 8000);
-  const time = now.toLocaleTimeString('zh-CN', { hour12: false });
-  console.log(`[${time}] ${level} ${message}`);
+  return writeEntry({ id: randomUUID(), time: now.toISOString(), level, message });
+}
+
+function businessEvent(event, fields = {}) {
+  if (typeof event !== 'string' || !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(event) || event.length > 120) throw new TypeError('Invalid business event');
+  const level = fields.level ?? 'INFO';
+  if (!Object.hasOwn(LEVELS, level)) throw new TypeError('Invalid event level');
+  if (fields.elapsedMs !== undefined && (!Number.isFinite(fields.elapsedMs) || fields.elapsedMs < 0)) throw new TypeError('Invalid event duration');
+  const metadata = safeValue(Object.fromEntries(EVENT_FIELDS.filter(key => fields[key] !== undefined).map(key => [key, fields[key]])));
+  if (metadata.data && Buffer.byteLength(JSON.stringify(metadata.data)) > 16384) metadata.data = { omitted: true, reason: 'size_limit' };
+  const entry = { ...metadata, schemaVersion: 1, id: randomUUID(), time: new Date().toISOString(), level, event, message: redactText(fields.message ?? event) };
+  // Business facts must survive diagnostic log-level changes.
+  writeEntry(entry);
+  return entry.id;
+}
+
+function writeEntry(entry) {
+  const time = new Date(entry.time).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+  const quiet = (entry.event === 'handler.started' && entry.data?.trigger === 'chat')
+    || (entry.event === 'handler.finished' && entry.outcome === 'completed')
+    || ['reply.queued', 'reply.started', 'chat.response.ready'].includes(entry.event)
+    || (entry.event === 'handler.skipped' && entry.reason === 'no_trigger')
+    || (entry.event === 'distill.finished' && entry.outcome === 'skipped');
+  const level = quiet ? 'DEBUG' : entry.level;
+  const inSession = !settings.sessionKey || !entry.sessionKey || entry.sessionKey === settings.sessionKey || isLogFailure(entry);
+  if (LEVELS[level] >= LEVELS[settings.level] && inSession) {
+    const { title, result, detail } = describeLog(entry);
+    const context = [typeof entry.traceId === 'string' ? entry.traceId.slice(0, 8) : '', entry.sessionKey].filter(Boolean).join(' ');
+    const message = entry.event ? [title, result, detail, entry.elapsedMs === undefined ? '' : `${entry.elapsedMs}ms`].filter(Boolean).join(' · ') : entry.message;
+    console.log(`[${time}] ${level} ${context ? `[${context}] ` : ''}${message}`);
+  }
   if (!settings.dataDir) return;
-  const entry = { id: randomUUID(), time: now.toISOString(), level, message };
   const options = { ...settings };
   pendingWrites++;
   writeChain = writeChain.then(async () => {
@@ -94,6 +124,7 @@ function log(level, args) {
 }
 
 export const logger = {
+  event: businessEvent,
   debug: (...args) => log('DEBUG', args),
   info: (...args) => log('INFO', args),
   warn: (...args) => log('WARN', args),
@@ -128,9 +159,17 @@ function parseBefore(before) {
 
 // Newest appended first. before accepts an opaque item.cursor (lossless) or a
 // legacy timestamp (strictly older times). Filters are literal text/exact levels.
-export async function readLogs({ level, q = '', limit = 100, before } = {}) {
+export async function readLogs({ level, q = '', limit = 100, before, since, until, event, traceId, operationId, sessionKey, source, outcome, failuresOnly = false } = {}) {
   await flushLogs();
   const boundary = parseBefore(before);
+  if (![true, false, 'true', 'false'].includes(failuresOnly)) throw new Error('Invalid failuresOnly filter');
+  const onlyFailures = failuresOnly === true || failuresOnly === 'true';
+  const parseTime = (value, fallback) => value === undefined ? fallback : typeof value === 'number' ? value : Date.parse(value);
+  const from = parseTime(since, -Infinity);
+  const to = parseTime(until, Infinity);
+  if ((since !== undefined && !Number.isFinite(from)) || (until !== undefined && !Number.isFinite(to)) || from > to) throw new Error('Invalid log time range');
+  const filters = Object.entries({ event, traceId, operationId, sessionKey, source, outcome }).filter(([, value]) => value !== undefined);
+  if (filters.some(([, value]) => typeof value !== 'string' || !value || value.length > 160)) throw new Error('Invalid log filter');
   if (!settings.dataDir) return [];
   const directory = join(settings.dataDir, 'logs');
   const cap = Math.max(1, Math.min(1000, Number(limit) || 100));
@@ -156,10 +195,13 @@ export async function readLogs({ level, q = '', limit = 100, before } = {}) {
         if (!entry || typeof entry.message !== 'string' || !LEVELS[entry.level]) continue;
         const time = Date.parse(entry.time);
         if (!Number.isFinite(time) || time >= boundary.time || (expectedLevel && entry.level !== expectedLevel)) continue;
-        if (query && !entry.message.toLowerCase().includes(query)) continue;
+        if (time < from || time > to || filters.some(([key, value]) => entry[key] !== value)) continue;
+        if (onlyFailures && !isLogFailure(entry)) continue;
+        if (query && !redactText([entry.message, ...Object.values(describeLog(entry)), entry.event, entry.sessionKey, entry.traceId].join(' ')).toLowerCase().includes(query)) continue;
         rows.push({
           id: typeof entry.id === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(entry.id) ? entry.id : `legacy-${day}-${lineNumber}`,
           cursor: encodeCursor(day, lineNumber),
+          ...safeValue(Object.fromEntries(['schemaVersion', 'event', ...EVENT_FIELDS].filter(key => entry[key] !== undefined).map(key => [key, entry[key]]))),
           time: entry.time, level: entry.level, message: redactText(entry.message),
         });
         if (rows.length > cap - items.length) rows.shift();

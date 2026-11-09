@@ -5,8 +5,8 @@ import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { logger, redactText } from './utils/logger.js';
 import { saveGeneratedImage } from './store/media-store.js';
 
-export async function generateImage(prompt, { sessionKey = 'system', onAttempt } = {}) {
-  const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey });
+export async function generateImage(prompt, { sessionKey = 'system', onAttempt, logContext = {} } = {}) {
+  const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey, traceId: logContext.traceId, source: logContext.source });
   let usage = null;
   let httpStatus;
   let images = 0;
@@ -26,6 +26,7 @@ export async function generateImage(prompt, { sessionKey = 'system', onAttempt }
       let detail = '';
       try {
         const body = await res.json();
+        usage = body.usage ?? null;
         const message = body.error?.message ?? body.message ?? body.error;
         if (typeof message === 'string') detail = redactText(message, [config.imageApiKey]).slice(0, 500);
       } catch { /* Non-JSON errors still retain their HTTP status. */ }

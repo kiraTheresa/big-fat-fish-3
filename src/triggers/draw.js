@@ -40,7 +40,7 @@ export default {
 
     // 群聊未 @ 本鱼时静默；私聊直接使用。
     if (event.message_type === 'group' && !matchAt(event)) {
-      logger.info(`[draw] ${sessionKey} 群聊 /draw 未 @ 本鱼，静默忽略`);
+      logger.event('handler.skipped', { ...ctx.logContext, sessionKey, outcome: 'skipped', reason: 'group_at_required', data: { trigger: 'draw' } });
       return;
     }
 
@@ -56,7 +56,7 @@ export default {
     await ctx.reply(`收到～本鱼在画「${summary}」啦，稍等哦`);
 
     try {
-      const { b64 } = await generateImage(prompt, { sessionKey });
+      const { b64 } = await generateImage(prompt, { sessionKey, logContext: ctx.logContext });
 
       deliverGeneratedImage(ctx, b64, prompt);
     } catch (err) {

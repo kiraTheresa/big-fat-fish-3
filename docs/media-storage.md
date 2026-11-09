@@ -1,5 +1,7 @@
 # 图片与表情包文件存储
 
+[← 文档目录](README.md)
+
 所有媒体位于 `DATA_DIR/media`，默认是项目下的 `data/media`。启动时自动创建两个目录，现有 Docker Compose 的 `./data:/app/data` 已覆盖它们，不需要额外挂载。数据目录已被 Git 和 Docker 构建上下文忽略。
 
 ```text
@@ -9,6 +11,8 @@ data/media/
 │       └── <UUID>/
 │           ├── image.png      # 扩展名按原始文件头识别
 │           └── metadata.json
+├── meme-library.json          # 跨会话共享收藏索引
+├── meme-library.v1.backup.json # 从 v1 升级时保留的原索引（如有）
 └── memes/                     # 表情包库
     └── <UUID>/
         ├── metadata.json     # 必须：类型、发送参数、名称、标签与来源
@@ -24,7 +28,7 @@ data/media/
 
 返回值为 `{ b64, asset }`，`asset.path` 相对于 `DATA_DIR/media`。保存失败会记录警告，并返回 `asset: null`；已生成的图片仍正常进入发送流程，不因磁盘错误重新调用付费绘图。未知图片格式按 `.bin` 保存原始内容，便于检查。
 
-上线前已经发到 QQ 的图片没有自动归档，无法从聊天记录里的文字占位还原；这次也不迁移控制台旧测试图片。
+上线前已经发到 QQ 的图片没有自动归档，无法从聊天记录里的文字占位还原；不会自动迁移控制台旧测试图片。
 
 ## 表情包存储接口
 
@@ -91,7 +95,7 @@ const stored = await readMeme(asset.id); // stored.send 保留原参数，stored
 
 ## 管理台浏览与下载
 
-侧栏“素材收藏”下的“绘图作品”（`#images`）与“表情收藏”（`#memes`）是两个独立页面，读取已有媒体元数据和 `meme-library.json` 收藏索引。旧 `#media` 链接兼容跳转到绘图作品页。两个页面各自保存搜索、筛选和分页状态，退出登录时清空；支持关键词搜索、来源会话筛选，以及按保存时间从新到旧分页（每页 24 项）。
+工作台的“绘图作品”（`#images`）与“表情收藏”（`#memes`）是两个独立页面，读取已有媒体元数据和 `meme-library.json` 收藏索引。旧 `#media` 链接兼容跳转到绘图作品页。两个页面各自保存搜索、筛选和分页状态，退出登录时清空；支持关键词搜索、来源会话筛选，以及按保存时间从新到旧分页（每页 24 项）。
 
 表情收藏页另有收藏状态筛选。名称、标签、启用状态和使用记录取自共享收藏；来源会话筛选仅按历史来源过滤，不改变使用范围。详情中可查看绘图提示词、模型、请求尺寸，或表情类型、标签与使用情况；元数据正常但未加入共享收藏的表情也可通过“未加入收藏”筛选找到。
 
@@ -107,4 +111,4 @@ const stored = await readMeme(asset.id); // stored.send 保留原参数，stored
 
 每份资产先在隐藏临时目录写入图片和元数据，文件 fsync 后再重命名目录发布；普通写入失败会清理该临时目录。强制断电/终止可能留下 `.<UUID>.tmp`，不应视为完整资产；停机后确认无写入可手动清理。不改写或自动删除已有媒体。
 
-修改源码后需重启本地 Bot；Docker 部署需重新构建并启动容器后，自动归档才会生效。
+相关改动可选择 `test/media-store.test.js`、`test/meme-library.test.js`、`test/media-gallery.test.js` 或 `test/media-gallery-api.test.js` 定向验证。运行部署按 [部署文档](napcat-deployment.md) 更新；媒体目录不依赖文档文件名。

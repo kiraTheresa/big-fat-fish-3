@@ -3,8 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { usageMoney, usageTime, usageSession, renderUsageShareContent } from '../web/usage-view.js';
+import { renderRequestsView, renderRequestDetail, renderRequestTrace } from '../web/request-view.js';
+import { describeLog } from '../src/utils/log-format.js';
 
-const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8').replace(/^import .*;$/gm, '');
 
 function harness(responder = () => ({}), { signedIn = true, storage = new Map(), now = 1800000000000, storageDisabled = false } = {}) {
   const nodes = new Map();
@@ -15,7 +18,7 @@ function harness(responder = () => ({}), { signedIn = true, storage = new Map(),
   let timerId = 0;
   const node = (selector) => {
     if (!nodes.has(selector)) nodes.set(selector, {
-      innerHTML: '', textContent: '', hidden: false, value: '', disabled: false, open: false, name: '',
+      innerHTML: '', textContent: '', hidden: false, value: '', disabled: false, open: false, name: '', dataset: {},
       listeners: new Map(),
       classList: { toggle() {} }, addEventListener(event, callback) { this.listeners.set(event, callback); }, setAttribute() {}, removeAttribute() {},
       focus() {}, contains() { return false; }, close() { this.open = false; }, showModal() { this.open = true; },
@@ -23,6 +26,7 @@ function harness(responder = () => ({}), { signedIn = true, storage = new Map(),
     return nodes.get(selector);
   };
   const context = vm.createContext({
+    usageMoney, usageTime, usageSession, renderUsageShareContent, renderRequestsView, renderRequestDetail, renderRequestTrace, describeLog,
     document: { querySelector: node, querySelectorAll() { return []; }, addEventListener(event, callback) { documentListeners.set(event, callback); }, title: '' },
     window: { addEventListener(event, callback) { windowListeners.set(event, callback); }, confirm() { return true; } },
     location: { hash: '' }, history: { replaceState() {} },
@@ -63,7 +67,7 @@ function fixtures() {
     '/api/users': { items: [{ id: '123', role: 'blocked', source: 'management', note: '<script>bad</script>' }], defaults: { draw: 'allow' } },
     '/api/jobs': { items: [{ id: 'job-1', name: '维护', type: 'maintenance', schedule: { kind: 'interval', everyMs: 1500 }, enabled: true, lastStatus: 'interrupted' }] },
     '/api/logs': { items: [{ time: Date.now(), level: 'WARN', message: '<script>bad</script>' }], nextCursor: null },
-    '/api/usage': { totals: { calls: 1, failures: 1, unknownUsageCalls: 1 }, byKind: [{ kind: 'draw', calls: 1 }], bySession: [{ sessionKey: 'g-1', calls: 1 }], items: [{ time: Date.now(), kind: 'draw', status: 'failure' }] },
+    '/api/usage/dashboard': { totals: { calls: 1, failures: 1, unknownUsageCalls: 1 }, byKind: [{ kind: 'draw', calls: 1 }], bySession: [{ sessionKey: 'g-1', calls: 1 }], items: [{ time: Date.now(), kind: 'draw', status: 'failure' }] },
   };
 }
 
@@ -72,6 +76,29 @@ const LOGIN_TTL = 30 * 60 * 1000;
 const LOGIN_START = 1800000000000;
 const loginRecord = (expiresAt = LOGIN_START + LOGIN_TTL) => JSON.stringify({ token: 'remembered-token', expiresAt });
 const loginStorage = (record = loginRecord()) => new Map([[LOGIN_KEY, record]]);
+
+test('批注开关保护未保存修改，成功后重新载入文档', async () => {
+  const ui = harness(() => ({ available: true, enabled: true }));
+  await ui.ready;
+  let reloads = 0;
+  ui.context.location.reload = () => { reloads++; };
+  ui.run('updateStatus({ annotationPreview: { available: true, enabled: false } })');
+  const button = ui.node('#annotation-preview');
+  assert.equal(button.hidden, false);
+  button.dataset.action = 'annotation-preview';
+  const click = () => ui.documentListeners.get('click')({
+    target: { closest: (selector) => selector === '[data-action]' ? button : null },
+  });
+  ui.run('state.dirty = true');
+  await click();
+  assert.equal(ui.calls.length, 0);
+  ui.run('state.dirty = false');
+  await click();
+  assert.equal(ui.calls[0].url, '/api/annotation-preview');
+  assert.equal(ui.calls[0].options.body, '{"enabled":true}');
+  assert.equal(button.dataset.enabled, 'true');
+  assert.equal(reloads, 1);
+});
 
 test('成功验证后才记住令牌 30 分钟，刷新自动验证并进入，刷新不续期', async () => {
   const data = fixtures();
@@ -227,6 +254,63 @@ test('用量账本不可读时展示不可用，不把未知的今日统计显�
   assert.match(html, /今日 Token[\s\S]*?metric-value">不可用/);
   assert.match(html, /今日失败调用<\/dt><dd>不可用/);
   assert.match(html, /今日生成图片<\/dt><dd>不可用/);
+});
+
+test('概览与失败页仅查询失败，收件箱不在导航中；从失败直接打开完整链路而无需模型记录', async () => {
+  const data = fixtures();
+  const row = { time: new Date().toISOString(), level: 'WARN', event: 'tool.finished', outcome: 'failed', traceId: 'tool-only-trace', sessionKey: 'g-123', data: { name: 'remember_fact', error: '<script>bad</script>' } };
+  data['/api/logs'] = { items: [row], nextCursor: 'older-cursor' };
+  const ui = harness((url) => data[url.split('?')[0]]);
+  const overview = await ui.run('renderOverview(1)');
+  assert.match(overview, /最近失败/);
+  assert.doesNotMatch(overview, /<h2>最近收到|全部事件|消息收件箱/);
+  assert.doesNotMatch(ui.node('#navigation').innerHTML, /data-page="events"/);
+  const logs = await ui.run('renderLogs(1)');
+  assert.match(logs, /remember_fact/);
+  assert.match(logs, /&lt;script&gt;bad/);
+  assert.ok(ui.calls.filter(call => call.url.includes('/logs')).every(call => call.url.includes('failuresOnly=true')));
+  assert.ok(!ui.calls.some(call => call.url.includes('/events')));
+  ui.run('showLogDetail(state.rows[0])');
+  assert.match(ui.node('#dialog-content').innerHTML, /tool-only-trace/);
+  assert.match(ui.node('#dialog-content').innerHTML, /查看本轮业务链路/);
+  ui.context.traceButton = { dataset: { trace: row.traceId }, disabled: false, textContent: '查看本轮业务链路' };
+  await ui.run('showRequestTrace(traceButton)');
+  const lastCall = ui.calls.at(-1).url;
+  assert.match(lastCall, /traceId=tool-only-trace/);
+  assert.doesNotMatch(lastCall, /failuresOnly/);
+  assert.match(ui.node('#dialog-content').innerHTML, /加载更早的链路记录/);
+  assert.doesNotMatch(ui.node('#dialog-content').innerHTML, /<script>bad/);
+  ui.run("showLogDetail({level:'WARN',message:'legacy error'})");
+  assert.match(ui.node('#dialog-content').innerHTML, /没有链路 ID/);
+});
+
+test('失败记录读取失败明确报错，不把查询错误显示成暂无失败', async () => {
+  const data = fixtures();
+  const ui = harness((url) => url.includes('/logs') ? { status: 500, body: { error: '读取失败' } } : data[url.split('?')[0]]);
+  const html = await ui.run('renderOverview(1)');
+  assert.match(html, /失败记录暂时无法读取/);
+  assert.doesNotMatch(html, /暂无失败记录/);
+});
+
+test('运行日志可切换全部日志并筛选 DEBUG，重置恢复默认失败范围', async () => {
+  const data = fixtures();
+  data['/api/logs'] = { items: [{ level: 'DEBUG', event: 'chat.not_matched', reason: 'no_group_condition' }] };
+  const ui = harness(url => data[url.split('?')[0]]);
+  ui.run("state.page='logs'; state.filters.logs={failuresOnly:'false',level:'debug',q:'',sessionKey:''}; state.cursor='older'");
+  const html = await ui.run('renderLogs(1)');
+  assert.match(html, /<h2>全部日志/);
+  assert.match(html, /value="false" selected/);
+  assert.match(html, /value="debug" selected/);
+  assert.match(html, /value="info"/);
+  assert.match(html, /chat 未命中/);
+  assert.match(ui.calls.at(-1).url, /failuresOnly=false/);
+  assert.match(ui.calls.at(-1).url, /level=debug/);
+  const button = { dataset: { action: 'reset-filters' } };
+  await ui.documentListeners.get('click')({ target: { closest: selector => selector === '[data-action]' ? button : null } });
+  assert.equal(ui.run('state.filters.logs.failuresOnly'), 'true');
+  assert.equal(ui.run('state.filters.logs.level'), '');
+  assert.equal(ui.run('state.cursor'), null);
+  assert.match(ui.calls.at(-1).url, /failuresOnly=true/);
 });
 
 test('旧页面的慢响应不会覆盖新页面正在使用的记录', async () => {

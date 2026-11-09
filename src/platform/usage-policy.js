@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { appendUsage, readUsageOverview, usageSessionKey } from '../store/usage-store.js';
 import { logger, redactText } from '../utils/logger.js';
+import { snapshotUsagePrice } from '../usage/pricing.js';
 
 const DEFAULT_POLICY = { enabled: { chat: true, vision: true, draw: true, distill: true }, maxCallsPerDay: 0, maxTokensPerDay: 0 };
 let policy = structuredClone(DEFAULT_POLICY);
@@ -59,14 +60,15 @@ async function loadPending() {
     if (!row || typeof row.id !== 'string' || !Number.isFinite(row.time)) throw new Error('Usage reservation entry is invalid');
     const history = await readUsageOverview({ sessionKey: row.sessionKey, since: row.time, until: row.time, limit: 1000 });
     if (history.items.some((entry) => entry.id === row.id)) continue;
-    const recovered = { ...row, status: 'interrupted', usageKnown: false, elapsedMs: Math.max(0, Date.now() - row.time), error: 'Process exited before API result was recorded' };
+    const recovered = { ...row, status: 'interrupted', finishedAt: Date.now(), usageKnown: false, elapsedMs: Math.max(0, Date.now() - row.time), error: 'Process exited before API result was recorded' };
+    delete recovered.endpoint;
     if (!await appendUsage(row.sessionKey, recovered)) pending.set(row.id, row);
   }
   await savePending();
   loadedDir = dir;
 }
 
-export async function beginUsage({ kind = 'chat', model, sessionKey = 'system' }) {
+export async function beginUsage({ kind = 'chat', model, sessionKey = 'system', traceId = randomUUID(), source = 'system', baseUrl = kind === 'draw' ? config.imageApiBaseUrl : config.deepseekBaseUrl }) {
   const key = usageSessionKey(sessionKey);
   return serial(async () => {
     if (!(kind in DEFAULT_POLICY.enabled)) throw new Error('Unknown model usage kind');
@@ -93,7 +95,8 @@ export async function beginUsage({ kind = 'chat', model, sessionKey = 'system' }
     if (policy.maxTokensPerDay && overview.totals.totalTokens >= policy.maxTokensPerDay) {
       throw new UsageLimitError('今日已报告 token 用量已达上限');
     }
-    const attempt = { id: randomUUID(), time: now, kind, model: redactText(model), sessionKey: key };
+    const attempt = { id: randomUUID(), time: now, kind, model: redactText(model), sessionKey: key, traceId, source, endpoint: redactText(baseUrl),
+      pricing: snapshotUsagePrice({ kind, model, baseUrl, time: now }) };
     pending.set(attempt.id, attempt);
     try { await savePending(); }
     catch (error) {
@@ -101,36 +104,51 @@ export async function beginUsage({ kind = 'chat', model, sessionKey = 'system' }
       lastPersistenceError = redactText(error.message);
       throw new UsageLimitError('用量预留写入失败，暂停模型调用', 'USAGE_STORAGE');
     }
+    logger.event('model.request.started', { traceId, operationId: attempt.id, sessionKey: key, source, data: { kind, model: attempt.model, endpoint: attempt.endpoint } });
     return attempt;
+  }).catch(error => {
+    logger.event('model.request.rejected', { traceId, sessionKey: key, source, level: 'WARN', outcome: 'rejected', reason: error.code ?? 'admission_failed', data: { kind, model: redactText(model), error: error.message } });
+    throw error;
   });
 }
 
-export async function finishUsage(attempt, { usage, error, httpStatus, images = 0 } = {}) {
+export async function finishUsage(attempt, { usage, error, httpStatus, images = 0, responseModel } = {}) {
   return serial(async () => {
     const numeric = (value) => Number.isFinite(value) && value >= 0 ? value : undefined;
     const promptTokens = numeric(usage?.prompt_tokens ?? usage?.input_tokens);
     const completionTokens = numeric(usage?.completion_tokens ?? usage?.output_tokens);
     const totalTokens = numeric(usage?.total_tokens) ?? (promptTokens !== undefined && completionTokens !== undefined ? promptTokens + completionTokens : undefined);
+    const finishedAt = Date.now();
     const record = {
       ...attempt,
       status: error ? 'failure' : 'success',
-      elapsedMs: Math.max(0, Date.now() - attempt.time),
+      finishedAt,
+      elapsedMs: Math.max(0, finishedAt - attempt.time),
       usageKnown: totalTokens !== undefined,
+      ...(typeof responseModel === 'string' ? { responseModel: redactText(responseModel).slice(0, 200) } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(error ? { error: redactText(error.message ?? error, [config.deepseekApiKey, config.imageApiKey]) } : {}),
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: totalTokens,
-      prompt_cache_hit_tokens: numeric(usage?.prompt_cache_hit_tokens),
+      prompt_cache_hit_tokens: numeric(usage?.prompt_cache_hit_tokens ?? usage?.prompt_tokens_details?.cached_tokens),
+      prompt_cache_miss_tokens: numeric(usage?.prompt_cache_miss_tokens),
       images: numeric(images) ?? 0,
     };
+    // Transport details belong to business logs, not the billing ledger.
+    delete record.endpoint;
     const saved = await appendUsage(attempt.sessionKey, record);
     if (saved) {
       pending.delete(attempt.id);
       try { await savePending(); }
       catch (err) { lastPersistenceError = redactText(err.message); logger.warn(`用量预留清理失败: ${lastPersistenceError}`); }
     }
-    logger[error ? 'warn' : 'info']('[model]', { kind: record.kind, model: record.model, sessionKey: record.sessionKey, status: record.status, elapsedMs: record.elapsedMs, totalTokens: record.total_tokens ?? null, ...(record.httpStatus ? { httpStatus: record.httpStatus } : {}), ...(record.error ? { error: record.error } : {}) });
+    const reason = !error ? undefined : httpStatus === 429 ? 'rate_limited' : httpStatus === 503 ? 'upstream_busy'
+      : httpStatus >= 500 ? 'upstream_error' : ['TimeoutError', 'AbortError'].includes(error.name) ? 'timeout'
+        : httpStatus >= 400 ? 'request_rejected' : 'request_failed';
+    logger.event('model.request.finished', { traceId: attempt.traceId, operationId: attempt.id, sessionKey: record.sessionKey, source: attempt.source,
+      level: error ? 'WARN' : 'INFO', outcome: error ? 'failed' : 'success', reason, elapsedMs: record.elapsedMs,
+      data: { kind: record.kind, model: record.model, endpoint: attempt.endpoint, httpStatus, totalTokens: record.total_tokens ?? null, usageKnown: record.usageKnown, ledgerSaved: saved, ...(record.error ? { error: record.error } : {}) } });
     return record;
   });
 }

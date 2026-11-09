@@ -4,6 +4,7 @@
 // 把入站快照以 fire-and-forget 方式交给存储钩子（不 await，失败不影响主管道）；
 // 按注册顺序匹配触发器，命中即停，全不中静默；match/handle 异常捕获记 ERROR。
 // 本模块不含任何业务 if-else：触发器选择完全依赖注册表（§3「禁止事项」）。
+import { randomUUID } from 'node:crypto';
 import { getTriggers } from './registry.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 import { appendMessage } from '../store/message-store.js';
@@ -18,18 +19,22 @@ export async function dispatch(input) {
   if (!normalized) return;
   const { event, sessionKey, segments, messageTypes, issues, postType, eventType, subType, handling } = normalized;
   const allowed = canUseBot(event);
-  appendEvent({ postType, eventType, subType, sessionKey, messageTypes, handling: allowed ? handling : 'blocked', issues, event: input,
+  const logContext = normalized.processable && sessionKey ? { traceId: randomUUID(), sessionKey, source: 'live' } : null;
+  appendEvent({ ...(logContext ? { traceId: logContext.traceId } : {}), postType, eventType, subType, sessionKey, messageTypes, handling: allowed ? handling : 'blocked', issues, event: input,
     ...(Array.isArray(event.message) ? { segments } : {}) });
 
   // Complete receipt is independent from business handling. In particular,
   // message_sent must never create an automatic reply loop or duplicate bot history.
   try { await observeUser(event); } catch (err) { logger.warn(`用户登记失败: ${err.code ?? 'storage error'}`); }
-  if (!allowed || !normalized.processable || !sessionKey) return;
-
-  logger.info(`收到消息: [${sessionKey}] id=${event.message_id ?? 'unknown'} types=${messageTypes.join(',')}`);
+  if (!normalized.processable || !sessionKey) return;
+  if (!allowed) {
+    logger.event('handler.skipped', { ...logContext, outcome: 'skipped', reason: 'permission_denied' });
+    return;
+  }
 
   // 存储钩子（§6.3 旁听者）：打标后、进触发器链前，不 await，写失败只记 WARN
   const snapshot = {
+    traceId: logContext.traceId,
     receivedAt: Date.now(),
     sessionKey,
     time: event.time,
@@ -48,6 +53,7 @@ export async function dispatch(input) {
   const ctx = {
     event,
     sessionKey,
+    logContext,
     async activateMemory() {
       try { await markMemoryInvocation(sessionKey, snapshot.receivedAt); }
       catch (err) { logger.warn(`[distill] 活跃状态保存失败: ${err.code ?? 'storage error'}`); }
@@ -64,28 +70,33 @@ export async function dispatch(input) {
         raw_message: text,
         bot: true,
       });
-      if (event.message_type === 'group') return sendGroup(event.group_id, text);
-      return sendPrivate(event.user_id, text);
+      if (event.message_type === 'group') return sendGroup(event.group_id, text, logContext);
+      return sendPrivate(event.user_id, text, logContext);
     },
   };
 
   for (const trigger of getTriggers()) {
     let matched = false;
     try {
-      matched = trigger.match(event);
+      matched = trigger.match(event, logContext);
     } catch (err) {
-      logger.error(`触发器 ${trigger.name} match 异常: ${err.message}`);
+      logger.event('handler.match_failed', { ...logContext, level: 'ERROR', outcome: 'failed', reason: 'match_error', data: { trigger: trigger.name, error: err.message } });
       continue; // 本触发器作废，继续尝试下一个
     }
     if (!matched) continue;
 
-    logger.info(`触发器命中: ${trigger.name}`);
+    const startedAt = Date.now();
+    const operationId = randomUUID();
+    const fields = { ...logContext, operationId, data: { trigger: trigger.name, messageId: event.message_id } };
+    logger.event('handler.started', fields);
     try {
       await trigger.handle(ctx);
+      logger.event('handler.finished', { ...fields, outcome: 'completed', elapsedMs: Math.max(0, Date.now() - startedAt) });
     } catch (err) {
-      logger.error(`触发器 ${trigger.name} 处理异常: ${err.message}`);
+      logger.event('handler.finished', { ...fields, level: 'ERROR', outcome: 'failed', reason: 'handler_error', elapsedMs: Math.max(0, Date.now() - startedAt), data: { ...fields.data, error: err.message } });
     }
     return; // 命中即停：一条消息只触发一个触发器
   }
+  logger.event('handler.skipped', { ...logContext, outcome: 'skipped', reason: 'no_trigger' });
   // 全不中：静默（不是所有消息都需要回复）
 }

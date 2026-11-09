@@ -23,6 +23,8 @@ import { readUsageStats } from '../store/usage-store.js';
 import { readMemoryMessages } from '../distill/activity.js';
 import { getVersion } from '../version.js';
 import { canManageSession } from '../platform/permissions.js';
+import { sendUsageReport } from '../usage/report.js';
+import { USAGE_PERIODS } from '../usage/overview.js';
 
 // /persona /memory 展示上限（字符）：超长截断保留尾部并注明——人设经离线提炼演化后
 // 变长，最新的设定/记忆追加在文件尾部，展示尾部信息量最大
@@ -69,6 +71,21 @@ export const COMMANDS = [
       }
       lines.push('/meme help - 收藏、查找和发送肥鱼共享表情包');
       await ctx.reply(lines.join('\n'));
+    },
+  },
+  {
+    name: 'usage',
+    adminOnly: false,
+    summary: '查看当前会话用量图片（today / 7d / 30d）',
+    async handle(ctx, args) {
+      const period = args || 'today';
+      if (!Object.hasOwn(USAGE_PERIODS, period)) { await ctx.reply('用法：/usage [today|7d|30d]，只查看当前群聊或私聊。'); return; }
+      try {
+        const result = await sendUsageReport(ctx, period);
+        if (!result.ok) await ctx.reply(result.message);
+      } catch {
+        await ctx.reply('暂时无法生成用量报告，请稍后重试；不能把读取失败视为零用量。');
+      }
     },
   },
   {
@@ -216,7 +233,7 @@ export default {
     // 权限错误）在此统一掐掉；管理员未 @ 同样不执行（寻址未明确，宁可漏响应
     // 不乱响应）
     if (ctx.event.message_type === 'group' && !matchAt(ctx.event)) {
-      logger.info(`[command] ${ctx.sessionKey} 群聊指令未 @ 本鱼，静默忽略`);
+      logger.event('handler.skipped', { ...ctx.logContext, sessionKey: ctx.sessionKey, outcome: 'skipped', reason: 'group_at_required', data: { trigger: 'command' } });
       return;
     }
 

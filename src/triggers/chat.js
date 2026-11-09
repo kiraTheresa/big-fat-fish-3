@@ -35,7 +35,7 @@ import { extractImages } from '../utils/extract-images.js';
 import { fetchImageAsB64, mimeOfB64 } from '../utils/fetch-image.js';
 import { callApi } from '../connection/onebot.js';
 import { logger } from '../utils/logger.js';
-import { matchGroupChat } from './chat-conditions.js';
+import { findGroupChatCondition } from './chat-conditions.js';
 import { chatReplyChain } from './chat-reply-chain.js';
 import { sendGroup, sendPrivate } from '../sender/sender.js';
 
@@ -89,16 +89,24 @@ const cooldowns = new Map();
 
 export default {
   name: 'chat',
-  match(event) {
-    if (event.post_type !== 'message') return false;
-    if (config.deepseekApiKey === '') return false; // 未配置 LLM：本触发器不生效
-    if (event.message_type === 'private') return true;
-    // 群聊：条件组合器任一命中即触发（非群聊事件组合器内恒 false）
-    return matchGroupChat(event);
+  match(event, logContext) {
+    let condition;
+    let reason;
+    if (event.post_type !== 'message') reason = 'not_message';
+    else if (config.deepseekApiKey === '') reason = 'no_api_key';
+    else {
+      condition = event.message_type === 'private' ? 'private' : findGroupChatCondition(event);
+      reason = condition ?? 'no_group_condition';
+    }
+    if (logContext) logger.event(condition ? 'chat.matched' : 'chat.not_matched', {
+      ...logContext, level: condition ? 'INFO' : 'DEBUG', reason,
+    });
+    return condition !== undefined;
   },
 
   async handle(ctx, { poke = false } = {}) {
     const { event, sessionKey } = ctx;
+    const logContext = ctx.logContext ?? { traceId: randomUUID(), sessionKey, source: 'live' };
 
     const version = getPublishedPrompt();
     const settings = version.config;
@@ -109,7 +117,7 @@ export default {
       (visionEnabled && extractImages(event).length > 0 ? '（对方发来了一张图片，没有附加文字，请根据图片内容简短回应。）' : '') ||
       (event.message_type === 'group' && matchAt(event) ? '（对方 @ 了你，没有附加文字，请简短回应。）' : '');
     if (content === '') {
-      logger.info(`[chat] ${sessionKey} 消息无文本内容，忽略`);
+      logger.event('chat.skipped', { ...logContext, outcome: 'skipped', reason: 'empty_content' });
       return;
     }
 
@@ -117,7 +125,7 @@ export default {
     // 冷却管「开始响应」，出口加工链的随机延迟管「发出节奏」，两者互不干扰
     const last = cooldowns.get(sessionKey) ?? 0;
     if (Date.now() - last < config.behavior.chat.cooldownMs) {
-      logger.info(`[chat] 会话 ${sessionKey} 冷却中，跳过`);
+      logger.event('chat.skipped', { ...logContext, outcome: 'skipped', reason: 'cooldown' });
       return;
     }
     cooldowns.set(sessionKey, Date.now());
@@ -136,10 +144,10 @@ export default {
     }
     const messages = built.request.messages;
     const trace = [];
-    const run = { id: randomUUID(), createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
+    const run = { id: randomUUID(), traceId: logContext.traceId, createdAt: Date.now(), source: 'live', kind: 'chat', trigger: poke ? 'poke' : 'message', sessionKey, version: version.number, revision: version.id, trace, summary: built.summary };
     let imageAttempts = 0;
     let imageFailed = false;
-    const toolContext = { sessionKey, event, memeTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
+    const toolContext = { logContext, sessionKey, event, memeTurn: {}, reportTurn: {}, actorId: String(event.user_id), speaker: String(event.sender?.nickname ?? event.user_id), mode: 'live',
       onImageAttempt(entry) {
         if (entry.phase === 'error') imageFailed = true;
         if (entry.phase !== 'request') return;
@@ -152,7 +160,7 @@ export default {
         imageFailed = false;
         ctx.reply(progress);
       },
-      onImage: (b64, prompt) => deliverGeneratedImage(ctx, b64, prompt) };
+      onImage: (b64, prompt) => deliverGeneratedImage({ ...ctx, logContext }, b64, prompt) };
 
     // ---- 图片上下文：图源判定 → 现拉 base64（不落盘）----
     // 任一步失败（无图源/历史查询挂/下载挂）均 visionB64=null，messages 原样走纯文本——
@@ -165,7 +173,7 @@ export default {
         try {
           visionB64 = await fetchImageAsB64(imageUrl, config.visionFetchTimeoutMs);
         } catch (err) {
-          logger.warn(`[chat] 图片现拉失败，回退纯文本: ${err.message}`);
+          logger.event('chat.vision.degraded', { ...logContext, level: 'WARN', outcome: 'degraded', reason: 'image_download_failed', data: { error: err.message } });
         }
       }
     }
@@ -199,8 +207,8 @@ export default {
         bot: true,
       });
       for (const seg of segments) {
-        if (isGroup) sendGroup(event.group_id, seg);
-        else sendPrivate(event.user_id, seg);
+        if (isGroup) sendGroup(event.group_id, seg, logContext);
+        else sendPrivate(event.user_id, seg, logContext);
       }
     };
 
@@ -212,7 +220,7 @@ export default {
         } catch (err) {
           if (err.toolStarted) throw err; // 已执行工具后不能回退重跑，否则可能重复副作用
           // 保留一次纯文本回退，同一模型重试，不再按图片切换模型。
-          logger.warn(`[chat] 带图请求失败，回退纯文本: ${err.message}`);
+          logger.event('chat.vision.degraded', { ...logContext, level: 'WARN', outcome: 'degraded', reason: 'vision_request_failed', data: { error: err.message } });
         }
       }
       if (reply === undefined) {
@@ -226,21 +234,25 @@ export default {
       let segments = reply.trim() ? [reply] : [];
       for (const mod of chatReplyChain) {
         if (poke) continue; // 戳一戳立即发一条短回复，不引用不存在的消息。
-        if ((imageAttempts > 0 || toolContext.memeTurn.sent) && mod.name === 'delay') continue;
+        if ((imageAttempts > 0 || toolContext.memeTurn.sent || toolContext.reportTurn.sent) && mod.name === 'delay') continue;
         if (mod.enabled(config)) segments = await mod.run(ctx, segments);
       }
       if (segments.length) persistAndSend(reply, segments);
+      logger.event('chat.response.ready', { ...logContext, operationId: run.id, outcome: 'generated', data: { textSegments: segments.length } });
       run.status = 'completed';
       run.content = reply;
 
     } catch (err) {
       run.status = 'failed';
       run.error = err.message;
-      logger.warn(`[chat] LLM 调用失败: ${err.message}`);
+      logger.event('chat.response.failed', { ...logContext, operationId: run.id, level: 'WARN', outcome: 'failed', reason: err.code ?? 'generation_failed', data: { error: err.message } });
       // 兜底文案不是 LLM 输出：不走加工链（不延迟，出错要立刻让人知道），但存储与
       // 发送仍走统一出口（与既有行为等价：回存一条 bot 行 + 发一条）
       const failureReply = err.name === 'UsageLimitError' ? `本鱼暂时不能调用模型：${err.message}。` : FALLBACK_REPLY;
-      persistAndSend(failureReply, [failureReply]);
+      if (!toolContext.reportTurn.sent) {
+        logger.event('chat.fallback.queued', { ...logContext, operationId: run.id, outcome: 'fallback' });
+        persistAndSend(failureReply, [failureReply]);
+      }
     } finally {
       await saveRun(run).catch((error) => logger.warn(`[prompt] 请求记录保存失败: ${error.code ?? 'storage error'}`));
     }

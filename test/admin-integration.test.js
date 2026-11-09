@@ -8,6 +8,7 @@ process.env.DATA_DIR = dir;
 process.env.CONFIG_PATH = join(dir, 'none.json');
 process.env.ADMIN_TOKEN = 'isolated-integration-admin-token';
 process.env.ADMIN_PORT = '0';
+process.env.ADMIN_ANNOTATION_PREVIEW = '1';
 process.env.DEEPSEEK_API_KEY = '';
 process.env.IMAGE_API_KEY = '';
 const { startPlatform } = await import('../src/platform/runtime.js');
@@ -23,6 +24,7 @@ after(async () => { await platform.stop(); await rm(dir, { recursive: true, forc
 test('静态页面、真实 API 与完整新事件收件闭环', async () => {
   const page = await request('/');
   assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-security-policy'), /style-src 'self' 'unsafe-inline';/);
   assert.match(await page.text(), /管理台/);
   assert.equal((await request('/app.js')).status, 200);
   const status = await (await request('/api/status')).json();
@@ -63,6 +65,10 @@ test('角色修改实际阻断触发器但保留事件；配置和任务经 API 
   assert.equal(handled, 1);
   assert.equal((await request(`/api/jobs/${job.id}`, 'DELETE')).status, 200);
   const logs = await (await request('/api/logs')).json();
-  assert.ok(logs.items.some((row) => row.message.includes('[admin]')));
+  assert.ok(logs.items.some((row) => row.source === 'admin' && row.event === 'admin.settings.updated'));
   assert.ok(!JSON.stringify(logs).includes(process.env.ADMIN_TOKEN));
+  for (const event of ['admin.settings.updated', 'admin.user.updated', 'admin.user.reset']) {
+    const row = logs.items.find(row => row.event === event);
+    assert.ok(row, event); assert.equal(row.source, 'admin'); assert.ok(row.traceId);
+  }
 });

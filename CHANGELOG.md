@@ -5,13 +5,29 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
-## [Unreleased]
+## [0.36.0] - 2026-11-09
 
-No changes yet.
+### feat
+
+- Token usage and estimated-cost dashboard with Beijing-time ranges, per-session views, tariff snapshots, and explicit pending-cost records. `/usage` and `send_usage_report` share current-session reports through the existing sender.
+- PNG usage reports rendered with Playwright / Chromium from the shared web view; browser export uses the displayed statistics snapshot.
+- Structured business logs correlate triggers, model attempts, tools and sends. The console focuses on failures and links to complete traces.
+- Request and stability view adds request frequency, known-result failure rate, successful-request P95, detail filtering and trace navigation.
+- The Prompt workbench uses continuous module cards, a page-wide request JSON view, and in-place draft editing. The single-run test pane uses the existing test sandbox.
+- The management toolbar can temporarily allow inline styles for Codex browser annotations on direct localhost and LAN connections. Changing the setting requires the management token.
+
+### fix
+
+- Compose can publish the management console on a separate host port via `ADMIN_PUBLISH_PORT`. The container listens on the configured `ADMIN_PORT`.
+
+### chore
+
+- Deployment guidance includes Clash / Mihomo routing rules for the configured model and QQ media hosts.
+- Documentation now has one task-oriented index, feature-completion update milestones, separate usage and observability guides, and archived verification records. Daily changes use focused validation.
 
 ## [0.30.0] - 2026-10-30
 
-Public beta release candidate; publication is pending. This consolidates development commits 0.12.0–0.29.0 and release preparation into one release entry. Earlier numbered entries are historical behavior, not current instructions. See [release notes](docs/releases/0.30.0.md) for setup, upgrade steps and verification limits.
+Published as a GitHub [pre-release](https://github.com/kiraTheresa/big-fat-fish-3/releases/tag/v0.30.0); publication status checked on 2026-11-04. This consolidates development commits 0.12.0–0.29.0 and release preparation into one release entry. Earlier numbered entries are historical behavior, not current instructions. See [release notes](docs/releases/0.30.0.md) for setup, upgrade steps and verification limits.
 
 ### feat
 

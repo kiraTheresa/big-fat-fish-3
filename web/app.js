@@ -1,3 +1,7 @@
+import { usageMoney, usageTime, usageSession, renderUsageShareContent } from './usage-view.js';
+import { renderRequestsView, renderRequestDetail, renderRequestTrace } from './request-view.js';
+import { describeLog } from '../src/utils/log-format.js';
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const e = escapeHtml;
@@ -27,6 +31,7 @@ const icons = {
   jobs: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
   usage: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  requests: '<path d="M2 12h5l3-9 4 18 3-9h5"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3a7 7 0 0 0 11.6-2"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
@@ -46,8 +51,9 @@ const pages = {
   config: ['配置与能力', '管理能力开关、调用预算与运行参数。', 'CONFIGURATION'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
-  logs: ['运行日志', '按级别和关键词筛选日志，定位运行异常。', 'LOGS'],
-  usage: ['调用与用量', '查看真实调用、生成图片与 Token 使用情况。', 'USAGE'],
+  logs: ['运行日志', '默认关注失败，也可查看全部级别的日志与本轮业务链路。', 'LOGS'],
+  usage: ['Token 用量与费用', '查看预估费用、用量来源、调用结果与会话统计。', 'USAGE'],
+  requests: ['请求与稳定性', '观察模型调用频率、耗时与失败原因，沿业务链路定位问题。', 'REQUESTS'],
 };
 const resolvePage = (page) => page === 'media' ? 'images' : page;
 const initialPage = resolvePage(location.hash.slice(1));
@@ -55,9 +61,11 @@ const state = {
   token: '', tokenExpiresAt: 0, page: pages[initialPage] ? initialPage : 'overview',
   config: null, dirty: false, saving: false, loading: false, live: false, sequence: 0,
   rows: [], jobs: [], users: [], cursor: null, cursors: [],
-  filters: { events: { postType: '', sessionKey: '' }, logs: { level: '', q: '' }, usage: { since: '', until: '', kind: '', sessionKey: '' } },
+  filters: { requests: { period: 'today', kind: '', source: '', sessionKey: '' }, events: { postType: '', sessionKey: '' }, logs: { failuresOnly: 'true', level: '', q: '', sessionKey: '' }, usage: { period: 'today', since: '', until: '', detailKind: '', pendingOnly: '', sessionKey: '' } },
+  requestDashboard: null, requestTrace: null, requestTraceVersion: 0,
 };
 let promptConsole;
+let usageReportUrl;
 const mediaGalleries = new Map();
 if (location.hash === '#media') history.replaceState(null, '', '#images');
 let toastTimer;
@@ -118,7 +126,7 @@ async function login(token, expiresAt = null) {
     $('#app').hidden = false;
     updateStatus(status);
     await loadPage();
-    if (attempt === loginAttempt && state.token) $('#content').focus();
+    if (attempt === loginAttempt && state.token) $('#content').focus({ preventScroll: true });
   } catch (error) {
     if (attempt !== loginAttempt) return;
     if (error.status === 401) clearSavedLogin();
@@ -146,6 +154,11 @@ function logout(message = '', { forget = true } = {}) {
   if (forget) clearSavedLogin();
   resetLoginButton();
   promptConsole?.clear();
+  clearUsageReport();
+  state.usageDashboard = null;
+  state.requestDashboard = null;
+  state.requestTrace = null;
+  state.requestTraceVersion++;
   for (const gallery of mediaGalleries.values()) gallery.clear();
   state.token = '';
   state.tokenExpiresAt = 0;
@@ -170,7 +183,7 @@ function logout(message = '', { forget = true } = {}) {
   $('#admin-token').focus();
 }
 
-async function api(path, { method = 'GET', body, token = state.token } = {}) {
+async function api(path, { method = 'GET', body, token = state.token, responseType = 'json' } = {}) {
   if (token === state.token && expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
   let response;
   try {
@@ -180,6 +193,11 @@ async function api(path, { method = 'GET', body, token = state.token } = {}) {
     });
   } catch (error) {
     throw new Error(error.name === 'TimeoutError' ? '请求超时，请稍后重试。' : '无法连接管理服务，请检查 Bot 是否仍在运行。');
+  }
+  if (response.ok && responseType === 'blob') {
+    const blob = await response.blob();
+    if (token !== state.token) throw new Error('登录状态已改变。');
+    return blob;
   }
   let data;
   try { data = await response.json(); } catch { data = {}; }
@@ -228,6 +246,14 @@ function connectionInfo(connection) {
 function updateStatus(status) {
   const value = connectionInfo(status?.connection);
   $('#connection-status').innerHTML = `<span class="status-dot ${value.dot}"></span>${e(value.text)}`;
+  updateAnnotationPreview(status?.annotationPreview);
+}
+function updateAnnotationPreview(preview) {
+  const button = $('#annotation-preview');
+  button.hidden = preview?.available !== true;
+  button.dataset.enabled = String(preview?.enabled === true);
+  button.setAttribute('aria-pressed', button.dataset.enabled);
+  button.textContent = `批注兼容 · ${preview?.enabled ? '开' : '关'}`;
 }
 function markDirty() {
   state.dirty = true;
@@ -254,6 +280,7 @@ async function loadPage({ quiet = false } = {}) {
   if (!state.token) return;
   const sequence = ++state.sequence;
   const page = state.page;
+  if (page === 'usage' && $('#usage-ledger')) state.usageDetailsOpen = $('#usage-ledger').open;
   for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
   $('#refresh').disabled = true;
@@ -262,7 +289,7 @@ async function loadPage({ quiet = false } = {}) {
   $('#page-description').textContent = description;
   $('#page-eyebrow').textContent = `WORKSPACE / ${section}`;
   document.title = `${title} · 大肥鱼`;
-  $('#live-control').hidden = !['overview', 'events', 'logs', 'usage'].includes(page);
+  $('#live-control').hidden = !['overview', 'events', 'logs', 'usage', 'requests'].includes(page);
   document.querySelectorAll('#navigation [data-page]').forEach((link) => {
     link.classList.toggle('active', link.dataset.page === page);
     if (link.dataset.page === page) link.setAttribute('aria-current', 'page');
@@ -306,17 +333,10 @@ function eventTypeBadge(type) {
   const labels = { message: '消息', message_sent: '发送事件', notice: '通知', request: '请求', meta_event: '元事件', unknown: '未知事件' };
   return pill(labels[type] || type, { notice: 'blue', request: 'violet', meta_event: 'neutral', message_sent: 'neutral', unknown: 'warning' }[type] || '');
 }
-function recentEvents(items) {
-  if (!items.length) return empty('暂无接收事件', 'QQ 接收的消息、通知和其他事件会出现在这里。');
-  return `<div class="event-list">${items.slice(0, 6).map((row) => {
-    const info = eventInfo(row);
-    return `<div class="event-row"><span class="event-icon">${icon(info.postType === 'meta_event' ? 'pulse' : 'events')}</span><div class="event-text"><strong>${e(info.text || `${info.type} · ${info.types.join(' / ') || '事件已接收'}`)}</strong><p>${e(info.session)} · ${e(info.sender)}</p></div><time>${e(date(info.time, true))}</time></div>`;
-  }).join('')}</div>`;
-}
-
 async function renderOverview(sequence) {
-  const [status, events] = await Promise.all([api('/status'), api('/events?limit=6').catch(() => null)]);
+  const [status, failures] = await Promise.all([api('/status'), api('/logs?limit=6&failuresOnly=true').catch(() => null)]);
   if (sequence !== state.sequence) return '';
+  state.rows = failures?.items || [];
   updateStatus(status);
   const connection = connectionInfo(status.connection);
   const usage = status.usage?.today || status.usage?.totals || status.usage || {};
@@ -326,10 +346,18 @@ async function renderOverview(sequence) {
   const jobs = Array.isArray(status.scheduler?.jobs) ? status.scheduler.jobs.length : status.scheduler?.jobs ?? 0;
   const failed = usage.failures ?? 0;
   const storage = status.storage || {};
-  return `${persistenceError ? `<div class="notice error">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可查看消息接收与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">检查日志</button></div></section>
+  return `${persistenceError ? `<div class="notice error" role="alert">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可检查失败与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">查看失败</button></div></section>
     <div class="metrics-grid">${metric('运行时间', duration(status.uptimeSeconds), `启动于 ${date(status.startedAt)}`, 'pulse')}${metric('今日调用', usageNumber(usage.calls), ledgerAvailable ? `下次重置 ${date(status.usage?.resetAt)}` : '用量账本当前不可读取', 'usage', '次')}${metric('今日 Token', usageNumber(usage.totalTokens), ledgerAvailable ? `${number(usage.unknownUsageCalls)} 次调用未返回完整用量` : '暂时无法汇总已知用量', 'config')}${metric('计划任务', number(jobs), status.scheduler?.running ? '调度器正在运行' : '调度器未运行', 'jobs', '项')}</div>
-    <div class="overview-grid"><section class="panel">${panelHead('最近收到', '最近 6 条接收事件，按时间倒序。', pageLink('events', '全部事件'))}${events ? recentEvents(events.items || []) : '<div class="notice error">事件列表暂时无法读取，请到消息收件箱重试。</div>'}</section>
-    <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>日志已写入</dt><dd>${e(number(status.logStats?.written))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看日志</button></div></section></div><div class="summary-strip"><span>本次进程接收<strong>${e(number(status.events?.received))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
+    <div class="overview-grid"><section class="panel">${panelHead('最近失败', '最近 6 条失败、降级或结果未知的记录。', pageLink('logs', '全部失败'))}${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到失败日志重试。</div>'}</section>
+    <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>发送队列</dt><dd>${e(number(status.sender?.queued))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看失败</button></div></section></div><div class="summary-strip"><span>待发送<strong>${e(number(status.sender?.queued))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
+}
+
+function recentFailures(items) {
+  if (!items.length) return empty('暂无失败记录', '当前保留范围内没有失败、降级或结果未知的记录。', 'logs');
+  return `<div class="event-list">${items.map((row, index) => {
+    const info = describeLog(row);
+    return `<div class="event-row failure-row"><span class="event-icon">${icon('warning')}</span><div class="event-text"><strong>${e(info.title)} · ${e(info.result)}</strong><p>${e(row.sessionKey || '系统')} · ${e(info.detail || row.message)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
+  }).join('')}</div>`;
 }
 
 function pagination(nextCursor, count) {
@@ -409,43 +437,80 @@ async function renderJobs(sequence) {
     ${state.jobs.length ? `<div class="table-wrap"><table><thead><tr><th>任务</th><th>执行计划</th><th>下次执行</th><th>上次结果</th><th>状态与管理</th></tr></thead><tbody>${state.jobs.map((job, index) => `<tr><td><span class="cell-main job-name">${e(job.name)}</span><span class="cell-sub">${e(jobTypes[job.type] || job.type)}</span></td><td>${e(scheduleText(job.schedule))}</td><td class="mono">${job.enabled ? e(date(job.nextRunAt)) : job.schedule?.kind === 'once' && job.lastRunAt ? '已执行' : '已暂停'}</td><td>${job.lastStatus ? pill(({ success: '成功', completed: '完成', failed: '失败', error: '失败', interrupted: '已中断', running: '执行中', skipped: '已跳过' })[job.lastStatus] || job.lastStatus, ['error', 'failed', 'interrupted'].includes(job.lastStatus) ? 'danger' : 'neutral') : '<span class="muted">尚未执行</span>'}<span class="cell-sub">${e(date(job.lastRunAt))}</span>${job.lastError ? `<button type="button" class="text-button" data-action="job-error" data-index="${index}">查看原因</button>` : ''}</td><td class="cell-actions"><button type="button" class="button small" data-action="toggle-job" data-index="${index}" aria-label="${job.enabled ? '暂停' : '启用'} ${e(job.name)}">${job.enabled ? '暂停' : '启用'}</button><button type="button" class="button small" data-action="edit-job" data-index="${index}">编辑</button><button type="button" class="button small subtle" data-action="delete-job" data-index="${index}">删除</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有计划任务', '创建一个定期任务，让数据维护或记忆提炼按时运行。', 'jobs')}</section>`;
 }
 
-function logLevel(level) {
-  const normalized = String(level || 'info').toLowerCase();
-  return pill(normalized.toUpperCase(), ['error', 'fatal'].includes(normalized) ? 'danger' : normalized === 'warn' ? 'warning' : normalized === 'debug' ? 'neutral' : 'blue');
-}
 async function renderLogs(sequence) {
   const f = state.filters.logs;
-  const result = await api(`/logs${query({ limit: 50, ...f, before: state.cursor })}`);
+  const failuresOnly = f.failuresOnly !== 'false';
+  const result = await api(`/logs${query({ limit: 50, ...f, failuresOnly, before: state.cursor })}`);
   if (sequence !== state.sequence) return '';
   state.rows = result.items || [];
   state.nextCursor = result.nextCursor;
-  return `<section class="panel">${panelHead('日志流', '按级别和关键词定位运行线索。')}<form id="logs-filter" class="filters"><label>日志级别<select name="level">${selectOptions([['', '全部级别'], ['debug', 'DEBUG'], ['info', 'INFO'], ['warn', 'WARN'], ['error', 'ERROR']], f.level)}</select></label><label class="filter-wide">关键词<input name="q" value="${e(f.q)}" placeholder="搜索日志内容" autocomplete="off"></label><button type="submit" class="button">搜索</button><button type="button" class="button subtle" data-action="reset-filters">重置</button></form>
-    ${state.rows.length ? `<div class="table-wrap"><table class="log-table"><thead><tr><th>时间</th><th>级别</th><th>内容</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => `<tr><td><time class="mono">${e(date(row.time ?? row.timestamp))}</time></td><td>${logLevel(row.level)}</td><td class="log-message mono">${e(row.message || '')}</td><td class="cell-actions"><button type="button" class="button small" data-action="log-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有符合条件的日志', '试试其他级别或关键词，也可以等待下一次运行记录。', 'logs')}${pagination(result.nextCursor, state.rows.length)}</section>`;
+  return `<section class="panel">${panelHead(failuresOnly ? '失败记录' : '全部日志', failuresOnly ? '展示失败、降级与结果未知；正常跳过不计入。需要调试时可切换到全部日志。' : '查看已记录的各级日志，包括未命中、跳过与成功步骤；可继续按级别筛选。')}<form id="logs-filter" class="filters"><label>查看范围<select name="failuresOnly">${selectOptions([['true', '仅看失败'], ['false', '全部日志']], String(failuresOnly))}</select></label><label>日志级别<select name="level">${selectOptions([['', '全部级别'], ['debug', 'DEBUG'], ['info', 'INFO'], ['warn', 'WARN'], ['error', 'ERROR']], f.level)}</select></label><label>会话<input name="sessionKey" value="${e(f.sessionKey)}" placeholder="例如 g-123" autocomplete="off"></label><label class="filter-wide">关键词<input name="q" value="${e(f.q)}" placeholder="搜索阶段、原因或链路 ID" autocomplete="off"></label><button type="submit" class="button">搜索</button><button type="button" class="button subtle" data-action="reset-filters">重置</button></form>
+    ${state.rows.length ? `<div class="table-wrap"><table class="log-table"><thead><tr><th>时间 / 会话</th><th>阶段 / 结果</th><th>原因 / 过程</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => {
+      const info = describeLog(row);
+      return `<tr><td><time class="mono">${e(date(row.time))}</time><span class="cell-sub mono">${e(row.sessionKey || '系统 / 历史未记录')}</span></td><td><span class="cell-main">${e(info.title)}</span><span class="cell-sub">${e(info.result)} · ${e(row.level)}</span></td><td class="log-message">${e(info.detail || row.message)}</td><td class="cell-actions"><button type="button" class="button small" data-action="log-detail" data-index="${index}">查看</button></td></tr>`;
+    }).join('')}</tbody></table></div>` : empty(failuresOnly ? '没有符合条件的失败记录' : '没有符合条件的日志', '可调整范围或清除筛选；只展示保留范围内已记录的日志。', 'logs')}${pagination(result.nextCursor, state.rows.length)}</section>`;
+}
+
+function showLogDetail(row) {
+  const info = describeLog(row);
+  state.requestTraceVersion++;
+  state.requestTrace = null;
+  showDialog('日志详情', 'LOGS / RECORD', `<dl class="key-values"><div><dt>时间</dt><dd>${e(date(row.time))}</dd></div><div><dt>会话</dt><dd>${e(row.sessionKey || '系统 / 历史未记录')}</dd></div><div><dt>阶段 / 结果</dt><dd>${e(info.title)} · ${e(info.result)}</dd></div><div><dt>原因 / 过程</dt><dd>${e(info.detail || row.message)}</dd></div></dl><p class="field-hint">此处是单个阶段的结果；后续是否降级、兜底或发送成功，请查看本轮链路。</p>${row.traceId ? `<div class="dialog-actions"><button type="button" class="button" data-action="request-trace" data-trace="${e(row.traceId)}">查看本轮业务链路</button></div>` : '<p class="field-hint">此记录没有链路 ID，无法可靠关联后续结果。</p>'}<details><summary>原始记录（已脱敏）</summary><pre class="json-block">${e(JSON.stringify(row, null, 2))}</pre></details>`);
 }
 
 const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
-function groupEntries(value, keyName) {
-  if (Array.isArray(value)) return value.map((item) => [item[keyName] || item.key || '未分类', item]);
-  return Object.entries(value || {});
+function usageSessionTable(result) {
+  const rows = [...(result.bySession || [])].sort((a,b) => (b.costNano || 0) - (a.costNano || 0) || b.calls - a.calls).slice(0,8);
+  return rows.length ? `<div class="table-wrap"><table><thead><tr><th>会话</th><th>已报告 token</th><th>预估费用</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td><span class="cell-main">${e(usageSession(row.sessionKey))}</span><span class="cell-sub">${e(number(row.calls))} 次调用 · ${e(number(row.pendingCostCalls))} 次待确认</span></td><td>${row.unknownUsageCalls === row.calls ? '未返回' : e(number(row.totalTokens))}</td><td class="usage-number">${e(usageMoney(row))}</td><td class="cell-actions"><button class="text-button" type="button" data-action="usage-session" data-session="${e(row.sessionKey)}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('暂无会话用量', '统计覆盖全部记录，此处最多展示费用最高的 8 个会话。', 'usage');
 }
-function usageBars(entries, names = {}) {
-  const sorted = entries.sort((a, b) => (b[1].calls || 0) - (a[1].calls || 0));
-  const max = Math.max(1, ...sorted.map(([, value]) => Number(value.calls) || 0));
-  return sorted.length ? sorted.slice(0, 8).map(([key, value]) => `<div class="bar-row"><div class="bar-heading"><span>${e(names[key] || key)}</span><span>${e(number(value.calls))} 次 · ${e(number(value.totalTokens))} Token</span></div><progress class="usage-progress" max="${max}" value="${Number(value.calls) || 0}" aria-label="${e(names[key] || key)} 调用次数">${e(number(value.calls))}</progress></div>`).join('') : empty('暂无调用记录', '发生模型调用后，这里会显示真实用量。', 'usage');
+function usageLedger(result) {
+  const f = state.filters.usage;
+  return `<details id="usage-ledger" class="panel usage-ledger"${f.detailKind || f.pendingOnly || state.usageDetailsOpen ? ' open' : ''}><summary><span>调用明细</span><span class="muted">匹配 ${e(number(result.itemCount ?? state.rows.length))} 次 · 展示最近 ${state.rows.length} 次</span></summary><form id="usage-detail-filter" class="filters"><label>用途<select name="detailKind">${selectOptions([['','全部用途'],...Object.entries(kindNames).filter(([key]) => key !== 'image')], f.detailKind)}</select></label><label>计价状态<select name="pendingOnly">${selectOptions([['','全部记录'],['true','费用待确认']], f.pendingOnly)}</select></label><button class="button" type="submit">筛选明细</button></form>${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间 / 模型</th><th>用途 / 会话</th><th>输入 / 输出 token</th><th>耗时 / 结果</th><th>预估费用</th><th>详情</th></tr></thead><tbody>${state.rows.map((row,index) => `<tr><td>${e(usageTime(row.time))}<span class="cell-sub mono">${e(row.responseModel || row.model || '—')}</span></td><td>${e(kindNames[row.kind] || row.kind || '—')}<span class="cell-sub">${e(usageSession(row.sessionKey))}</span></td><td>${row.prompt_tokens == null ? '未返回' : e(number(row.prompt_tokens))} / ${row.completion_tokens == null ? '未返回' : e(number(row.completion_tokens))}<span class="cell-sub">缓存输入 ${row.prompt_cache_hit_tokens == null ? '未返回' : e(number(row.prompt_cache_hit_tokens))}</span></td><td>${Number.isFinite(row.elapsedMs) ? e((row.elapsedMs / 1000).toFixed(1))+'s' : '—'}<span class="cell-sub">${row.status === 'failure' || row.status === 'interrupted' ? pill(row.status === 'interrupted' ? '已中断' : '失败','danger') : pill('成功')}</span></td><td class="usage-number">${row.cost?.status === 'estimated' ? e(usageMoney({costNano:row.cost.costNano})) : '待确认'}<span class="cell-sub usage-cost-reason">${e(row.cost?.reason || (row.pricing?.band === 'peak' ? '高峰时段价格' : row.pricing?.band === 'off-peak' ? '空闲时段价格' : ''))}</span></td><td class="cell-actions"><button class="button small" type="button" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有符合条件的调用', '当前明细筛选不会改变上方费用、趋势和会话汇总。', 'usage')}</details>`;
 }
 async function renderUsage(sequence) {
   const f = state.filters.usage;
-  const range = { ...f };
-  if (range.since) range.since = new Date(`${range.since}T00:00:00`).toISOString();
-  if (range.until) range.until = new Date(`${range.until}T23:59:59.999`).toISOString();
-  const result = await api(`/usage${query(range)}`);
+  const filters = { ...f, limit:100 };
+  if (f.period === 'custom') {
+    if (f.since) filters.since = `${f.since}T00:00:00+08:00`;
+    if (f.until) filters.until = `${f.until}T23:59:59.999+08:00`;
+  } else { delete filters.since; delete filters.until; }
+  const [result, status] = await Promise.all([api(`/usage/dashboard${query(filters)}`), api('/status')]);
   if (sequence !== state.sequence) return '';
-  const totals = result.totals || {};
   state.rows = result.items || [];
-  return `<section class="panel">${panelHead('观察范围', '统计来自持久化调用记录，不估算缺失的上游用量。')}<form id="usage-filter" class="filters"><label>开始日期<input type="date" name="since" value="${e(f.since)}"></label><label>结束日期<input type="date" name="until" value="${e(f.until)}"></label><label>能力<select name="kind">${selectOptions([['', '全部能力'], ['chat', '文字对话'], ['vision', '图片理解'], ['draw', '绘图'], ['distill', '记忆提炼']], f.kind)}</select></label><label>会话<input name="sessionKey" value="${e(f.sessionKey)}" placeholder="g-群号 / p-QQ号"></label><button type="submit" class="button">应用</button><button type="button" class="button subtle" data-action="reset-filters">重置</button></form></section>
-    <div class="metrics-grid usage-metrics">${metric('模型调用', number(totals.calls), `${number(totals.successes)} 次成功 · ${number(totals.failures)} 次失败`, 'usage', '次')}${metric('已知 Token', number(totals.totalTokens), `输入 ${number(totals.promptTokens)} · 输出 ${number(totals.completionTokens)}`, 'config')}${metric('生成图片', number(totals.images), '上游实际返回的图片数量', 'events', '张')}${metric('用量未完整返回', number(totals.unknownUsageCalls), '单独保留，不按零成本推断', 'warning', '次')}</div>
-    <div class="usage-grid"><section class="panel">${panelHead('按能力分布', '调用次数与已知 Token。')}${usageBars(groupEntries(result.byKind, 'kind'), kindNames)}</section><section class="panel">${panelHead('活跃会话', '按调用次数排序，最多显示 8 个会话。')}${usageBars(groupEntries(result.bySession, 'sessionKey'))}</section></div>
-    <section class="panel">${panelHead('调用明细', `统计覆盖全部匹配记录，下方显示最新 ${state.rows.length} 条。`)}${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>能力 / 模型</th><th>会话</th><th>结果</th><th>Token</th><th>详情</th></tr></thead><tbody>${state.rows.map((row, index) => `<tr><td class="mono">${e(date(row.time ?? row.timestamp))}</td><td><span class="cell-main">${e(kindNames[row.kind] || row.kind || '—')}</span><span class="cell-sub mono">${e(row.model || '—')}</span></td><td class="mono">${e(row.sessionKey || '—')}</td><td>${row.success === false || ['failed', 'failure', 'error', 'interrupted'].includes(row.status) ? pill('失败', 'danger') : row.success === true || row.status === 'success' ? pill('成功') : pill('已记录', 'neutral')}</td><td class="mono">${row.total_tokens === undefined && row.totalTokens === undefined ? '未返回' : e(number(row.total_tokens ?? row.totalTokens))}</td><td class="cell-actions"><button type="button" class="button small" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有模型调用', '调用发生后可在此追踪结果与用量。', 'usage')}</section>`;
+  state.usageDashboard = result;
+  updateStatus(status);
+  const t = result.totals || {};
+  const monitor = status.usage || {};
+  const today = monitor.today;
+  const limits = monitor.policy?.limits || {};
+  const period = f.period || 'today';
+  const periods = [['today','今天'],['7d','近 7 天'],['30d','近 30 天'],['custom','自定义']];
+  return `<div class="usage-workbench"><section class="usage-toolbar" aria-label="用量筛选"><div class="usage-periods" role="group" aria-label="统计时段">${periods.map(([value,label])=>`<button type="button" class="button${period===value?' primary':''}" aria-pressed="${period===value}" data-action="usage-period" data-period="${value}">${label}</button>`).join('')}</div><div class="usage-top-actions"><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek 开发者平台 ↗</a><button class="button primary" type="button" data-action="usage-report">生成分享图</button></div></section><form id="usage-filter" class="filters usage-scope"><input type="hidden" name="period" value="${e(period)}"><input type="hidden" name="detailKind" value="${e(f.detailKind)}"><input type="hidden" name="pendingOnly" value="${e(f.pendingOnly)}">${period==='custom'?`<label>开始日期（北京）<input type="date" name="since" value="${e(f.since)}" required></label><label>结束日期（北京）<input type="date" name="until" value="${e(f.until)}" required></label>`:''}<label class="filter-wide">会话范围<input name="sessionKey" list="usage-sessions" value="${e(f.sessionKey)}" placeholder="全部会话；或 g-群号 / p-QQ号"><datalist id="usage-sessions">${(result.bySession || []).map(row=>`<option value="${e(row.sessionKey)}">${e(usageSession(row.sessionKey))}</option>`).join('')}</datalist></label><button class="button" type="submit">应用范围</button><button class="button subtle" type="button" data-action="reset-filters">重置</button></form>
+    ${renderUsageShareContent(result)}
+    ${t.calls ? `<div class="usage-panels usage-session-panels"><section class="panel">${panelHead('会话费用排行','按已计价费用排序，最多显示 8 个会话。')}${usageSessionTable(result)}</section><section class="panel">${panelHead('每日额度与账号','额度为全局口径，不随当前会话筛选变化。')}<dl class="key-values"><div><dt>今日已报告 token</dt><dd>${today?e(number(today.totalTokens)):'不可用'}</dd></div><div><dt>每日 token 上限</dt><dd>${limits.maxTokensPerDay?e(number(limits.maxTokensPerDay)):'不限'}</dd></div><div><dt>今日 API 调用 / 上限</dt><dd>${today?e(number(today.calls)):'不可用'} / ${limits.maxCallsPerDay?e(number(limits.maxCallsPerDay)):'不限'}</dd></div><div><dt>进行中的请求</dt><dd>${e(number(monitor.inFlight?.length))}</dd></div><div><dt>下次重置（北京）</dt><dd>${e(usageTime(monitor.resetAt))}</dd></div></dl><p class="field-hint">Token 上限依据已报告用量；正在生成和未知用量可能使实际消耗超过阈值。</p><p class="field-hint">账号余额尚未接入。DeepSeek 账号可能还有其他应用消费，实际账单请到开发者平台查看。</p><a class="button" href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">查看账单 / 充值 ↗</a></section></div>${usageLedger(result)}` : ''}</div>`;
+}
+function clearUsageReport() {
+  if (usageReportUrl) { URL.revokeObjectURL(usageReportUrl); usageReportUrl = undefined; }
+}
+async function showUsageReport(button) {
+  const sequence = state.sequence;
+  const range = state.usageDashboard?.range;
+  if (!range) return;
+  await withButton(button, async () => {
+    const snapshotId = state.usageDashboard.snapshotId;
+    if (!snapshotId) throw new Error('用量快照不可用，请刷新页面后重试。');
+    const width = Math.round($('#usage-share-content').getBoundingClientRect().width);
+    const blob = await api(`/usage/report${query({ snapshotId, width, viewportWidth: window.innerWidth })}`, {responseType:'blob'});
+    if (sequence !== state.sequence || !state.token) return;
+    clearUsageReport();
+    usageReportUrl = URL.createObjectURL(blob);
+    showDialog('用量报告预览','USAGE / SHARE', `<p class="detail-caption">${range.sessionKey?'当前所选会话摘要':'管理员查看的全局摘要'}。不包含账号余额、QQ 号或其他会话明细；聊天工具默认只返回所在会话的报告。</p><img class="usage-report-image" src="${e(usageReportUrl)}" alt="所选范围的 Token 用量与预估费用报告"><div class="dialog-actions"><a class="button primary" href="${e(usageReportUrl)}" download="usage-report.png">下载 PNG</a></div>`);
+  });
+}
+function showUsagePricing() {
+  const pricing = state.usageDashboard?.pricing || {};
+  const priceRows = Object.values(pricing.models || {}).map(model => [1,2].map(factor => `<tr><td>${e(model.name)} · ${factor === 1 ? '空闲' : '高峰'}</td>${['cacheInputNano','inputNano','outputNano'].map(key => `<td>${e(number(model.offPeak[key] * factor / 1000))}</td>`).join('')}</tr>`).join('')).join('');
+  showDialog('计价说明','USAGE / PRICING', `<p class="detail-caption">本地预估费用与供应商账单分别查看。费用 = 缓存输入 × 命中单价 + 非缓存输入 × 未命中单价 + 输出 × 输出单价。</p><div class="table-wrap"><table><thead><tr><th>模型（元 / 百万 token）</th><th>缓存输入</th><th>非缓存输入</th><th>输出</th></tr></thead><tbody>${priceRows}</tbody></table></div><ul class="usage-pricing-notes"><li>价目核对日期 ${e(pricing.verifiedAt || '—')}。当前计费日历覆盖至 2026 年末，后续需更新。</li><li>北京时间工作日（不含法定节假日）09:00–12:00、14:00–18:00 为高峰。按请求开始时刻保存价目快照，跨时段请求的实际扣费以供应商为准。</li><li>缓存命中率按输入 token 加权；没有返回缓存拆分的调用不混入分母。</li><li>历史记录缺少供应商或价目依据、未知模型、中转接口、绘图未定价、用量缺失或拆分矛盾时，费用待确认，不当作免费。</li><li>每次 API 尝试分别计数，包含失败和重试；API 调用次数不等于用户消息数。</li></ul><a class="button" href="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/" target="_blank" rel="noopener noreferrer">查看官方价目表 ↗</a>`);
 }
 async function renderPrompt(sequence) {
   if (!promptConsole) {
@@ -465,10 +530,44 @@ async function renderMedia(page, sequence) {
   }
   return gallery.render();
 }
-const renderers = { images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+function resetRequestDetails() {
+  Object.assign(state.filters.requests, { reason: '', failedOnly: '', detailSince: '', detailUntil: '', asOf: '' });
+  state.cursor = null; state.cursors = [];
+}
+async function renderRequests(sequence) {
+  const filters = { ...state.filters.requests, limit: 20, before: state.cursor };
+  if (filters.period === 'custom') {
+    filters.since = `${filters.since}T00:00:00+08:00`;
+    filters.until = new Date(`${filters.until}T00:00:00+08:00`).getTime() + 86400000;
+  } else { delete filters.since; delete filters.until; }
+  const result = await api(`/requests/dashboard${query(filters)}`);
+  if (sequence !== state.sequence) return '';
+  state.requestDashboard = result;
+  state.rows = result.items;
+  state.nextCursor = result.nextCursor;
+  return renderRequestsView(result, state.filters.requests, { compact: window.innerWidth < 650, older: Boolean(state.cursor) });
+}
+async function showRequestTrace(button, more = false) {
+  const sequence = state.sequence;
+  const version = ++state.requestTraceVersion;
+  const traceId = button.dataset.trace;
+  await withButton(button, async () => {
+    const result = await api(`/logs${query({ traceId, limit: 100, before: more ? button.dataset.before : '' })}`);
+    if (sequence !== state.sequence || version !== state.requestTraceVersion || !state.token || !$('#detail-dialog').open) return;
+    const rows = more && state.requestTrace?.traceId === traceId ? [...state.requestTrace.rows, ...result.items] : result.items;
+    state.requestTrace = { traceId, rows };
+    $('#dialog-title').textContent = '本轮业务链路';
+    $('#dialog-eyebrow').textContent = 'REQUESTS / TRACE';
+    $('#detail-dialog').classList.toggle('request-trace-dialog', true);
+    $('#dialog-content').innerHTML = renderRequestTrace(rows, result.nextCursor, traceId);
+    $('#detail-dialog').scrollTop = 0;
+  });
+}
+const renderers = { requests: renderRequests, images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;
+  $('#detail-dialog').classList.toggle('request-trace-dialog', false);
   $('#dialog-title').textContent = title;
   $('#dialog-eyebrow').textContent = eyebrow;
   $('#dialog-content').innerHTML = html;
@@ -581,15 +680,75 @@ document.addEventListener('click', async (event) => {
   const index = Number(button.dataset.index);
   if (action === 'close-dialog') { closeDialog(); return; }
   if (action === 'retry') { loadPage(); return; }
+  if (action === 'annotation-preview') {
+    if (state.dirty || state.saving) { toast('请先结束当前编辑或保存，再切换批注兼容。'); return; }
+    await withButton(button, async () => {
+      const preview = await api('/annotation-preview', { method: 'PUT', body: { enabled: button.dataset.enabled !== 'true' } });
+      updateAnnotationPreview(preview);
+      if (state.dirty || state.saving) toast('批注设置已切换。请处理当前修改，再重新载入网页。');
+      else location.reload();
+    });
+    return;
+  }
   if (action === 'reload-config') { if (canLeave()) { state.dirty = false; loadPage(); } return; }
   if (action === 'reset-filters') {
     for (const key of Object.keys(state.filters[state.page])) state.filters[state.page][key] = '';
+    if (state.page === 'logs') state.filters.logs.failuresOnly = 'true';
     state.cursor = null; state.cursors = []; loadPage(); return;
   }
   if (action === 'next-page') { state.cursors.push(state.cursor); state.cursor = state.nextCursor; loadPage(); return; }
   if (action === 'first-page') { state.cursor = null; state.cursors = []; loadPage(); return; }
   if (action === 'event-detail') { showJson('接收事件详情', 'INBOX / EVENT', state.rows[index], '这里只展示已接收的数据。未知消息段会保留原始字段，不自动执行。'); return; }
-  if (action === 'log-detail') { showJson('日志详情', 'LOGS / RECORD', state.rows[index]); return; }
+  if (action === 'log-detail') { showLogDetail(state.rows[index]); return; }
+  if (action === 'request-detail') {
+    state.requestTraceVersion++;
+    state.requestTrace = null;
+    showDialog('模型调用详情', 'REQUESTS / CALL', renderRequestDetail(state.rows[index])); return;
+  }
+  if (action === 'request-trace' || action === 'request-trace-more') { await showRequestTrace(button, action === 'request-trace-more'); return; }
+  if (action === 'request-reset') {
+    state.filters.requests = { period: 'today', kind: '', source: '', sessionKey: '' };
+    resetRequestDetails(); loadPage(); return;
+  }
+  if (action === 'request-period') {
+    state.filters.requests.period = button.dataset.period;
+    if (button.dataset.period === 'custom') {
+      const local = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+      state.filters.requests.since ||= local; state.filters.requests.until ||= local;
+    }
+    resetRequestDetails(); loadPage(); return;
+  }
+  if (action === 'request-kind' || action === 'request-session') {
+    state.filters.requests[action === 'request-kind' ? 'kind' : 'sessionKey'] = button.dataset[action === 'request-kind' ? 'kind' : 'session'];
+    resetRequestDetails(); loadPage(); return;
+  }
+  if (['request-bucket', 'request-reason', 'request-failures', 'request-clear-detail'].includes(action)) {
+    const f = state.filters.requests;
+    state.cursor = null; state.cursors = [];
+    f.asOf = state.requestDashboard.range.asOf;
+    if (action === 'request-bucket') { f.detailSince = button.dataset.since; f.detailUntil = button.dataset.until; }
+    if (action === 'request-reason') { f.reason = button.dataset.reason; f.failedOnly = 'true'; }
+    if (action === 'request-failures') { f.failedOnly = f.failedOnly === 'true' ? '' : 'true'; f.reason = ''; }
+    if (action === 'request-clear-detail') resetRequestDetails();
+    if (!f.reason && !f.failedOnly && !f.detailSince) f.asOf = '';
+    await loadPage({ quiet: true });
+    if (state.page === 'requests') $('.request-ledger')?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  if (action === 'usage-period') {
+    state.filters.usage.period = button.dataset.period;
+    if (button.dataset.period === 'custom') {
+      const local = new Date(Date.now()+8*3600000).toISOString().slice(0,10);
+      state.filters.usage.since ||= local; state.filters.usage.until ||= local;
+    }
+    loadPage(); return;
+  }
+  if (action === 'usage-session') { state.filters.usage.sessionKey=button.dataset.session; loadPage(); return; }
+  if (action === 'usage-kind') { state.filters.usage.detailKind=button.dataset.kind; state.filters.usage.pendingOnly=''; loadPage(); return; }
+  if (action === 'usage-pending') { state.filters.usage.pendingOnly='true'; state.filters.usage.detailKind=''; loadPage(); return; }
+  if (action === 'usage-chart') { $('#usage-chart-reading').textContent=button.dataset.reading; return; }
+  if (action === 'usage-report') { await showUsageReport(button); return; }
+  if (action === 'usage-pricing') { showUsagePricing(); return; }
   if (action === 'usage-detail') { showJson('调用详情', 'USAGE / CALL', state.rows[index]); return; }
   if (action === 'new-user' || action === 'edit-user') { showUserForm(action === 'edit-user' ? state.users[index] : null); return; }
   if (action === 'new-job' || action === 'edit-job') { showJobForm(action === 'edit-job' ? state.jobs[index] : null); return; }
@@ -616,10 +775,12 @@ document.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (form.id === 'config-form') { await saveConfig(form); return; }
   if (form.id === 'user-form' || form.id === 'job-form') { await saveDialogForm(form); return; }
+  if (form.id === 'usage-detail-filter') { Object.assign(state.filters.usage, Object.fromEntries(new FormData(form).entries())); loadPage(); return; }
   const page = form.id.replace('-filter', '');
   if (!state.filters[page]) return;
   const draft = Object.fromEntries(new FormData(form).entries());
   if (page === 'usage' && draft.since && draft.until && draft.since > draft.until) { toast('开始日期不能晚于结束日期。', true); return; }
+  if (page === 'requests' && draft.period === 'custom' && draft.since > draft.until) { toast('开始日期不能晚于结束日期。', true); return; }
   state.filters[page] = draft;
   state.cursor = null; state.cursors = [];
   loadPage();
@@ -648,13 +809,13 @@ $('#toggle-token').addEventListener('click', () => {
 });
 $('#logout').addEventListener('click', () => { if (canLeave()) logout(); });
 $('#refresh').innerHTML = icon('refresh');
-$('#refresh').addEventListener('click', () => { if (canLeave()) { state.dirty = false; loadPage(); } });
+$('#refresh').addEventListener('click', () => { if (canLeave()) { state.dirty = false; if (state.page === 'requests') resetRequestDetails(); loadPage(); } });
 $('#close-dialog').addEventListener('click', closeDialog);
 $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) event.preventDefault(); });
-$('#detail-dialog').addEventListener('close', () => { if (lastFocus?.isConnected) lastFocus.focus(); });
+$('#detail-dialog').addEventListener('close', () => { clearUsageReport(); if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
 const navigationGroups = [
-  ['运行排查', ['overview', 'events', 'logs', 'usage']],
+  ['运行排查', ['overview', 'logs', 'requests', 'usage']],
   ['开发调试', ['prompt']],
   ['素材收藏', ['images', 'memes']],
   ['实例管理', ['config', 'jobs', 'users']],
@@ -675,6 +836,6 @@ window.addEventListener('hashchange', () => {
   history.replaceState(null, '', `#${state.page}`);
 });
 setInterval(() => {
-  if (state.token && state.live && !state.loading && !state.dirty && !document.hidden && !$('#detail-dialog').open && !state.cursor && ['overview', 'events', 'logs', 'usage'].includes(state.page) && !$('#content').contains(document.activeElement)) loadPage({ quiet: true });
+  if (state.token && state.live && !state.loading && !state.dirty && !document.hidden && !$('#detail-dialog').open && !state.cursor && ['overview', 'events', 'logs', 'usage', 'requests'].includes(state.page) && !(state.page === 'requests' && (state.filters.requests.reason || state.filters.requests.failedOnly || state.filters.requests.detailSince)) && !$('#content').contains(document.activeElement)) loadPage({ quiet: true });
 }, 20000);
 restoreLogin();

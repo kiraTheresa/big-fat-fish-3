@@ -96,7 +96,10 @@ export const config = {
   adminHost: process.env.ADMIN_HOST ?? '127.0.0.1',
   adminPort: num(process.env.ADMIN_PORT, 3210),
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  adminAnnotationPreview: process.env.ADMIN_ANNOTATION_PREVIEW === '1',
+  chromeExecutable: process.env.CHROME_EXECUTABLE ?? '',
   logLevel: process.env.LOG_LEVEL ?? 'INFO',
+  logSession: process.env.LOG_SESSION ?? '',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   // ---- AIChat（LLM）----
   // DeepSeek API Key（留空 = chat 触发器不生效）
