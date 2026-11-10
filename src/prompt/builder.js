@@ -25,7 +25,7 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
   const memeSource = settings.tools.save_meme?.enabled ? describeMemeSource(event, records) : '';
   const scene = { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null };
   const suffix = systemSuffix
-    + (memeSource ? `\n\n## 本轮表情来源\n${memeSource}\n这只是来源信息，不代表用户要求收藏。以当前用户的要求判断；教这个表情的用途或命名也属于收藏请求。` : '');
+    + (memeSource ? `\n\n## 本轮表情来源\n${memeSource}\n来源只用于定位素材，不代表用户要求收藏。` : '');
   const renderSystem = (material) => buildSystemPrompt(material, scene, settings.prompts) + suffix;
   const inspections = previous.map((rec, index) => {
     const raw = historyText(rec);

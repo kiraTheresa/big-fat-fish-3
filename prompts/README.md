@@ -6,8 +6,8 @@
 
 | 文件 | 用途 |
 |---|---|
-| `character.md` | 新会话的初始人设 |
-| `response.md` | 群聊和私聊共用的回应规则、语气示例、发送格式 |
+| `character.md` | 新会话的初始人设与不同情境下的接话方式 |
+| `response.md` | 群聊和私聊共用的回应规则与发送格式 |
 | `group.md` / `private.md` | 各场景的差异规则，后接 `response.md` |
 | `identity.md` | 身份、发言者、历史与记忆的理解边界 |
 | `tool-rules.md` | 工具调用和结果确认规则 |

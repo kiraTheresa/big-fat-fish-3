@@ -5,6 +5,12 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [0.36.4] - 2026-11-10
+
+### fix
+
+- Give the default persona more specific conversational guidance and shorten the shared message, tool and memory distillation prompts.
+
 ## [0.36.3] - 2026-11-10
 
 ### fix

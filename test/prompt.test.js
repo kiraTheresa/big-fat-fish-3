@@ -140,7 +140,10 @@ test('长人设和记忆为近期对话留预算，保留完整的人设和记�
   const rows = Array.from({ length: 20 }, (_, i) => ({
     time: 100 + i, user_id: '123', sender: { nickname: '小明' }, raw_message: `聊到第${i}件事，晚上一起点一份火锅。`,
   }));
-  const { request, summary } = buildChatRequest(cfg, { persona, event, records: rows, text: '刚才在聊什么？', nowMs: 120000 });
+  const turn = { event, records: rows, text: '刚才在聊什么？', nowMs: 120000 };
+  const fixed = buildChatRequest(cfg, { ...turn, persona: { character: '', memory: '' } });
+  cfg.context.budgetBytes = fixed.summary.systemBytes + 3800;
+  const { request, summary } = buildChatRequest(cfg, { ...turn, persona });
   const system = request.messages[0].content;
   assert.equal(summary.sent, rows.length);
   assert.ok(summary.systemBytes + summary.historyBytes <= cfg.context.budgetBytes);
