@@ -5,6 +5,14 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [0.36.2] - 2026-11-10
+
+### fix
+
+- Group the management console into Runtime, Bot Management, and Media, with a single-column settings form and connection details under Runtime.
+- Show scheduler activity and the latest job result separately from model usage. Show a single empty state when the selected range has no calls.
+- Let Prompt panels scroll with the page and add a shortcut from the toolbar to the chat test panel.
+
 ## [0.36.0] - 2026-11-09
 
 ### feat

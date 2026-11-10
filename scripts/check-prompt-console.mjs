@@ -29,11 +29,16 @@ try {
     await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); });
     await page.screenshot({ path: join(screenshotDir, `${name}.png`), fullPage: true });
   };
+  const assertNoPanelScroll = async () => {
+    const panels = page.locator('.pp-cards-view:visible, .pp-json-view:visible, .pp-test');
+    const overflowing = await panels.evaluateAll((nodes) => nodes.filter((node) => node.scrollHeight > node.clientHeight + 1).map((node) => node.className));
+    assert.deepEqual(overflowing, [], 'Prompt panels should expand with their content');
+  };
   await page.goto(`http://127.0.0.1:${platform.management.port}/#prompt`);
   await screenshot('login');
   await page.locator('#admin-token').fill('isolated-console-test-token');
   await page.locator('.login-submit').click();
-  await page.waitForSelector('#pp-request-blocks .pp-budget');
+  await page.waitForSelector('#pp-request-blocks .pp-budget', { state: 'attached' });
   await screenshot('prompt-desktop');
   await page.locator('.pp-delivery > summary').click();
   assert.match(await page.locator('#pp-publish-reason').innerText(), /聊天测试/);
@@ -64,6 +69,7 @@ try {
   await page.locator('#pp-compare').click();
   await page.waitForFunction(() => document.querySelectorAll('.pp-run').length === 2 && !document.querySelector('#pp-test').disabled);
   assert.equal(await page.locator('[data-pp-action="pass"]').count(), 1);
+  await assertNoPanelScroll();
   await page.locator('#pp-edit').click();
   assert.equal(await page.locator('[data-pp-field="tools.draw.enabled"]').isChecked(), true);
   await page.waitForFunction(() => document.querySelector('[data-pp-tool-status="draw"]').textContent.includes('未配置'));
@@ -73,6 +79,12 @@ try {
   assert.ok(!preview.tools.some((t) => t.function.name === 'remember_fact'));
   assert.equal(await page.locator('#pp-test').isDisabled(), true);
   await page.setViewportSize({ width: 390, height: 844 });
+  await assertNoPanelScroll();
+  await page.locator('[data-pp-view="json"]').click();
+  await assertNoPanelScroll();
+  await page.locator('[data-pp-view="cards"]').click();
+  await page.locator('[data-pp-jump="test"]').click();
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'pp-test-stage');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await screenshot('prompt-mobile');
   // Discard only the isolated test draft when navigating to the other pages.
@@ -80,7 +92,9 @@ try {
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     for (const name of ['overview', 'logs', 'usage', 'config', 'jobs', 'users']) {
-      await page.locator(`#navigation [data-page="${name}"]`).click();
+      if (name === 'logs') await page.locator('#section-navigation [data-page="requests"]').click();
+      const nav = name === 'logs' ? '#diagnostic-navigation' : ['overview', 'config'].includes(name) ? '#navigation' : '#section-navigation';
+      await page.locator(`${nav} [data-page="${name}"]`).click();
       await page.waitForFunction(() => document.querySelector('#content').getAttribute('aria-busy') === 'false');
       assert.equal(await page.locator('.error-state').count(), 0, name);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${name} at ${width}px`);

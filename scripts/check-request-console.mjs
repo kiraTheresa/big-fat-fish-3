@@ -120,8 +120,8 @@ try {
     await shot(`requests-${width}`);
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
-  assert.equal(await page.locator('#navigation [data-page="events"]').count(), 0);
-  await page.locator('#navigation [data-page="logs"]').click();
+  assert.equal(await page.locator('nav [data-page="events"]').count(), 0);
+  await page.locator('#diagnostic-navigation [data-page="logs"]').click();
   await page.waitForSelector('.log-table');
   assert.equal(await page.locator('.log-table tbody tr').count(), 50);
   assert.doesNotMatch(await page.locator('#content').innerText(), /冷却中|能力已停用|达到调用预算|should-not-appear/);
@@ -169,14 +169,16 @@ try {
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     for (const name of ['overview', 'logs']) {
-      await page.locator(`#navigation [data-page="${name}"]`).click();
+      if (name === 'logs') await page.locator('#section-navigation [data-page="requests"]').click();
+      const nav = name === 'logs' ? '#diagnostic-navigation' : '#navigation';
+      await page.locator(`${nav} [data-page="${name}"]`).click();
       await page.waitForFunction(() => document.querySelector('#content').getAttribute('aria-busy') === 'false');
       assert.equal(await page.locator('.error-state').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${name} at ${width}px overflow`);
       await shot(`${name}-${width}`);
     }
   }
-  await page.locator('#navigation [data-page="requests"]').click();
+  await page.locator('#diagnostic-navigation [data-page="requests"]').click();
   await page.waitForSelector('.request-summary');
   const file = join(dir, 'usage', 'g-100.jsonl');
   const original = await readFile(file, 'utf8');
