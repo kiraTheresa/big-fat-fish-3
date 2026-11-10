@@ -5,6 +5,12 @@ Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new feature
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [0.36.3] - 2026-11-10
+
+### fix
+
+- Reserve room for recent chat when long personas or memories compete for the context budget. Show persona and memory omissions in the Prompt preview while preserving the stored text.
+
 ## [0.36.2] - 2026-11-10
 
 ### fix
