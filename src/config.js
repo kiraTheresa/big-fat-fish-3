@@ -32,7 +32,7 @@ export const DEFAULT_BEHAVIOR = {
     quote: { enabled: true },
   },
   context: {
-    // 上下文字节预算：人设+记忆+历史总量封顶，超出裁最旧历史
+    // 上下文字节预算：规则照常发送，人设、记忆与近期历史按剩余空间裁剪
     budgetBytes: 12000,
   },
 };

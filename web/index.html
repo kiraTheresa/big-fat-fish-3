@@ -35,15 +35,15 @@
     </section>
 
     <div id="app" class="app-shell" hidden>
-      <aside class="sidebar glass" aria-label="管理导航">
-        <a class="brand" href="#overview" data-page="overview"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span><span><strong>大肥鱼</strong><small>开发工作台</small></span></a>
-
-        <nav id="navigation" aria-label="页面"></nav>
-        <div class="sidebar-bottom"><div class="local-note"><span class="status-dot neutral"></span><span>本地实例<small>BIG FAT FISH</small></span></div><button id="logout" class="button subtle logout-button" type="button">退出登录</button></div>
-      </aside>
+      <header class="app-header">
+        <a class="brand" href="#overview" data-page="overview"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span><strong>大肥鱼</strong></a>
+        <nav id="navigation" aria-label="业务分组"></nav>
+        <button id="logout" class="button subtle" type="button">退出登录</button>
+      </header>
       <div class="workspace">
+        <nav id="section-navigation" aria-label="组内页面"></nav>
         <header class="page-header">
-          <div><p class="eyebrow" id="page-eyebrow">WORKSPACE / OVERVIEW</p><h1 id="page-title">运行概览</h1><p class="page-description" id="page-description">检查连接、调用和任务状态，进入常用工具。</p></div>
+          <div><h1 id="page-title" tabindex="-1">运行概览</h1><p class="page-description" id="page-description"></p></div>
           <div class="header-actions">
             <button id="annotation-preview" class="button small" type="button" data-action="annotation-preview" aria-label="批注兼容" aria-pressed="false" title="作用于此实例的本机和局域网页面，刷新后生效" hidden>批注兼容 · 关</button>
             <span id="connection-status" class="pill"><span class="status-dot neutral"></span>读取连接状态</span>
@@ -51,8 +51,8 @@
           </div>
         </header>
         <div class="view-toolbar"><span id="updated-at" class="muted">等待更新</span><label id="live-control" class="live-control"><input type="checkbox" id="auto-refresh">每 20 秒更新</label></div>
+        <nav id="diagnostic-navigation" aria-label="排障视图" hidden></nav>
         <main id="content" tabindex="-1" aria-live="polite" aria-busy="false"></main>
-        <footer class="workspace-footer"><span>BIG FAT FISH</span><span>开发工作台 · 配置变更请检查生效范围</span></footer>
       </div>
     </div>
     <div id="toast" class="toast" role="status" hidden></div>

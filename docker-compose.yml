@@ -6,9 +6,8 @@ services:
     restart: always
     entrypoint: ["bash", "/app/fish/napcat-entrypoint.sh"]
     ports:
-      - "6099:6099"   # WebUI：扫码登录 / 配置网络（必须保留，登录入口）
-      - "3001:3001"   # OneBot 11 正向 WebSocket：容器网络内 bot 走 ws://napcat:3001，
-                      # 本宿主映射仅供开发期宿主机 node 直连调试，生产可移除
+      - "${NAPCAT_BIND_HOST:-127.0.0.1}:6099:6099" # WebUI 登录
+      - "${NAPCAT_BIND_HOST:-127.0.0.1}:3001:3001" # 宿主机 Bot 调试
     environment:
       NAPCAT_UID: "1000"
       NAPCAT_GID: "1000"
@@ -40,4 +39,9 @@ services:
       - .env            # 其余配置（token / LLM key / 管理白名单等）与宿主机同源
     volumes:
       - ./data:/app/data            # 全部运行时数据（含 media/generated 原图与 media/memes 表情包）
-      - ./config.json:/app/config.json:ro  # 行为开关（CONFIG_PATH 默认 ./config.json）
+      - type: bind
+        source: ./config.json
+        target: /app/config.json
+        read_only: true
+        bind:
+          create_host_path: false

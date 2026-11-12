@@ -250,10 +250,36 @@ test('用量账本不可读时展示不可用，不把未知的今日统计显�
   const ui = harness((url) => data[url.split('?')[0]]);
   const html = await ui.run('renderOverview(1)');
   assert.match(html, /账本不可读/);
-  assert.match(html, /今日调用[\s\S]*?metric-value">不可用/);
-  assert.match(html, /今日 Token[\s\S]*?metric-value">不可用/);
-  assert.match(html, /今日失败调用<\/dt><dd>不可用/);
-  assert.match(html, /今日生成图片<\/dt><dd>不可用/);
+  assert.match(html, /用量账本暂不可读/);
+  assert.doesNotMatch(html, /今日调用<\/dt>|今天暂无模型调用/);
+});
+
+test('调度器状态和任务结果独立于零模型用量', async () => {
+  const data = fixtures();
+  const status = data['/api/status'];
+  status.usage.today = { calls: 0 };
+  status.scheduler.running = false;
+  const job = data['/api/jobs'].items[0];
+  delete job.lastStatus;
+  const ui = harness((url) => data[url.split('?')[0]]);
+  assert.match(await ui.run('renderOverview(1)'), /调度器<\/dt><dd>.*未运行/);
+  assert.match(await ui.run('renderJobs(1)'), /尚未执行/);
+
+  status.scheduler.running = true;
+  status.scheduler.activeJobId = job.id;
+  job.lastRunAt = Date.now();
+  job.lastStatus = 'running';
+  assert.match(await ui.run('renderOverview(1)'), /正在执行.*维护/);
+
+  status.scheduler.activeJobId = null;
+  job.lastStatus = 'success';
+  const overview = await ui.run('renderOverview(1)');
+  assert.match(overview, /运行中 · 当前空闲/);
+  assert.match(overview, /最近任务结果<\/dt><dd>维护 .*成功/);
+  assert.match(overview, /今天暂无模型调用/);
+  const usage = renderUsageShareContent({ totals: { calls: 0 } });
+  assert.match(usage, /所选时段暂无模型调用/);
+  assert.doesNotMatch(usage, /usage-summary|¥0\.00/);
 });
 
 test('概览与失败页仅查询失败，收件箱不在导航中；从失败直接打开完整链路而无需模型记录', async () => {
@@ -289,7 +315,7 @@ test('失败记录读取失败明确报错，不把查询错误显示成暂无�
   const ui = harness((url) => url.includes('/logs') ? { status: 500, body: { error: '读取失败' } } : data[url.split('?')[0]]);
   const html = await ui.run('renderOverview(1)');
   assert.match(html, /失败记录暂时无法读取/);
-  assert.doesNotMatch(html, /暂无失败记录/);
+  assert.doesNotMatch(html, /暂无失败、降级或结果未知的记录/);
 });
 
 test('运行日志可切换全部日志并筛选 DEBUG，重置恢复默认失败范围', async () => {

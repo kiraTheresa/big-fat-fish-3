@@ -30,7 +30,7 @@ flowchart LR
 1. 连接层解析消息帧，按 `echo` 匹配 API 结果，把事件交给分发器；断线后重连。
 2. 分发器先保存事件，再判断消息段、QQ 角色与业务资格。群聊使用 `g-{group_id}`，私聊使用 `p-{user_id}` 作为会话键。
 3. 入口依次注册 `poke → ping → draw → meme → command → chat`，匹配即停；触发器继续检查自身开关、权限、唤醒和冷却条件。
-4. 聊天捕获已发布的 Prompt 版本，组装当前输入、人设、记忆与筛选后的历史，必要时附图。模型工具可绘图、读写记忆、收藏／查找／发送表情，参数与作用范围由后端校验。
+4. 聊天捕获已发布的 Prompt 版本，组装当前输入、人设、记忆与筛选后的历史，必要时附图。预算不足时为近期对话预留空间。模型可调用绘图、读写记忆、收藏／查找／发送表情及当前会话用量报告工具，参数与作用范围由后端校验。
 5. 所有 QQ 出站消息经过 sender 的统一队列。普通聊天可延迟、分段和引用；戳一戳只发一句短回复。模型 SSE 流在服务端合并，QQ 不逐 token 发送。
 6. 后台调度运行记忆提炼与观察数据清理。群聊提炼遵守活跃窗口与休眠规则，目前没有主动发 QQ 消息的任务类型。
 
@@ -54,6 +54,7 @@ flowchart LR
 | [`src/admin/`](../src/admin/)、[`web/`](../web/) | 管理 API、素材读取服务和网页工作台 |
 | [`web/usage-view.js`](../web/usage-view.js)、[`web/request-view.js`](../web/request-view.js) | 用量页面与分享图的共用模板、请求统计页面视图 |
 | [`scripts/`](../scripts/)、[`test/`](../test/) | NapCat 初始化、隔离浏览器检查与自动化测试 |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | `main` 的 Node 22 与 Docker Compose 检查 |
 
 ## 配置与数据
 
@@ -100,6 +101,8 @@ node --test test/chat-stream.test.js
 
 ## 版本与文档基线
 
-`/version` 由 `src/version.js` 读取 CHANGELOG 首个数字版本标题；提交标题不会自动改变运行时版本。2026-11-04 校准时，开发提交标题已到 `0.33.0`，CHANGELOG 数字版本及包文件仍是 `0.30.0`；本次仅记录差异，不推断新发布版本。下一次版本收尾按 AGENTS.md 统一基线。
+向 `main` 提交 PR 或向 `main` 推送时，GitHub Actions 执行两个检查。**Node 22 tests** 安装锁定依赖、检查 JavaScript 语法、安装 Chromium 并跑 `npm test`。**Docker Compose build and smoke** 运行 `bash scripts/check-compose.sh`，使用临时数据和随机回环端口启动构建出的 Bot。发布前检查两个任务对应的提交 SHA。
+
+`/version` 由 `src/version.js` 读取 CHANGELOG 首个数字版本标题。项目发版同时同步提交标题、CHANGELOG 和两个包文件，见 [协作约定](../AGENTS.md)。
 
 项目版本与 Prompt 工作台发布版本是两套独立编号。文档生命周期与校准节点统一在 [总索引](README.md) 维护，历史测试数量不作为当前验收结果。

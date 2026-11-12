@@ -132,6 +132,34 @@ test('筛选之后取 N 条，排除当前输入、其他用户、重置前、�
   assert.equal(buildChatRequest(cfg, { persona: {}, event, records: rows, text: '本轮' }).request.messages.length, 2);
 });
 
+test('长人设和记忆为近期对话留预算，保留完整的人设和记忆行', () => {
+  const cfg = store.getPromptConfig();
+  const characterLines = Array.from({ length: 45 }, (_, i) => `- 人设${i}：${'语气自然。'.repeat(5)}`);
+  const memoryLines = Array.from({ length: 45 }, (_, i) => `- 记忆${i}：${'小明不吃香菜。'.repeat(4)}`);
+  const persona = { character: characterLines.join('\n'), memory: memoryLines.join('\n') };
+  const rows = Array.from({ length: 20 }, (_, i) => ({
+    time: 100 + i, user_id: '123', sender: { nickname: '小明' }, raw_message: `聊到第${i}件事，晚上一起点一份火锅。`,
+  }));
+  const turn = { event, records: rows, text: '刚才在聊什么？', nowMs: 120000 };
+  const fixed = buildChatRequest(cfg, { ...turn, persona: { character: '', memory: '' } });
+  cfg.context.budgetBytes = fixed.summary.systemBytes + 3800;
+  const { request, summary } = buildChatRequest(cfg, { ...turn, persona });
+  const system = request.messages[0].content;
+  assert.equal(summary.sent, rows.length);
+  assert.ok(summary.systemBytes + summary.historyBytes <= cfg.context.budgetBytes);
+  assert.ok(summary.characterOmittedBytes > 0);
+  assert.ok(summary.memoryOmittedBytes > 0);
+  assert.ok(system.includes(characterLines[0]));
+  assert.ok(system.includes(memoryLines.at(-1)));
+  assert.ok(!system.includes(memoryLines[0]));
+  assert.ok(system.includes(cfg.prompts.group));
+  assert.ok(system.includes(cfg.prompts.toolRules));
+  assert.equal(request.messages.at(-1).content, '小明: 刚才在聊什么？');
+  const [character, memory] = system.split(/\n\n## (?:记忆|行为规则)\n\n/, 2);
+  assert.ok(persona.character.startsWith(`${character}\n`));
+  assert.ok(persona.memory.endsWith(`\n${memory}`));
+});
+
 test('draft → 真实模型测试 → 人工评审 → 发布；测试不改线上；新种子只影响新建或重置会话', async () => {
   const existing = await getPersona('g-999');
   await appendMemory('g-999', '小明', '已有记忆');

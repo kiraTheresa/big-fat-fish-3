@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>鹈鹕去兜风</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #f6f2e7;
+    color: #193d45;
+    font: 1rem system-ui, sans-serif;
+  }
+  main { width: min(940px, 100%); padding: clamp(16px, 5vw, 48px); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: clamp(1.5rem, 5vw, 2.5rem); }
+  button {
+    flex: none;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid #193d45;
+    border-radius: 999px;
+    background: #fffdf6;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:focus-visible { outline: 3px solid #147267; outline-offset: 4px; }
+  svg { display: block; width: 100%; height: auto; border-radius: 20px; }
+</style>
+<main>
+  <header>
+    <h1>鹈鹕去兜风</h1>
+    <button id="toggle" type="button">开始骑行</button>
+  </header>
+  <svg viewBox="0 0 840 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="scene-title">
+    <title id="scene-title">白鹈鹕蹬着青绿色自行车，沿海岸骑行</title>
+    <defs>
+      <linearGradient id="sky" x2="0" y2="1">
+        <stop stop-color="#bce6e4"/>
+        <stop offset="1" stop-color="#f1f4da"/>
+      </linearGradient>
+      <g id="wheel">
+        <circle r="72" fill="none" stroke="#1d3740" stroke-width="10"/>
+        <circle r="65" fill="none" stroke="#ffecbc" stroke-width="3"/>
+        <path d="M0-64V64 M-64 0H64 M-45-45L45 45 M-45 45L45-45" stroke="#809492" stroke-width="2"/>
+        <circle cx="0" cy="-54" r="4" fill="#f7c665"/>
+        <circle r="8" fill="#193d45"/>
+      </g>
+      <path id="foot" d="M-6-9 Q1-10 7-2 L20 0 Q26 1 22 6 L5 7 Q-6 7-8 1Z" fill="#ef9a4f" stroke="#954a30" stroke-width="2"/>
+    </defs>
+    <path fill="url(#sky)" d="M0 0H840V500H0Z"/>
+    <circle cx="675" cy="102" r="49" fill="#ffdc86"/>
+    <path fill="#fffdf3" opacity=".85" d="M60 116Q66 100 82 103Q87 83 109 84Q127 84 135 101Q153 99 162 116Z
+      M710 163Q719 148 732 151Q739 133 755 134Q770 133 778 149Q797 148 806 163Z"/>
+    <path fill="#8abeb0" d="M0 272Q55 203 123 202Q172 202 252 270Z"/>
+    <path fill="#6ba79c" d="M0 261Q46 238 82 251L136 271H0Z"/>
+    <path fill="#5ca8ac" d="M0 264H840V410H0Z"/>
+    <path fill="none" stroke="#d8f0da" stroke-width="3" stroke-linecap="round" opacity=".75"
+      d="M43 289h98m19 0h23m492-5h106m-56 25h62m-632 14h58m408 14h75m-655 12h58"/>
+    <path fill="#9eb594" d="M0 387Q155 374 302 385T591 382T840 385V430H0Z"/>
+    <path fill="#e8cda4" d="M0 409H840V500H0Z"/>
+    <path stroke="#f6e2bd" stroke-width="4" d="M0 412H840"/>
+    <path id="road-dashes" d="M0 471H1000" stroke="#f9edcf" stroke-width="5" stroke-dasharray="34 62" stroke-linecap="round"/>
+    <ellipse cx="448" cy="435" rx="233" ry="12" fill="#745f50" opacity=".19"/>
+
+    <!-- The far leg sits behind the bicycle frame. -->
+    <path id="far-leg" fill="none" stroke="#b46a43" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <g id="rear-wheel"><use href="#wheel"/></g>
+    <g id="front-wheel"><use href="#wheel"/></g>
+    <path d="M299 361 386 271 432 359 299 361 M386 271 561 269 432 359 M557 247 594 361"
+      fill="none" stroke="#204b50" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M299 361 386 271 432 359 299 361 M386 271 561 269 432 359 M557 247 594 361"
+      fill="none" stroke="#329382" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M386 271 377 251 M557 247 545 225Q541 218 549 216L566 215"
+      fill="none" stroke="#204b50" stroke-width="8" stroke-linecap="round"/>
+    <path d="M355 249Q373 244 399 248L391 255H363Q355 255 355 249Z" fill="#233e45"/>
+    <path d="M550 216 568 215" stroke="#263a3f" stroke-width="10" stroke-linecap="round"/>
+    <path d="M299 353 432 343 M299 369 432 375" stroke="#415859" stroke-width="3"/>
+    <circle cx="432" cy="359" r="19" fill="#e1dfc9" stroke="#354e53" stroke-width="4"/>
+    <path id="crank" stroke="#354e53" stroke-width="5" stroke-linecap="round"/>
+    <path id="far-pedal" stroke="#354e53" stroke-width="5" stroke-linecap="round"/>
+    <path id="near-pedal" stroke="#354e53" stroke-width="5" stroke-linecap="round"/>
+    <use id="far-foot" href="#foot" opacity=".85"/>
+    <path id="near-leg" fill="none" stroke="#e28b48" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <use id="near-foot" href="#foot"/>
+
+    <g stroke="#294650" stroke-width="3" stroke-linejoin="round">
+      <path fill="#fff8e7" d="M318 211Q333 202 361 193Q390 179 421 179Q446 175 451 146
+        Q439 140 432 127Q423 118 417 110Q429 112 436 110L422 99Q438 102 449 100
+        Q467 82 492 96Q507 104 511 127Q498 146 485 152Q474 175 485 193
+        Q500 215 478 239Q448 267 399 264Q358 266 331 249L288 250L311 235L286 236Z"/>
+      <path fill="#f1ae68" d="M495 130Q536 141 623 149Q609 163 587 178
+        Q542 201 513 178Q503 165 495 130Z"/>
+      <path fill="#ffc266" d="M492 123Q504 121 521 126L626 143Q637 145 634 151
+        Q629 154 622 151L516 146Q495 143 492 132Z"/>
+      <path fill="#f3ead4" d="M377 202Q408 188 451 193Q493 195 525 203L554 210
+        Q564 213 562 221Q558 228 550 227L521 220Q491 225 461 231
+        Q422 243 392 231L408 224L379 226L394 215L371 218Z"/>
+    </g>
+    <path d="M410 216Q434 218 452 211 M461 218Q483 213 501 212" fill="none" stroke="#a8a9a1" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="478" cy="116" r="10" fill="#fffefa"/>
+    <circle cx="481" cy="116" r="5" fill="#233e45"/>
+    <circle cx="483" cy="114" r="1.5" fill="white"/>
+    <path d="M511 131l5 1" stroke="#925133" stroke-width="2.5" stroke-linecap="round"/>
+  </svg>
+</main>
+<script>
+  const svg = document.querySelector('svg');
+  const toggle = document.querySelector('#toggle');
+  const rearWheel = svg.querySelector('#rear-wheel');
+  const frontWheel = svg.querySelector('#front-wheel');
+  const road = svg.querySelector('#road-dashes');
+  const crank = svg.querySelector('#crank');
+  const legs = ['near', 'far'].map(side => ({
+    leg: svg.querySelector('#' + side + '-leg'),
+    foot: svg.querySelector('#' + side + '-foot'),
+    pedal: svg.querySelector('#' + side + '-pedal'),
+  }));
+
+  let phase = 0.9;
+  let frame = null;
+  let previousTime = null;
+
+  function draw() {
+    const wheelAngle = phase * 2 * 180 / Math.PI;
+    rearWheel.setAttribute('transform', `translate(299 361) rotate(${wheelAngle})`);
+    frontWheel.setAttribute('transform', `translate(594 361) rotate(${wheelAngle})`);
+    road.setAttribute('transform', `translate(${-(phase * 2 * 72 % 96)} 0)`);
+
+    const dx = 27 * Math.cos(phase);
+    const dy = 27 * Math.sin(phase);
+    crank.setAttribute('d', `M${432 + dx} ${359 + dy} L${432 - dx} ${359 - dy}`);
+
+    legs.forEach(({ leg, foot, pedal }, index) => {
+      const direction = index === 0 ? 1 : -1;
+      const x = 432 + direction * dx;
+      const y = 359 + direction * dy;
+      const hipX = 387 + index * 12;
+      const kneeX = (hipX + x) / 2 + 22;
+      const kneeY = (249 + y) / 2 - 6;
+      leg.setAttribute('d', `M${hipX} 249 L${kneeX} ${kneeY} L${x - 6} ${y - 10}`);
+      foot.setAttribute('transform', `translate(${x - 6} ${y - 7})`);
+      pedal.setAttribute('d', `M${x - 11} ${y + 2} h22`);
+    });
+  }
+
+  function ride(time) {
+    if (previousTime !== null) phase += Math.min(time - previousTime, 50) * 0.0032;
+    previousTime = time;
+    draw();
+    frame = requestAnimationFrame(ride);
+  }
+
+  function setRiding(riding) {
+    if (frame !== null) cancelAnimationFrame(frame);
+    previousTime = null;
+    frame = riding ? requestAnimationFrame(ride) : null;
+    toggle.textContent = riding ? '暂停骑行' : '开始骑行';
+  }
+
+  toggle.addEventListener('click', () => setRiding(frame === null));
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  reducedMotion.addEventListener('change', event => {
+    if (event.matches) setRiding(false);
+  });
+  draw();
+  setRiding(!reducedMotion.matches);
+</script>

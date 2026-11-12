@@ -1,9 +1,21 @@
 import { config } from '../config.js';
 import { buildSystemPrompt } from '../triggers/chat-system.js';
+import { fitHistoryToBudget } from '../triggers/chat-context.js';
 import { toolAvailability, toolDefinitions } from '../tools/registry.js';
 import { chatStreamOptions } from '../utils/chat-stream.js';
 import { historyText } from '../utils/history-text.js';
 import { describeMemeSource } from '../memes/context.js';
+
+function fitLines(lines, budgetBytes) {
+  const kept = [];
+  for (const line of lines) {
+    const bytes = Buffer.byteLength(line) + (kept.length ? 1 : 0);
+    if (bytes > budgetBytes) break;
+    kept.push(line);
+    budgetBytes -= bytes;
+  }
+  return kept;
+}
 
 export function buildChatRequest(settings, { persona, records = [], state = {}, event, text, nowMs = Date.now(), systemSuffix = '' }) {
   const isGroup = event.message_type === 'group';
@@ -11,8 +23,10 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
   const previous = records.filter((rec) => event.message_id === undefined || rec.message_id !== event.message_id);
   const effectivePersona = { character: persona?.character ?? settings.prompts.seed, memory: context.injectMemory ? persona?.memory ?? '' : '' };
   const memeSource = settings.tools.save_meme?.enabled ? describeMemeSource(event, records) : '';
-  const system = buildSystemPrompt(effectivePersona, { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null }, settings.prompts) + systemSuffix
-    + (memeSource ? `\n\n## 本轮表情来源\n${memeSource}\n这只是来源信息，不代表用户要求收藏。以当前用户的要求判断；教这个表情的用途或命名也属于收藏请求。` : '');
+  const scene = { isGroup, nowMs, lastTimeSec: previous.at(-1)?.time ?? null };
+  const suffix = systemSuffix
+    + (memeSource ? `\n\n## 本轮表情来源\n${memeSource}\n来源只用于定位素材，不代表用户要求收藏。` : '');
+  const renderSystem = (material) => buildSystemPrompt(material, scene, settings.prompts) + suffix;
   const inspections = previous.map((rec, index) => {
     const raw = historyText(rec);
     const originalRaw = typeof rec.raw_message === 'string' ? rec.raw_message : '';
@@ -31,6 +45,26 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
   const count = eligible.length;
   for (const item of eligible.slice(0, Math.max(0, count - context.historyLimit))) item.reason = '超过历史条数';
   const limited = eligible.filter((item) => !item.reason);
+  let system = renderSystem(effectivePersona);
+  let characterOmittedBytes = 0;
+  let memoryOmittedBytes = 0;
+  const historyDemand = limited.reduce((bytes, item) => bytes + Buffer.byteLength(item.content), 0);
+  if (limited.length && Buffer.byteLength(system) + historyDemand > context.budgetBytes) {
+    const available = context.budgetBytes - Buffer.byteLength(renderSystem({ character: '', memory: '' }));
+    const newestBytes = Buffer.byteLength(limited.at(-1).content);
+    if (newestBytes <= available) {
+      // Reserve up to half the space after rules for recent turns, enough for at least the newest turn.
+      const recent = fitHistoryToBudget(limited, '', Math.max(newestBytes, Math.floor(available / 2)));
+      const materialBudget = available - recent.reduce((bytes, item) => bytes + Buffer.byteLength(item.content), 0);
+      const memoryBytes = Buffer.byteLength(effectivePersona.memory);
+      const characterBudget = Math.max(Math.floor(materialBudget / 2), materialBudget - memoryBytes);
+      const character = fitLines(effectivePersona.character.split('\n'), characterBudget).join('\n');
+      const memory = fitLines(effectivePersona.memory.split('\n').reverse(), materialBudget - Buffer.byteLength(character)).reverse().join('\n');
+      characterOmittedBytes = Buffer.byteLength(effectivePersona.character) - Buffer.byteLength(character);
+      memoryOmittedBytes = memoryBytes - Buffer.byteLength(memory);
+      system = renderSystem({ character, memory });
+    }
+  }
   let remaining = context.budgetBytes - Buffer.byteLength(system);
   let full = false;
   for (const item of [...limited].reverse()) {
@@ -44,7 +78,7 @@ export function buildChatRequest(settings, { persona, records = [], state = {}, 
   const tools = toolDefinitions(settings, String(event.user_id));
   return {
     request: { model: config.deepseekModel, messages, ...chatStreamOptions(config.chatStream), ...(tools.length ? { tools } : {}) },
-    inspections, summary: { candidates: inspections.length, filtered: count, limited: limited.length, sent: kept.length, systemBytes: Buffer.byteLength(system), historyBytes: kept.reduce((n, m) => n + Buffer.byteLength(m.content), 0), budgetBytes: context.budgetBytes, candidateLimit: 1000, budgetMeaning: 'system + 历史文字的字节粗算；不含本轮输入、图片、工具定义及协议开销，不是 token 上限' },
+    inspections, summary: { candidates: inspections.length, filtered: count, limited: limited.length, sent: kept.length, systemBytes: Buffer.byteLength(system), historyBytes: kept.reduce((n, m) => n + Buffer.byteLength(m.content), 0), characterOmittedBytes, memoryOmittedBytes, budgetBytes: context.budgetBytes, candidateLimit: 1000, budgetMeaning: 'system + 历史文字的字节粗算；不含本轮输入、图片、工具定义及协议开销，不是 token 上限' },
     availability: toolAvailability(settings, String(event.user_id)),
   };
 }

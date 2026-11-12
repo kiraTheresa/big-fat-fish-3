@@ -22,39 +22,38 @@ const duration = (seconds) => {
   return `${Math.floor(value / 60)} 分 ${value % 60} 秒`;
 };
 const icons = {
-  images: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/>',
-  memes: '<path d="M20 14a8 8 0 1 0-6 6l6-6Z"/><path d="M14 20v-4a2 2 0 0 1 2-2h4M8 10h.01M14 10h.01M8 14c1.5 1.5 3.5 1.5 5 0"/>',
-  overview: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
   events: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 14h5"/>',
-  config: '<path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
   jobs: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
   usage: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-  requests: '<path d="M2 12h5l3-9 4 18 3-9h5"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3a7 7 0 0 0 11.6-2"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   shield: '<path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4Z"/><path d="m8 12 3 3 5-6"/>',
-  pulse: '<path d="M2 12h5l3-9 4 18 3-9h5"/>',
   inbox: '<path d="m4 4-3 9v7h22v-7l-3-9H4Z"/><path d="M1 13h6l2 4h6l2-4h6"/>',
   warning: '<path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 17h.01"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.events}</svg>`;
 const pages = {
-  overview: ['运行概览', '检查连接、调用和任务状态，进入常用工具。', 'OVERVIEW'],
-  events: ['消息收件箱', '所有接收事件都在这里；接收不等于自动处理。', 'INBOX'],
-  prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。', 'PROMPT STUDIO'],
-  images: ['绘图作品', '浏览肥鱼画过的作品，查看原图、提示词与来源会话。', 'IMAGES'],
-  memes: ['表情收藏', '浏览已记录的表情，查看收藏状态、使用信息与本地预览。', 'MEMES'],
-  config: ['配置与能力', '管理能力开关、调用预算与运行参数。', 'CONFIGURATION'],
-  users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。', 'ACCESS'],
-  jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。', 'SCHEDULER'],
-  logs: ['运行日志', '默认关注失败，也可查看全部级别的日志与本轮业务链路。', 'LOGS'],
-  usage: ['Token 用量与费用', '查看预估费用、用量来源、调用结果与会话统计。', 'USAGE'],
-  requests: ['请求与稳定性', '观察模型调用频率、耗时与失败原因，沿业务链路定位问题。', 'REQUESTS'],
+  overview: ['运行概览', ''],
+  events: ['消息收件箱', '所有接收事件都在这里；接收不等于自动处理。'],
+  prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。'],
+  images: ['素材库', '浏览生成的图片、提示词与来源会话。'],
+  memes: ['素材库', '浏览已记录的表情与收藏状态。'],
+  config: ['对话与能力', '设置 Bot 如何回复、开放哪些能力，以及每天最多用多少。'],
+  users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。'],
+  jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。'],
+  logs: ['排障', '按会话追查失败、正常跳过和完整业务链路。'],
+  usage: ['用量与费用', '查看模型调用、Token 和预估费用。'],
+  requests: ['排障', '查看模型调用频率、耗时和失败原因。'],
 };
+const navigation = [
+  ['运行', [['overview', '概览'], ['usage', '用量与费用'], ['requests', '排障', 'logs']]],
+  ['Bot 管理', [['config', '对话与能力'], ['prompt', 'Prompt'], ['users', '用户权限'], ['jobs', '任务调度']]],
+  ['素材', [['images', '绘图作品'], ['memes', '表情收藏']]],
+];
 const resolvePage = (page) => page === 'media' ? 'images' : page;
 const initialPage = resolvePage(location.hash.slice(1));
 const state = {
@@ -234,7 +233,6 @@ const query = (values) => {
 const pill = (text, color = '') => `<span class="badge ${color}">${e(text)}</span>`;
 const empty = (title, description, name = 'inbox') => `<div class="empty-state"><div class="empty-icon">${icon(name)}</div><h3>${e(title)}</h3><p>${e(description)}</p></div>`;
 const panelHead = (title, description = '', action = '') => `<div class="panel-header"><div><h2>${e(title)}</h2>${description ? `<p>${e(description)}</p>` : ''}</div>${action}</div>`;
-const metric = (label, value, note, name, unit = '') => `<section class="panel metric"><div class="metric-top"><span>${e(label)}</span><span class="metric-symbol">${icon(name)}</span></div><div class="metric-value">${e(value)}${unit ? `<span class="unit">${e(unit)}</span>` : ''}</div><p class="metric-note">${e(note)}</p></section>`;
 const pageLink = (page, text) => `<button type="button" class="text-button" data-page="${page}">${e(text)} ↗</button>`;
 const selectOptions = (options, selected) => options.map(([value, label]) => `<option value="${e(value)}"${value === selected ? ' selected' : ''}>${e(label)}</option>`).join('');
 
@@ -274,6 +272,20 @@ function navigate(page) {
   state.cursors = [];
   history.replaceState(null, '', `#${page}`);
   loadPage();
+  $('#page-title').focus();
+}
+
+function renderNavigation(page) {
+  const primary = $('#navigation');
+  if (primary.dataset.page === page) return;
+  primary.dataset.page = page;
+  const [, sections] = navigation.find(([, entries]) => entries.some(([key, , related]) => page === key || page === related)) || navigation[0];
+  const link = (key, label, current) => `<a href="#${key}" data-page="${key}"${current ? ` aria-current="${current}"` : ''}>${e(label)}</a>`;
+  primary.innerHTML = navigation.map(([label, entries]) => link(entries[0][0], label, entries === sections ? 'true' : '')).join('');
+  $('#section-navigation').innerHTML = sections.map(([key, label, related]) => link(key, label, page === key ? 'page' : page === related ? 'true' : '')).join('');
+  const diagnostic = $('#diagnostic-navigation');
+  diagnostic.hidden = page !== 'requests' && page !== 'logs';
+  diagnostic.innerHTML = diagnostic.hidden ? '' : link('requests', '模型请求', page === 'requests' ? 'page' : '') + link('logs', '运行日志', page === 'logs' ? 'page' : '');
 }
 
 async function loadPage({ quiet = false } = {}) {
@@ -284,17 +296,14 @@ async function loadPage({ quiet = false } = {}) {
   for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
   $('#refresh').disabled = true;
-  const [title, description, section] = pages[page];
+  const [title, description] = pages[page];
   $('#page-title').textContent = title;
   $('#page-description').textContent = description;
-  $('#page-eyebrow').textContent = `WORKSPACE / ${section}`;
+  $('#page-description').hidden = !description;
+  $('#connection-status').hidden = page === 'overview';
   document.title = `${title} · 大肥鱼`;
   $('#live-control').hidden = !['overview', 'events', 'logs', 'usage', 'requests'].includes(page);
-  document.querySelectorAll('#navigation [data-page]').forEach((link) => {
-    link.classList.toggle('active', link.dataset.page === page);
-    if (link.dataset.page === page) link.setAttribute('aria-current', 'page');
-    else link.removeAttribute('aria-current');
-  });
+  renderNavigation(page);
   $('#content').setAttribute('aria-busy', 'true');
   if (!quiet) $('#content').innerHTML = '<section class="panel loading-state"><span class="spinner" aria-hidden="true"></span><p>正在读取运行数据…</p></section>';
   try {
@@ -334,26 +343,52 @@ function eventTypeBadge(type) {
   return pill(labels[type] || type, { notice: 'blue', request: 'violet', meta_event: 'neutral', message_sent: 'neutral', unknown: 'warning' }[type] || '');
 }
 async function renderOverview(sequence) {
-  const [status, failures] = await Promise.all([api('/status'), api('/logs?limit=6&failuresOnly=true').catch(() => null)]);
+  const [status, failures, jobs, config] = await Promise.all([
+    api('/status'), api('/logs?limit=6&failuresOnly=true').catch(() => null),
+    api('/jobs').catch(() => null), api('/config').catch(() => null),
+  ]);
   if (sequence !== state.sequence) return '';
   state.rows = failures?.items || [];
   updateStatus(status);
   const connection = connectionInfo(status.connection);
+  const scheduler = status.scheduler;
+  const active = jobs?.items?.find((job) => job.id === scheduler?.activeJobId);
+  const latest = jobs?.items?.filter((job) => job.lastRunAt && job.lastStatus !== 'running').sort((a, b) => b.lastRunAt - a.lastRunAt)[0];
+  const schedulerText = scheduler?.activeJobId ? '正在执行' : scheduler?.running === true ? '运行中 · 当前空闲' : scheduler?.running === false ? '未运行' : '状态暂不可读';
+  const lastExecution = latest ? `${e(latest.name)} ${jobResult(latest)}<span class="cell-sub">${e(date(latest.lastRunAt))}</span>`
+    : jobs?.items?.length ? '尚无已结束的任务' : jobs ? '暂无计划任务' : '执行记录暂不可读';
   const usage = status.usage?.today || status.usage?.totals || status.usage || {};
   const ledgerAvailable = status.usage?.ledgerAvailable !== false && status.usage?.today !== null;
-  const usageNumber = (value) => ledgerAvailable ? number(value) : '不可用';
-  const persistenceError = status.storage?.lastError?.message || status.storage?.usage?.lastWriteError || status.usage?.lastPersistenceError || status.logStats?.lastError || status.scheduler?.lastError;
-  const jobs = Array.isArray(status.scheduler?.jobs) ? status.scheduler.jobs.length : status.scheduler?.jobs ?? 0;
-  const failed = usage.failures ?? 0;
-  const storage = status.storage || {};
-  return `${persistenceError ? `<div class="notice error" role="alert">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}<section class="panel status-hero"><div><p class="eyebrow">INSTANCE STATUS</p><h2>${connection.connected ? 'QQ 已连接' : 'QQ 未连接'}</h2><p>${connection.connected ? '管理服务可用，可检查失败与调用记录。' : '可以管理配置与查看记录；连接恢复后继续接收事件。'}</p></div><div class="quick-links"><button type="button" class="button primary" data-page="prompt">打开 Prompt 工作台</button><button type="button" class="button" data-page="logs">查看失败</button></div></section>
-    <div class="metrics-grid">${metric('运行时间', duration(status.uptimeSeconds), `启动于 ${date(status.startedAt)}`, 'pulse')}${metric('今日调用', usageNumber(usage.calls), ledgerAvailable ? `下次重置 ${date(status.usage?.resetAt)}` : '用量账本当前不可读取', 'usage', '次')}${metric('今日 Token', usageNumber(usage.totalTokens), ledgerAvailable ? `${number(usage.unknownUsageCalls)} 次调用未返回完整用量` : '暂时无法汇总已知用量', 'config')}${metric('计划任务', number(jobs), status.scheduler?.running ? '调度器正在运行' : '调度器未运行', 'jobs', '项')}</div>
-    <div class="overview-grid"><section class="panel">${panelHead('最近失败', '最近 6 条失败、降级或结果未知的记录。', pageLink('logs', '全部失败'))}${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到失败日志重试。</div>'}</section>
-    <section class="panel">${panelHead('实例状态', '当前连接与持久化概况')}<dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.connected ? '' : 'warning')}</dd></div><div><dt>最近收到事件</dt><dd>${e(date(status.connection?.lastEventAt))}</dd></div><div><dt>数据目录</dt><dd class="mono">${e(storage.dataDir || '—')}</dd></div><div><dt>今日失败调用</dt><dd>${e(usageNumber(failed))}${ledgerAvailable ? ' 次' : ''}</dd></div><div><dt>今日生成图片</dt><dd>${e(usageNumber(usage.images))}${ledgerAvailable ? ' 张' : ''}</dd></div><div><dt>发送队列</dt><dd>${e(number(status.sender?.queued))} 条</dd></div></dl><div class="quick-links"><button type="button" class="button small" data-page="config">${icon('config')}调整配置</button><button type="button" class="button small" data-page="logs">${icon('logs')}查看失败</button></div></section></div><div class="summary-strip"><span>待发送<strong>${e(number(status.sender?.queued))} 条</strong></span><span>正在调用<strong>${e(number(status.usage?.inFlight?.length))} 次</strong></span><span>待写入<strong>${e(number(storage.pendingWrites))} 项</strong></span><span>进程内存<strong>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</strong></span></div>`;
+  const persistenceError = status.storage?.lastError?.message || status.storage?.usage?.lastWriteError || status.usage?.lastPersistenceError || status.logStats?.lastError || scheduler?.lastError;
+  const usageSummary = !ledgerAvailable ? '<p class="muted">用量账本暂不可读</p>' : !usage.calls ? '<p class="muted">今天暂无模型调用</p>'
+    : `<dl class="key-values"><div><dt>今日调用</dt><dd><strong>${e(number(usage.calls))}</strong> 次</dd></div><div><dt>已报告 Token</dt><dd>${e(number(usage.totalTokens))}</dd></div><div><dt>失败调用 / 出图</dt><dd>${e(number(usage.failures))} 次 / ${e(number(usage.images))} 张</dd></div></dl>`;
+  return `${persistenceError ? `<div class="notice error" role="alert">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}
+    <div class="overview-grid">
+      <section class="panel">${panelHead('当前状态', '', pageLink('jobs', '任务调度'))}
+        <dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.dot)}<span class="cell-sub">最近收到事件 ${e(date(status.connection?.lastEventAt))}</span></dd></div>
+        <div><dt>调度器</dt><dd>${pill(schedulerText, scheduler?.activeJobId ? 'blue' : scheduler?.running ? '' : 'neutral')}${active ? `<span class="cell-sub">${e(active.name)}</span>` : ''}</dd></div>
+        <div><dt>最近任务结果</dt><dd>${lastExecution}</dd></div></dl>
+      </section>
+      <section class="panel">${panelHead('今日用量', '', pageLink('usage', '查看用量'))}${usageSummary}</section>
+    </div>
+    <section class="panel">${panelHead('最近失败', '', pageLink('logs', '进入排障'))}${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到运行日志重试。</div>'}</section>
+    <details id="instance-details" class="panel instance-details"${$('#instance-details')?.open ? ' open' : ''}>
+      <summary>实例详情</summary>
+      <dl class="key-values"><div><dt>运行时间</dt><dd>${e(duration(status.uptimeSeconds))} · 启动于 ${e(date(status.startedAt))}</dd></div>
+        <div><dt>数据目录</dt><dd class="mono">${e(status.storage?.dataDir || '—')}</dd></div>
+        <div><dt>待发送 / 进行中调用 / 待写入</dt><dd>${e(number(status.sender?.queued))} / ${e(number(status.usage?.inFlight?.length))} / ${e(number(status.storage?.pendingWrites))}</dd></div>
+        <div><dt>进程内存</dt><dd>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</dd></div>
+        ${config ? `<div><dt>QQ 地址</dt><dd class="mono">${e(config.connection?.wsUrl || '—')}</dd></div>
+        <div><dt>对话模型</dt><dd class="mono">${e(config.connection?.model || config.connection?.deepseekModel || '—')}</dd></div>
+        <div><dt>绘图模型</dt><dd class="mono">${e(config.connection?.imageModel || '—')}</dd></div>
+        <div><dt>配置版本</dt><dd class="mono">${e(config.revision ?? '—')}</dd></div>` : ''}
+      </dl>
+      <p class="field-hint">${config ? `对话接口：${config.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${config.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}。修改连接或模型的环境变量后需重启 Bot。` : '连接和模型配置暂不可读。'}</p>
+    </details>`;
 }
 
 function recentFailures(items) {
-  if (!items.length) return empty('暂无失败记录', '当前保留范围内没有失败、降级或结果未知的记录。', 'logs');
+  if (!items.length) return '<p class="muted">暂无失败、降级或结果未知的记录。</p>';
   return `<div class="event-list">${items.map((row, index) => {
     const info = describeLog(row);
     return `<div class="event-row failure-row"><span class="event-icon">${icon('warning')}</span><div class="event-text"><strong>${e(info.title)} · ${e(info.result)}</strong><p>${e(row.sessionKey || '系统')} · ${e(info.detail || row.message)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
@@ -397,18 +432,17 @@ async function renderConfig(sequence) {
   state.dirty = false;
   const b = result.behavior || {};
   const p = result.policy || {};
-  const connection = result.connection || {};
   const toggle = (name, title, description, fallback = true) => toggleField(name, title, description, getPath({ behavior: b, policy: p }, name, fallback));
-  return `<form id="config-form"><div class="config-layout"><section class="panel">${panelHead('对话行为', '保存后应用于后续消息；正在执行的请求保持原流程。')}
+  return `<form id="config-form"><section class="panel">${panelHead('对话行为', '保存后的设置用于后续消息。')}
     <div class="form-section"><h3>什么时候回应</h3>${toggle('behavior.trigger.at.enabled', '被 @ 时回应', '群消息提及 Bot 时触发。')}${toggle('behavior.trigger.nameCall.enabled', '被叫名字时回应', '命中下面的任意别名时触发。')}${toggle('behavior.trigger.replyQuote.enabled', '被引用时回应', '用户引用 Bot 的消息时触发。')}${toggle('behavior.trigger.poke.enabled', '被戳一戳时回应', '群聊和私聊被戳时，结合人设回复一句短话。')}<div class="form-field full"><label for="aliases">呼唤别名</label><input id="aliases" name="aliases" value="${e((getPath(b, 'trigger.nameCall.aliases', [])).join('，'))}" placeholder="大肥鱼，肥鱼"><p class="field-hint">使用中文或英文逗号分隔。</p></div></div>
     <div class="form-section"><h3>戳一戳短回复</h3><div class="form-field"><label for="poke-prompt">回复提示词</label><textarea id="poke-prompt" name="behavior.trigger.poke.prompt" rows="3" maxlength="2000" required>${e(getPath(b, 'trigger.poke.prompt', ''))}</textarea><p class="field-hint">沿用当前人设与对话上下文，立即发送一条文字回复。</p></div></div>
     <div class="form-section"><h3>对话冷却</h3>${numberField('behavior.chat.cooldownMs', '冷却时间 / 毫秒', getPath(b, 'chat.cooldownMs', 2000), '2000 毫秒 = 2 秒。同一会话从开始响应计时，聊天与戳一戳共用；0 表示关闭。', { max: 60000 })}</div>
     <div class="form-section"><h3>如何回复</h3>${toggle('behavior.reply.delay.enabled', '随机回复延迟', '为回复保留一点自然的停顿。')}<div class="form-grid">${numberField('behavior.reply.delay.minMs', '最短延迟 / 毫秒', getPath(b, 'reply.delay.minMs', 2000), '范围为 0–60,000 毫秒。', { max: 60000 })}${numberField('behavior.reply.delay.maxMs', '最长延迟 / 毫秒', getPath(b, 'reply.delay.maxMs', 8000), '不得小于最短延迟，最多 60,000。', { max: 60000 })}</div>${toggle('behavior.reply.split.enabled', '分段发送回复', '使用分隔符将模型回复拆成多条消息。')}<div class="form-field"><label for="separator">回复分隔符</label><textarea id="separator" name="separator" rows="2" maxlength="20">
 ${e(getPath(b, 'reply.split.separator', '||'))}</textarea><p class="field-hint">支持换行，最多 20 字符；留空则仅按换行分段。</p></div>${toggle('behavior.reply.quote.enabled', '引用原消息', '回复时带上触发消息的引用。')}</div>
     <div class="form-section"><h3>上下文</h3><p class="section-description">历史筛选与字节预算由 Prompt 发布版本统一管理。</p>${pageLink('prompt', '前往 Prompt 工作台')}</div></section>
-    <section class="panel">${panelHead('能力与额度', '关闭能力后，对应消息仍会接收并记录。')}${toggle('policy.features.chat', '文字对话', '允许调用聊天模型。')}${toggle('policy.features.vision', '图片理解', '允许已有识图流程处理图片。')}${toggle('policy.features.draw', '绘图', '对所有未被封禁的用户开放。')}${toggle('policy.features.distill', '记忆提炼', '允许离线整理对话记忆。')}<div class="form-section"><h3>每日用量上限</h3><p class="section-description">0 表示不限额。按北京时间自然日计数。</p><div class="form-grid">${numberField('policy.limits.maxCallsPerDay', '最多调用 / 次', getPath(p, 'limits.maxCallsPerDay', 0), '新调用达到上限后停止。', { max: 1000000 })}${numberField('policy.limits.maxTokensPerDay', '最多 Token', getPath(p, 'limits.maxTokensPerDay', 0), '按已知用量判断，不含上游未回传用量。', { max: 1000000000 })}</div></div>
-    <div class="form-section"><h3>连接信息</h3><p class="section-description">连接、模型与密钥由环境变量管理。</p><dl class="key-values"><div><dt>QQ 地址</dt><dd class="mono">${e(connection.wsUrl || '—')}</dd></div><div><dt>对话模型</dt><dd class="mono">${e(connection.model || connection.deepseekModel || '—')}</dd></div><div><dt>绘图模型</dt><dd class="mono">${e(connection.imageModel || '—')}</dd></div></dl><p class="field-hint">对话接口：${result.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${result.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}</p><p class="field-hint">修改环境变量后需要重启 Bot。管理台不显示密钥。</p></div>
-    <div class="form-section"><h3>配置版本</h3><p class="field-hint mono">${e(result.revision ?? '—')}</p></div></section></div><div class="save-bar"><p id="save-state">所有配置已同步</p><div><button type="button" class="button" data-action="reload-config">重新读取</button><button type="submit" id="save-config" class="button primary" disabled>保存配置 ${icon('check')}</button></div></div><p id="config-error" class="form-error" role="alert" hidden></p></form>`;
+    <section class="panel">${panelHead('能力开关', '关闭能力后，对应消息仍会接收并记录。')}${toggle('policy.features.chat', '文字对话', '允许调用聊天模型。')}${toggle('policy.features.vision', '图片理解', '允许已有识图流程处理图片。')}${toggle('policy.features.draw', '绘图', '对所有未被封禁的用户开放。')}${toggle('policy.features.distill', '记忆提炼', '允许离线整理对话记忆。')}</section>
+    <section class="panel">${panelHead('每日用量上限', '按北京时间自然日计数。0 表示不限额。')}<div class="form-grid">${numberField('policy.limits.maxCallsPerDay', '最多调用 / 次', getPath(p, 'limits.maxCallsPerDay', 0), '新调用达到上限后停止。', { max: 1000000 })}${numberField('policy.limits.maxTokensPerDay', '最多 Token', getPath(p, 'limits.maxTokensPerDay', 0), '按已知用量判断，不含上游未回传用量。', { max: 1000000000 })}</div></section>
+    <div class="save-bar"><p id="save-state">所有配置已同步</p><div><button type="button" class="button" data-action="reload-config">重新读取</button><button type="submit" id="save-config" class="button primary" disabled>保存配置 ${icon('check')}</button></div></div><p id="config-error" class="form-error" role="alert" hidden></p></form>`;
 }
 
 const roles = { user: '普通用户', admin: '管理员', blocked: '已封禁' };
@@ -422,6 +456,15 @@ async function renderUsers(sequence) {
 }
 
 const jobTypes = { maintenance: '数据维护', distill: '记忆提炼' };
+const jobStatuses = {
+  success: ['成功', ''], completed: ['完成', ''], failed: ['失败', 'danger'], error: ['失败', 'danger'],
+  interrupted: ['已中断', 'danger'], running: ['执行中', 'blue'], skipped: ['已跳过', 'neutral'],
+};
+function jobResult(job) {
+  if (!job.lastStatus) return pill('尚未执行', 'neutral');
+  const [text, color] = Object.hasOwn(jobStatuses, job.lastStatus) ? jobStatuses[job.lastStatus] : [job.lastStatus, 'neutral'];
+  return pill(text, color);
+}
 function scheduleText(schedule) {
   if (!schedule) return '未配置';
   if (schedule.kind === 'once') return `单次 · ${date(schedule.at)}`;
@@ -434,7 +477,7 @@ async function renderJobs(sequence) {
   if (sequence !== state.sequence) return '';
   state.jobs = result.items || [];
   return `<section class="panel">${panelHead('计划任务', '定期维护接收记录，或运行已有的记忆提炼。', `<button type="button" class="button primary" data-action="new-job">${icon('plus')}创建任务</button>`)}<div class="notice info">支持间隔执行与指定时间执行。任务不会主动向 QQ 发送消息。</div>
-    ${state.jobs.length ? `<div class="table-wrap"><table><thead><tr><th>任务</th><th>执行计划</th><th>下次执行</th><th>上次结果</th><th>状态与管理</th></tr></thead><tbody>${state.jobs.map((job, index) => `<tr><td><span class="cell-main job-name">${e(job.name)}</span><span class="cell-sub">${e(jobTypes[job.type] || job.type)}</span></td><td>${e(scheduleText(job.schedule))}</td><td class="mono">${job.enabled ? e(date(job.nextRunAt)) : job.schedule?.kind === 'once' && job.lastRunAt ? '已执行' : '已暂停'}</td><td>${job.lastStatus ? pill(({ success: '成功', completed: '完成', failed: '失败', error: '失败', interrupted: '已中断', running: '执行中', skipped: '已跳过' })[job.lastStatus] || job.lastStatus, ['error', 'failed', 'interrupted'].includes(job.lastStatus) ? 'danger' : 'neutral') : '<span class="muted">尚未执行</span>'}<span class="cell-sub">${e(date(job.lastRunAt))}</span>${job.lastError ? `<button type="button" class="text-button" data-action="job-error" data-index="${index}">查看原因</button>` : ''}</td><td class="cell-actions"><button type="button" class="button small" data-action="toggle-job" data-index="${index}" aria-label="${job.enabled ? '暂停' : '启用'} ${e(job.name)}">${job.enabled ? '暂停' : '启用'}</button><button type="button" class="button small" data-action="edit-job" data-index="${index}">编辑</button><button type="button" class="button small subtle" data-action="delete-job" data-index="${index}">删除</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有计划任务', '创建一个定期任务，让数据维护或记忆提炼按时运行。', 'jobs')}</section>`;
+    ${state.jobs.length ? `<div class="table-wrap"><table><thead><tr><th>任务</th><th>执行计划</th><th>下次执行</th><th>执行状态 / 上次结果</th><th>管理</th></tr></thead><tbody>${state.jobs.map((job, index) => `<tr><td><span class="cell-main job-name">${e(job.name)}</span><span class="cell-sub">${e(jobTypes[job.type] || job.type)}</span></td><td>${e(scheduleText(job.schedule))}</td><td class="mono">${job.enabled ? e(date(job.nextRunAt)) : job.schedule?.kind === 'once' && job.lastRunAt ? '—' : '已暂停'}</td><td>${jobResult(job)}${job.lastRunAt ? `<span class="cell-sub">${e(date(job.lastRunAt))}</span>` : ''}${job.lastError ? `<button type="button" class="text-button" data-action="job-error" data-index="${index}">查看原因</button>` : ''}</td><td class="cell-actions"><button type="button" class="button small" data-action="toggle-job" data-index="${index}" aria-label="${job.enabled ? '暂停' : '启用'} ${e(job.name)}">${job.enabled ? '暂停' : '启用'}</button><button type="button" class="button small" data-action="edit-job" data-index="${index}">编辑</button><button type="button" class="button small subtle" data-action="delete-job" data-index="${index}">删除</button></td></tr>`).join('')}</tbody></table></div>` : empty('还没有计划任务', '创建一个定期任务，让数据维护或记忆提炼按时运行。', 'jobs')}</section>`;
 }
 
 async function renderLogs(sequence) {
@@ -814,13 +857,7 @@ $('#close-dialog').addEventListener('click', closeDialog);
 $('#detail-dialog').addEventListener('cancel', (event) => { if (state.saving) event.preventDefault(); });
 $('#detail-dialog').addEventListener('close', () => { clearUsageReport(); if (lastFocus?.isConnected) lastFocus.focus(); });
 $('#auto-refresh').addEventListener('change', (event) => { state.live = event.target.checked; });
-const navigationGroups = [
-  ['运行排查', ['overview', 'logs', 'requests', 'usage']],
-  ['开发调试', ['prompt']],
-  ['素材收藏', ['images', 'memes']],
-  ['实例管理', ['config', 'jobs', 'users']],
-];
-$('#navigation').innerHTML = navigationGroups.map(([label, keys]) => `<div class="nav-group"><p class="nav-label">${label}</p>${keys.map((page) => `<a href="#${page}" data-page="${page}" class="nav-item">${icon(page)}<span>${e(pages[page][0])}</span></a>`).join('')}</div>`).join('');
+renderNavigation(state.page);
 window.addEventListener('beforeunload', (event) => { if (state.dirty || state.saving) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('focus', expireLogin);
 window.addEventListener('pageshow', expireLogin);

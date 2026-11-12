@@ -19,6 +19,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startMockServer } from './mock-onebot.js';
 import { startLlmServer } from './llm-server.js';
+import { GROUP_RULES, IDENTITY_LINES, PRIVATE_RULES, SEED_CHARACTER } from '../src/prompt/defaults.js';
 
 const TOKEN = 'chat-test-token';
 const DATA_DIR = `tmp/test-chat-${process.pid}`;
@@ -425,8 +426,7 @@ test('system 组装：种子人设注入（空记忆保留标题与空行）；p
   );
 
   let system = llmServer.requests.at(-1).body.messages[0].content;
-  assert.ok(system.startsWith('# 大肥鱼'), 'system 应以种子 character 开头');
-  assert.ok(system.includes('呆萌心大，反应慢半拍，但很真诚'), '种子性格内容应注入');
+  assert.ok(system.startsWith(SEED_CHARACTER + '\n\n## 记忆'), 'system 应完整注入当前种子人设');
   assert.ok(system.includes('## 记忆'), '记忆段标题应保留（空记忆亦然）');
   // 空 memory：『## 记忆』与『## 行为规则』之间仅保留固定空行（结构稳定 > 内容紧凑，缓存友好）
   assert.equal(
@@ -435,9 +435,8 @@ test('system 组装：种子人设注入（空记忆保留标题与空行）；p
     '空记忆应保留标题与空行结构'
   );
   assert.ok(system.includes('## 行为规则'), '行为规则标题应在');
-  assert.ok(system.includes('- 用简短口语化的中文回复，不要使用 Markdown 格式'), '行为规则行应注入');
   // Task 10：私聊版规则 + 身份锚定段（群/私分流与固定身份段端到端注入）
-  assert.ok(system.includes('- 一对一私聊，可以聊得更展开、多接几句'), '私聊版规则应注入');
+  assert.ok(system.includes(PRIVATE_RULES.join('\n')), '私聊版规则应完整注入');
   assert.ok(!system.includes('不刷屏'), '私聊 system 不得混入群聊刷屏文案（分流不串台）');
   assert.ok(system.includes('## 身份与消息格式'), '身份锚定段应注入');
   assert.ok(system.includes('大肥鱼'), '身份段应含大肥鱼身份锚定');
@@ -458,7 +457,7 @@ test('system 组装：种子人设注入（空记忆保留标题与空行）；p
   assert.ok(system.startsWith('你是七号测试鱼，冷静话少。'), 'patch 的 character 应注入');
   assert.ok(system.includes('七号鱼爱吃火锅'), 'patch 的 memory 应注入');
   assert.ok(system.includes('## 记忆') && system.includes('## 行为规则'), '段结构保持固定');
-  assert.ok(!system.includes('呆萌心大'), 'patch 后不得残留种子性格');
+  assert.ok(!system.includes(SEED_CHARACTER), 'patch 后不得注入种子人设');
 });
 
 test('reset 水位过滤：resetAt 之前的入站行与 bot 行同滤，之后的消息保留', { timeout: 10000 }, async () => {
@@ -778,10 +777,10 @@ test('system 动态尾部（群聊 + 静默 2 小时）：尾部含群聊与「�
   assert.ok(system.includes('- 场景：群聊'), '群聊场景');
   assert.ok(system.includes('- 静默时长：距上一条消息约 2 小时'), '静默 2 小时应出人性化文案（spec「尾部注入」场景）');
   // Task 10：群聊版规则 + 身份锚定段（群/私分流端到端的群聊侧）
-  assert.ok(system.includes('不刷屏'), '群聊版规则应注入（克制不刷屏）');
+  assert.ok(system.includes(GROUP_RULES.join('\n')), '群聊版规则应完整注入');
   assert.ok(!system.includes('聊得更展开'), '群聊 system 不得混入私聊展开文案（分流不串台）');
   assert.ok(system.includes('## 身份与消息格式'), '身份锚定段应注入');
-  assert.ok(system.includes('「昵称: 」开头的前缀是群友的名字'), '身份段应说明群聊昵称前缀语义');
+  assert.ok(system.includes(IDENTITY_LINES.join('\n')), '身份与消息格式应完整注入');
 });
 
 test('缓存前缀稳定：同会话连续两轮，system 固定前缀逐字节一致、动态尾部随轮次变化', { timeout: 10000 }, async () => {
