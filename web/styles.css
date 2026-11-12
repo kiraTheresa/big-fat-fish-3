@@ -266,7 +266,81 @@ label{display:block;font-size:12px;font-weight:550}small{font-size:12px}
 #prompt-console.pp-v4 .pp-scope-details{font-size:12px;color:var(--muted);padding:5px 3px 15px}#prompt-console.pp-v4 .pp-scope-details p{margin-top:10px;line-height:1.8}
 #prompt-console.pp-v4 .pp-readable{font-family:inherit;font-size:13px;line-height:1.95;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:16px 18px}
 #prompt-console.pp-v4 .pp-assembled,#prompt-console.pp-v4 .pp-config-json{margin-top:15px;padding:15px}
-#prompt-console.pp-v4 .pp-json-view{background:white}#prompt-console.pp-v4 #pp-request-json{margin-top:14px;min-height:65vh;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.9;resize:vertical;background:#fcfdff}
+#prompt-console.pp-v4 .pp-json-view{background:white}
+#prompt-console.pp-v4 #pp-request-json{margin:8px 0;min-height:320px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;resize:vertical;background:#fcfdff}
+.json-viewer {
+  --json-blue: #244c96;
+  --json-violet: #6b3a8c;
+  --json-teal: #176257;
+  margin-top: 12px;
+  padding: 5px 8px;
+  background: #f8fafd;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font: 12px/1.65 "SFMono-Regular", Consolas, monospace;
+}
+.json-empty { margin: 0; padding: 12px 8px; }
+.json-viewer summary {
+  padding: 5px 7px;
+  min-height: 32px;
+  border-radius: 4px;
+  list-style-position: inside;
+  cursor: pointer;
+  color: var(--json-guide-ink, var(--json-blue));
+}
+.json-viewer summary:hover { background: #edf2fb; }
+.json-viewer summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.json-viewer .json-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  padding: 5px 7px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.json-viewer summary > .json-row {
+  display: inline-flex;
+  width: calc(100% - 22px);
+  padding: 0;
+  vertical-align: middle;
+}
+.json-branch.json-depth-0 { --json-guide: #bed1ef; --json-guide-ink: var(--json-blue); }
+.json-branch.json-depth-1 { --json-guide: #d9c5e7; --json-guide-ink: var(--json-violet); }
+.json-branch.json-depth-2 { --json-guide: #badcd3; --json-guide-ink: var(--json-teal); }
+.json-viewer .json-children {
+  margin-inline-start: 12px;
+  padding-inline-start: 5px;
+  border-inline-start: 1px solid var(--json-guide);
+}
+.json-viewer .json-key { color: var(--json-blue); font-weight: 650; }
+.json-viewer summary .json-key { color: var(--json-guide-ink, var(--json-blue)); }
+.json-viewer .json-shape { color: var(--json-guide-ink, var(--muted)); }
+.json-viewer .json-value { color: var(--ink); min-width: 0; }
+.json-viewer .json-string { color: var(--json-teal); }
+.json-viewer :is(.json-number,.json-boolean) { color: var(--json-violet); }
+.json-viewer .json-null { color: var(--muted); }
+.json-viewer .json-count { color: var(--muted); white-space: nowrap; }
+.json-viewer .json-preview { min-width: 0; padding-inline-start: 4px; color: var(--muted); }
+.json-viewer .json-preview > span + span { margin-inline-start: 3px; }
+.json-viewer [open] > summary .json-preview,
+.json-viewer .json-text[open] > summary .json-string { display: none; }
+.json-viewer .json-text-body {
+  margin: 2px 4px 7px 13px;
+  padding: 9px 11px;
+  border-inline-start: 1px solid #badcd3;
+  background: #edf6f4;
+  color: #1d5049;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .json-viewer { padding-inline: 4px; }
+  .json-viewer summary { min-height: 44px; padding-block: 10px; }
+  .json-viewer .json-children { margin-inline-start: 7px; padding-inline-start: 2px; }
+}
 #prompt-console.pp-v4 .pp-test{padding:18px;margin:0}
 #prompt-console.pp-v4 .pp-test h2{font-size:15px}#prompt-console.pp-v4 .pp-test .panel-header p{font-size:11px;line-height:1.8}
 #prompt-console.pp-v4 .pp-test-inputs{display:grid;gap:17px}#prompt-console.pp-v4 .pp-test-inputs textarea{margin-top:7px;line-height:1.8}
@@ -283,6 +357,6 @@ label{display:block;font-size:12px;font-weight:550}small{font-size:12px}
 #prompt-console.pp-v4 .pp-appearance-bar{display:block;margin:18px 0;color:var(--muted);font-size:11px}#prompt-console.pp-v4 .pp-appearance-bar .pp-style-switch{display:inline-flex;margin-top:10px}
 #prompt-console.pp-v4 #pp-save{background:var(--accent);color:white;border-color:var(--accent)}
 @media(max-width:1200px){#prompt-console.pp-v4 .pp-v4-grid{grid-template-columns:minmax(0,1fr) 280px;gap:13px}#prompt-console.pp-v4 .pp-test{padding:14px}#prompt-console.pp-v4 .pp-page-controls{flex-wrap:wrap}#prompt-console.pp-v4 .pp-scope-map>div{padding:10px 8px}}
-@media(min-width:961px){#prompt-console.pp-v4 :is(#pp-request-json,#pp-result){scroll-margin-top:100px}}
+@media(min-width:961px){#prompt-console.pp-v4 :is(#pp-request-view,#pp-result){scroll-margin-top:100px}}
 @media(max-width:960px){#prompt-console.pp-v4 .pp-v4-grid{grid-template-columns:minmax(0,1fr)}#prompt-console.pp-v4 .pp-page-controls{position:static}}
 @media(max-width:560px){#prompt-console.pp-v4 .pp-scope-map{grid-template-columns:1fr}#prompt-console.pp-v4 .pp-scope-map>div+div{border-left:0;border-top:1px solid var(--line)}#prompt-console.pp-v4 .pp-cards-view{padding:10px}#prompt-console.pp-v4 .pp-scenario-bar label:first-child{min-width:100%}#prompt-console.pp-v4 .pp-page-controls>.pp-row{gap:6px;flex-wrap:wrap}}

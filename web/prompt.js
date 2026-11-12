@@ -1,4 +1,6 @@
 // Prompt workbench: persisted drafts, frozen scenarios, actual request traces.
+import { updateJsonViewer } from './json-viewer.js';
+
 const escape = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const json = (v) => JSON.stringify(v, null, 2);
 export function configDiff(before, after, prefix = '') {
@@ -117,7 +119,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
   }
   function shell() {
     return `<div id="prompt-console" class="pp-v4" data-prompt-style="${appearance}" data-view="${s.view ?? 'cards'}" data-editing="${!!s.editing}">
-      <section class="pp-page-controls"><div><span class="badge neutral">全局草稿</span> <strong>已发布 v${s.workspace.published.number}</strong><p id="pp-save-state" class="field-hint"></p></div><div class="pp-row"><div class="pp-style-switch" aria-label="页面显示方式"><button type="button" data-pp-view="cards" aria-pressed="${s.view !== 'json'}">模块正文</button><button type="button" data-pp-view="json" aria-pressed="${s.view === 'json'}">原始 JSON</button></div>${button('edit', '编辑 Edit', 'id="pp-edit"')}${button('cancel-edit', '取消', 'id="pp-cancel" hidden')}${button('save', '保存 Save', 'id="pp-save" hidden')}<button type="button" class="button small" data-pp-jump="test">去试聊</button></div></section>
+      <section class="pp-page-controls"><div><span class="badge neutral">全局草稿</span> <strong>已发布 v${s.workspace.published.number}</strong><p id="pp-save-state" class="field-hint"></p></div><div class="pp-row"><div class="pp-style-switch" aria-label="页面显示方式"><button type="button" data-pp-view="cards" aria-pressed="${s.view !== 'json'}">模块正文</button><button type="button" data-pp-view="json" aria-pressed="${s.view === 'json'}">请求 JSON</button></div>${button('edit', '编辑 Edit', 'id="pp-edit"')}${button('cancel-edit', '取消', 'id="pp-cancel" hidden')}${button('save', '保存 Save', 'id="pp-save" hidden')}<button type="button" class="button small" data-pp-jump="test">去试聊</button></div></section>
       <p id="pp-error" class="notice danger" role="alert" hidden></p>
       <div class="pp-scenario-bar"><label>测试会话<select id="pp-session"><option value="new-group">全新群聊 · 初始人设</option><option value="new-private">全新私聊 · 初始人设</option>${s.sessions.map((key) => `<option value="${escape(key)}">${escape(key)}</option>`).join('')}</select></label><label>发言者 QQ<input id="pp-actor" inputmode="numeric" placeholder="最近发言者"></label>${button('snapshot', '载入场景')}<span class="field-hint">切换选择后载入，预览与试聊使用同一份材料。</span></div>
       <div class="pp-v4-grid"><section class="pp-main" id="pp-edit-stage"><div class="pp-main-heading"><div><h2>上下文工作区</h2><p id="pp-preview-state" class="field-hint">载入场景后生成完整请求</p></div>${button('copy-request', '复制 JSON')}</div>
@@ -128,7 +130,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
       <article class="panel pp-module"><div class="panel-header"><div><p class="eyebrow">SANDBOX ONLY</p><h2>临时扮演与测试材料</h2><p>替换本次测试的人设与记忆，不写入线上会话。取消勾选即恢复快照材料。</p></div></div><div class="pp-editor-body"><label class="pp-check"><input id="pp-persona-edit" type="checkbox">使用临时测试人设 / 记忆</label><label>临时人设（完整替换）<textarea id="pp-character" rows="6" readonly></textarea></label><label>会话记忆 / 临时测试记忆<textarea id="pp-memory" rows="6" readonly></textarea></label></div></article>
       <details class="panel pp-assembled"><summary>完整组装正文与历史筛选明细</summary><p class="field-hint">上方配置同时包含群聊、私聊与提炼规则；实际请求按选中的流程与场景组装。</p><div id="pp-request-blocks"></div></details>
       <details class="panel pp-config-json"><summary>高级 · 配置 JSON</summary>${editor('json')}</details></div>
-      <section class="pp-json-view"><p class="field-hint">完整请求体，包含全部 messages 与 tools；以当前选中的测试流程为准。</p><textarea id="pp-request-json" class="mono" rows="28" readonly aria-label="完整请求 JSON"></textarea><details class="pp-advanced"><summary>高级 · 请求 JSON 临时实验</summary><label class="pp-check"><input type="checkbox" id="pp-request-edit">临时编辑请求（不作为发布依据）</label>${button('reset-request', '恢复自动组装')}</details></section></section>
+      <section class="pp-json-view" id="pp-request-view" tabindex="-1" aria-label="完整请求 JSON"><p class="field-hint">当前测试流程的完整请求体</p><div id="pp-request-viewer" class="json-viewer"><p class="json-empty">载入场景后显示请求</p></div><details class="pp-advanced"><summary>高级 · 请求 JSON 临时实验</summary><label class="pp-check"><input type="checkbox" id="pp-request-edit">临时编辑请求（不作为发布依据）</label><textarea id="pp-request-json" class="mono" rows="28" readonly hidden aria-label="临时编辑请求 JSON"></textarea>${button('reset-request', '恢复自动组装')}</details></section></section>
       <section class="panel pp-test" id="pp-test-stage" tabindex="-1"><div class="panel-header"><div><h2>单次试聊</h2><p>真实调用模型并计入用量。测试消息与记忆留在沙盒，不向 QQ 发送。</p></div></div><div class="pp-test-inputs"><label>输入消息<textarea id="pp-input" rows="3">记住，我不吃香菜。</textarea></label><label>预期表现<textarea id="pp-expected" rows="3" placeholder="例如：调用 remember_fact，确认保存；不调用 draw。"></textarea></label></div><div class="pp-row">${button('test', '运行一次', 'id="pp-test"')}<span id="pp-running" role="status"></span></div><button type="button" class="text-button pp-request-link" data-pp-action="show-json">查看完整请求 JSON ↗</button><div id="pp-result"><p class="pp-idle">输入一句话，运行后在这里查看结果。</p></div><details class="pp-advanced"><summary>高级 · 流程、工具与版本对比</summary><div class="pp-fields"><label>测试流程<select id="pp-kind"><option value="chat">聊天与工具调用</option><option value="distill">记忆 / 人设提炼</option></select></label><label>工具模式<select id="pp-mode"><option value="simulate">模拟绘图 · 记忆写入沙盒</option><option value="execute">真实绘图（计费用量）· 记忆写入沙盒</option></select></label></div>${button('compare', '对比发布版与草稿（各调用一次）', 'id="pp-compare"')}<p class="field-hint">每次运行独立，输出不追加到会话历史。</p></details><details class="pp-advanced"><summary>高级 · 固定测试场景与快照</summary><p id="pp-snapshot-info" class="field-hint"></p><p class="field-hint">载入后固定历史、人设与时间，用同一份材料对比版本。</p>${button('snapshot', '重新载入快照')}</details></section>
 </div>
       <details class="pp-delivery"><summary>检查、发布与运行记录</summary>
@@ -189,7 +191,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
     ].filter(Boolean);
     const budgetNote = omitted.length ? `<p>为近期对话留出预算，本轮省略${escape(omitted.join('、'))}。裁剪仅用于本轮请求。</p>` : '';
     $('#pp-request-blocks').innerHTML = `<div class="pp-budget"><strong>${summary.candidates} → ${summary.filtered ?? summary.candidates} → ${summary.limited ?? summary.sent} → ${summary.sent}</strong><p>候选 → 筛选 → 条数 → 实际附带</p>${budgetNote}</div>${result.request.messages.map((m, i) => `<details class="pp-message"><summary><span class="badge neutral">${escape(m.role)}</span> ${i === 0 ? '系统提示词' : i === result.request.messages.length - 1 ? '本轮输入' : '历史消息'}${i === 0 ? ' · 人设 / 记忆 / 规则 / 场景' : ''}</summary><pre>${escape(typeof m.content === 'string' ? m.content : json(m.content))}</pre></details>`).join('')}<details class="pp-message"><summary>tools · ${(result.request.tools ?? []).length} 个可用工具</summary>${result.availability.map((t) => `<p><strong>${escape(names[t.name])}</strong> · ${escape(t.available ? '可用' : t.reason)} · ${escape(t.effect)}</p>`).join('')}</details><details class="pp-message"><summary>历史筛选明细</summary>${result.inspections.map((m) => `<div class="pp-history-row"><small>${escape(m.role)} · ${escape(m.reason || '已纳入')}</small><p>${escape(m.content.slice(0, 180))}</p></div>`).join('') || '<p>没有历史记录</p>'}</details>`;
-    if (!$('#pp-request-edit').checked) $('#pp-request-json').value = json(result.request);
+    if (!$('#pp-request-edit').checked) displayRequest(result.request);
     for (const tool of result.availability) {
       const node = root.querySelector(`[data-pp-tool-status="${tool.name}"]`);
       if (node) node.textContent = `${tool.available ? '当前测试发言者可用' : tool.reason} · ${tool.effect}`;
@@ -244,10 +246,24 @@ export function createPromptConsole({ api, state: appState, toast }) {
     s.runs = (await api('/prompt/runs')).items;
     renderRuns();
   }
+  function displayRequest(request) {
+    $('#pp-request-json').value = json(request);
+    updateJsonViewer($('#pp-request-viewer'), request);
+  }
+  function setRequestEditing(editing) {
+    $('#pp-request-json').readOnly = $('#pp-request-json').hidden = !editing;
+    $('#pp-request-viewer').hidden = editing;
+    if (!editing && s.preview) displayRequest(s.preview.request);
+  }
   async function action(node) {
     const name = node.dataset.ppAction;
     if (appState.saving) return;
-    if (name === 'show-json') { switchView('json'); $('#pp-request-json').scrollIntoView({ block: 'start' }); return; }
+    if (name === 'show-json') {
+      switchView('json');
+      $('#pp-request-view').scrollIntoView({ block: 'start' });
+      $('#pp-request-view').focus({ preventScroll: true });
+      return;
+    }
     if (name === 'edit') { s.editing = true; s.editBackup = structuredClone(s.config); updateStatus(); return; }
     if (name === 'cancel-edit') {
       s.config = s.editBackup; s.editing = false; s.invalidJson = false; appState.dirty = false;
@@ -264,7 +280,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
       s.config.prompts.scene = field.value; setDirty(); await preview(); return;
     }
     if (name === 'copy-request') { await navigator.clipboard.writeText($('#pp-request-json').value); toast('JSON 已复制'); return; }
-    if (name === 'reset-request') { $('#pp-request-edit').checked = false; $('#pp-request-json').readOnly = true; await preview(); return; }
+    if (name === 'reset-request') { $('#pp-request-edit').checked = false; setRequestEditing(false); await preview(); return; }
     if (name === 'apply-json') {
       const value = JSON.parse(root.querySelector('[data-pp-field="configJson"]').value);
       await api('/prompt/preview', { method: 'POST', body: { ...caseBody(), config: value } });
@@ -338,7 +354,7 @@ export function createPromptConsole({ api, state: appState, toast }) {
     }
     if (path === 'prompts.seed' && !s.snapshot?.persona.character) $('#pp-current-character').textContent = s.config.prompts.seed;
     if (field.id === 'pp-persona-edit') $('#pp-character').readOnly = $('#pp-memory').readOnly = !field.checked;
-    if (field.id === 'pp-request-edit') { $('#pp-request-json').readOnly = !field.checked; if (!field.checked && s.preview) $('#pp-request-json').value = json(s.preview.request); }
+    if (field.id === 'pp-request-edit') setRequestEditing(field.checked);
     if (path || ['pp-input', 'pp-kind', 'pp-persona-edit', 'pp-character', 'pp-memory'].includes(field.id)) {
       clearTimeout(timer); timer = setTimeout(() => preview().catch(showError), 450);
     }

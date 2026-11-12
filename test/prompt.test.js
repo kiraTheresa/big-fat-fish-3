@@ -240,6 +240,7 @@ test('HTTP API 鉴权、快照、预览、测试、评审与发布串通；静�
   try {
     assert.equal((await fetch(`${url}/api/prompt/workspace`)).status, 401);
     assert.equal((await fetch(`${url}/prompt.js`)).status, 200);
+    assert.equal((await fetch(`${url}/json-viewer.js`)).status, 200);
     const w = (await request('workspace')).body;
     const snap = (await request('snapshot', 'POST', {})).body;
     const args = { revision: w.draft.revision, snapshotId: snap.id, input: '你好' };

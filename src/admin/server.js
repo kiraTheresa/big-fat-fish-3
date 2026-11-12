@@ -29,6 +29,7 @@ STATIC.set('/media.css', ['media.css', 'text/css']);
 STATIC.set('/usage.css', ['usage.css', 'text/css']);
 STATIC.set('/usage-view.js', ['usage-view.js', 'text/javascript']);
 STATIC.set('/request-view.js', ['request-view.js', 'text/javascript']);
+STATIC.set('/json-viewer.js', ['json-viewer.js', 'text/javascript']);
 STATIC.set('/requests.css', ['requests.css', 'text/css']);
 STATIC.set('/src/utils/log-format.js', ['../src/utils/log-format.js', 'text/javascript']);
 const hash = (value) => createHash('sha256').update(value).digest();

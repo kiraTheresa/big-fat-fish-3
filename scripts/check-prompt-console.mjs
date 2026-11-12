@@ -40,6 +40,46 @@ try {
   await page.locator('.login-submit').click();
   await page.waitForSelector('#pp-request-blocks .pp-budget', { state: 'attached' });
   await screenshot('prompt-desktop');
+  await page.locator('[data-pp-action="show-json"]').click();
+  const viewer = page.locator('#pp-request-viewer');
+  const branch = (...path) => viewer.locator(`[data-json-path='${JSON.stringify(path)}']`);
+  await branch('messages', 0).locator(':scope > summary').click();
+  if (screenshotDir) await page.locator('#pp-request-view').screenshot({ path: join(screenshotDir, 'prompt-json-viewer.png') });
+  const raw = page.locator('#pp-request-json');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.locator('[data-pp-action="copy-request"]').click();
+  await page.getByText('JSON 已复制', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await raw.inputValue());
+  const systemContent = branch('messages', 0, 'content').locator(':scope > summary');
+  await systemContent.click();
+  assert.match(await branch('messages', 0, 'content').locator('pre').innerText(), /# 大肥鱼\n/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const promptInput = page.locator('#pp-input');
+  const originalInput = await promptInput.inputValue();
+  const hostileText = '<img src=x onerror="alert(1)">';
+  await systemContent.focus();
+  await promptInput.evaluate((input, text) => {
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, hostileText);
+  await page.waitForFunction((text) => document.querySelector('#pp-request-json').value.includes(text), 'alert(1)');
+  assert.equal(await branch('messages', 0, 'content').evaluate((node) => node.open), true);
+  assert.ok(await systemContent.evaluate((node) => node === document.activeElement));
+  await branch('messages', 1).locator(':scope > summary').click();
+  assert.match(await branch('messages', 1).innerText(), /<img src=x/);
+  assert.equal(await viewer.locator('img').count(), 0);
+  await page.locator('#pp-request-view .pp-advanced > summary').click();
+  await page.locator('#pp-request-edit').check();
+  assert.ok(await viewer.isHidden());
+  await raw.fill('{"experiment":true}');
+  await promptInput.fill(originalInput);
+  await page.locator('[data-pp-action="reset-request"]').click();
+  assert.ok(await viewer.isVisible());
+  assert.ok(await raw.isHidden());
+  assert.ok(JSON.parse(await raw.inputValue()).messages);
+  await page.locator('[data-pp-view="cards"]').click();
   await page.locator('.pp-delivery > summary').click();
   assert.match(await page.locator('#pp-publish-reason').innerText(), /聊天测试/);
   await page.locator('#pp-edit').click();
@@ -102,7 +142,7 @@ try {
     }
   }
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'PASS', checked: ['login', 'workflow navigation', 'publish requirements', 'draft save', 'tools trace', 'manual review', 'publish', 'same snapshot compare', 'edit invalidates pass', 'tool preview', 'all pages desktop/mobile overflow'], pageErrors: errors }));
+  console.log(JSON.stringify({ result: 'PASS', checked: ['login', 'JSON disclosures and focus', 'JSON text escaping', 'raw JSON copy and editing', 'workflow navigation', 'publish requirements', 'draft save', 'tools trace', 'manual review', 'publish', 'same snapshot compare', 'edit invalidates pass', 'tool preview', 'all pages desktop/mobile overflow'], pageErrors: errors }));
 } finally {
   await browser?.close(); await platform.stop(); mock.closeAllConnections(); await new Promise((resolve) => mock.close(resolve)); await rm(dir, { recursive: true, force: true });
 }
