@@ -64,30 +64,34 @@ test('enabled(config)：读传入 config 实参的 behavior.reply.delay.enabled�
   assert.equal(delayModule.enabled(config), true);
 });
 
-test('run：sleep 区间后原样透传 segments（延迟不改内容，分段节奏归 sender 节流）', async () => {
+test('run：按配置区间设置定时器，完成后原样透传 segments', async (t) => {
   const saved = { ...config.behavior.reply.delay };
-  Object.assign(config.behavior.reply.delay, { minMs: 5, maxMs: 10 }); // 收窄区间保套件速度
+  Object.assign(config.behavior.reply.delay, { minMs: 5, maxMs: 10 });
+  const timer = t.mock.method(globalThis, 'setTimeout', () => {});
   try {
-    const t0 = Date.now();
-    const out = await delayModule.run({}, ['甲段', '乙段']);
-    const elapsed = Date.now() - t0;
-    assert.deepEqual(out, ['甲段', '乙段'], 'segments 应原样透传');
-    assert.ok(elapsed >= 5, `应至少 sleep minMs=5ms（实际 ${elapsed}ms）`);
-    assert.ok(elapsed < 500, `sleep 不应远超区间（实际 ${elapsed}ms）`);
+    const segments = ['甲段', '乙段'];
+    const pending = delayModule.run({}, segments);
+    assert.equal(timer.mock.callCount(), 1);
+    const [finish, delayMs] = timer.mock.calls[0].arguments;
+    assert.ok(delayMs >= 5 && delayMs <= 10, `延迟 ${delayMs}ms 应在配置区间内`);
+    finish();
+    assert.deepEqual(await pending, segments);
   } finally {
     Object.assign(config.behavior.reply.delay, saved);
   }
 });
 
-test('run：min>max 取 min 兜底（配置写反不炸、不睡出错误时长）', async () => {
+test('run：min>max 时定时器使用 min', async (t) => {
   const saved = { ...config.behavior.reply.delay };
-  Object.assign(config.behavior.reply.delay, { minMs: 30, maxMs: 5 }); // 写反
+  Object.assign(config.behavior.reply.delay, { minMs: 30, maxMs: 5 });
+  const timer = t.mock.method(globalThis, 'setTimeout', () => {});
   try {
-    const t0 = Date.now();
-    await delayModule.run({}, ['x']);
-    const elapsed = Date.now() - t0;
-    assert.ok(elapsed >= 30, `min>max 应按 minMs=30 兜底（实际 ${elapsed}ms）`);
-    assert.ok(elapsed < 1000, `兜底不应睡出异常长（实际 ${elapsed}ms）`);
+    const pending = delayModule.run({}, ['x']);
+    assert.equal(timer.mock.callCount(), 1);
+    const [finish, delayMs] = timer.mock.calls[0].arguments;
+    assert.equal(delayMs, 30);
+    finish();
+    await pending;
   } finally {
     Object.assign(config.behavior.reply.delay, saved);
   }
