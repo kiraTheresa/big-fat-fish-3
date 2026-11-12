@@ -11,7 +11,7 @@ cleanup() {
   status=$?
   if (( status != 0 )); then docker logs "$project" >&2 || true; fi
   docker rm -f "$project" >/dev/null 2>&1 || true
-  "${compose[@]}" down --rmi local >/dev/null 2>&1 || true
+  "${compose[@]}" down --volumes --rmi local >/dev/null 2>&1 || true
   rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -20,9 +20,6 @@ trap 'exit 143' TERM
 
 cp "$FISH_SMOKE_SOURCE/docker-compose.yml" "$scratch/docker-compose.yml"
 cp "$FISH_SMOKE_SOURCE/config.example.json" "$scratch/config.json"
-mkdir "$scratch/data"
-# The private scratch directory is accessible to the image's UID 1000 through the bind mount.
-chmod a+rwx "$scratch/data"
 unset NAPCAT_BIND_HOST
 export ONEBOT_ACCESS_TOKEN=compose-smoke-token
 export ADMIN_PORT=3210 ADMIN_PUBLISH_PORT=0
@@ -35,16 +32,22 @@ services:
   bot:
     build:
       context: ${FISH_SMOKE_SOURCE}
+    volumes:
+      - smoke-data:/app/data
+volumes:
+  smoke-data:
 EOF
 
 "${compose[@]}" config --format json | jq -e '
   ([.services.napcat.ports[].host_ip] == ["127.0.0.1", "127.0.0.1"]) and
-  (.services.bot.ports[0] | .host_ip == "127.0.0.1" and .published == "0" and .target == 3210)
+  (.services.bot.ports[0] | .host_ip == "127.0.0.1" and .published == "0" and .target == 3210) and
+  (.services.bot.volumes | any(.target == "/app/data" and .type == "volume" and .source == "smoke-data"))
 ' >/dev/null
 "${compose[@]}" build bot
 "${compose[@]}" run --detach --no-deps --service-ports --name "$project" -e ONEBOT_WS_URL=ws://127.0.0.1:1 bot
 docker exec -i "$project" node --input-type=module <<'NODE'
 import assert from 'node:assert/strict';
+import { stat } from 'node:fs/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { getVersion } from './src/version.js';
@@ -63,6 +66,7 @@ assert.equal((await fetch(base + '/api/status')).status, 401);
 const status = await fetch(base + '/api/status', { headers: { Authorization: 'Bearer ' + process.env.ADMIN_TOKEN } });
 assert.equal(status.status, 200);
 assert.match(await (await fetch(base)).text(), /大肥鱼/);
+assert.ok((await stat('data/management/prompts.json')).size > 0);
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
@@ -74,6 +78,5 @@ NODE
 address=$(docker port "$project" 3210/tcp)
 [[ "$address" == 127.0.0.1:* ]]
 curl --fail --silent --show-error --max-time 5 "http://$address/healthz" >/dev/null
-test -s "$scratch/data/management/prompts.json"
 docker stop "$project" >/dev/null
 test "$(docker inspect --format '{{.State.ExitCode}}' "$project")" = 0

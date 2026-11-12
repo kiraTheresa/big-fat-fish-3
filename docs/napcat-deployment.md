@@ -112,7 +112,7 @@ test -e napcat/config/.machine-id || docker exec napcat cat /etc/machine-id > na
 
 ## 验证
 
-`bash scripts/check-compose.sh` 使用临时目录和随机回环端口构建并运行 Bot，检查配置解析、管理鉴权、版本、数据写入、Chromium 和停机。需要 Docker Compose、Bash、jq 和 curl。它与 `main` 的 Docker CI 使用相同入口。
+`bash scripts/check-compose.sh` 使用临时数据卷和随机回环端口构建并运行 Bot，检查配置解析、管理鉴权、版本、数据写入、Chromium 和停机。需要 Docker Compose、Bash、jq 和 curl。它与 `main` 的 Docker CI 使用相同入口。
 
 `node --test test/napcat-init.test.js test/connection.test.js` 验证初始化、重复启动、配置保留、鉴权和模拟重连。真实验收依次检查首次扫码、WS 的只读 `get_login_info` 和 `get_status`、重启及自动恢复。需要验证重建时，再执行 `docker compose up -d --force-recreate napcat` 并复查在线状态。
 

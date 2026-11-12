@@ -24,7 +24,8 @@ COPY src ./src
 COPY prompts ./prompts
 COPY web ./web
 
-# Compose 绑定宿主 data/，启动前确保容器内的 UID 1000 用户可以写入。
+# 新建 Docker 数据卷时继承目录属主。Compose 绑定宿主 data/ 时由宿主授权。
+RUN install -d -o node -g node /app/data
 USER node
 
 # 直跑 node 而非 npm start：npm 不转发 SIGTERM，直跑让 docker stop 的 10s 宽限
