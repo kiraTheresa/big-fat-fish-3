@@ -1,9 +1,24 @@
 # Changelog
 
 All notable changes to **Big Fat Fish** (大肥鱼) are documented here, from a user's perspective.
-Versions follow `0.x.y`. Entries are grouped by change type: `feat` (new features), `fix` (bug fixes), `docs`, `chore`.
+Versions follow Semantic Versioning. Entries are grouped by change type: `feat` (new features), `fix` (bug fixes), `docs`, `chore`.
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
+
+## [1.0.0] - 2026-11-12
+
+### feat
+
+- Establish the stable baseline for QQ chat, vision, drawing, shared memes, per-session persona and memory, and the management console.
+- Check Node 22 and Docker Compose on pull requests to main and pushes to main.
+
+### fix
+
+- Bind the NapCat WebUI and host OneBot ports to loopback by default. Set `NAPCAT_BIND_HOST` to a trusted LAN address to retain remote access.
+- Reject a missing Compose `config.json` bind source instead of creating a directory at that path.
+- Keep the chat integration checks aligned with the active Prompt templates.
+
+See the [1.0.0 release notes](docs/releases/1.0.0.md) for the upgrade steps.
 
 ## [0.36.4] - 2026-11-10
 

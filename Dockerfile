@@ -24,8 +24,7 @@ COPY src ./src
 COPY prompts ./prompts
 COPY web ./web
 
-# 非 root 运行（node 镜像内置 uid 1000 用户）；data/ 由 compose 挂载进来，
-# 宿主目录属主需与 uid 1000 匹配（首次 mkdir 由容器内 node 用户完成即自动对齐）
+# Compose 绑定宿主 data/，启动前确保容器内的 UID 1000 用户可以写入。
 USER node
 
 # 直跑 node 而非 npm start：npm 不转发 SIGTERM，直跑让 docker stop 的 10s 宽限

@@ -11,6 +11,7 @@
 ```sh
 cp -n .env.example .env
 cp -n config.example.json config.json
+mkdir -p data
 ```
 
 编辑 `.env`，配置项以 [模板](../.env.example) 为准：
@@ -18,6 +19,7 @@ cp -n config.example.json config.json
 | 配置 | 用途 |
 | --- | --- |
 | `NAPCAT_ACCOUNT`、`NAPCAT_HOSTNAME` | 准备登录的 QQ 号和固定设备主机名，部署后保持主机名不变 |
+| `NAPCAT_BIND_HOST` | NapCat WebUI 和宿主 OneBot 的监听地址，默认 `127.0.0.1` |
 | `ONEBOT_ACCESS_TOKEN` | Bot 与 NapCat 共用的非空连接令牌，Compose 会同步到 WS 配置 |
 | `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` | 聊天、识图与记忆提炼使用的接口及模型；识图需模型支持图片输入 |
 | `IMAGE_API_KEY`、`IMAGE_API_BASE_URL`、`IMAGE_MODEL` | 独立绘图接口，Key 留空则禁用绘图 |
@@ -26,13 +28,13 @@ cp -n config.example.json config.json
 
 模板中的模型名、接口地址和尺寸是代码默认值，不保证你的供应商支持；应按自己的接口实际填写。聊天、识图和提炼共享模型，识图要求该模型支持图片输入。
 
-可以分别执行 `openssl rand -hex 32` 生成连接令牌和管理令牌。确认 `config.json` 是文件后启动：
+可以分别执行 `openssl rand -hex 32` 生成连接令牌和管理令牌。启动前确认 `config.json` 是文件，且镜像中的 UID 1000 可以写入 `data/`。在采用普通 rootful Docker 的 Linux 宿主上，新建目录若属于其他 UID，可以用 `sudo chown 1000:1000 data` 为容器用户授权。已有数据先核对目录与文件权限。
 
 ```sh
 docker compose up -d --build
 ```
 
-Compose 默认将 NapCat 的 6099 和 3001 映射到宿主所有网络接口；肥鱼工作台 3210 仅映射回环地址。只在本机使用时可把前两项映射分别改为 `127.0.0.1:6099:6099`、`127.0.0.1:3001:3001`；只运行容器 Bot 时可移除 3001 宿主映射。
+Compose 默认把 NapCat 的 6099 和 3001、肥鱼工作台的 3210 映射到宿主回环地址。需要可信局域网访问 NapCat 时，在 `.env` 中将 `NAPCAT_BIND_HOST` 设为宿主的局域网 IP 后执行 `docker compose up -d napcat`。两个 NapCat 宿主端口使用同一绑定地址。容器间仍走 `ws://napcat:3001`，只运行容器 Bot 时可以省去 3001 的宿主映射。
 
 打开 [NapCat WebUI](http://localhost:6099/webui)，按页面提示登录 WebUI，再完成 QQ 首次扫码。没有有效 QQ 登录记录时，指定账号也不能跳过扫码。
 
@@ -110,6 +112,8 @@ test -e napcat/config/.machine-id || docker exec napcat cat /etc/machine-id > na
 
 ## 验证
 
-`node --test test/napcat-init.test.js test/connection.test.js` 验证初始化、重复启动、配置保留、鉴权和模拟重连（需要 Bash 与 jq）。真实验收应检查：首次扫码 → WS 的只读 `get_login_info` / `get_status` → 重启 → 自动恢复；需要进一步确认重建时再执行 `docker compose up -d --force-recreate napcat`，复查在线状态。
+`bash scripts/check-compose.sh` 使用临时目录和随机回环端口构建并运行 Bot，检查配置解析、管理鉴权、版本、数据写入、Chromium 和停机。需要 Docker Compose、Bash、jq 和 curl。它与 `main` 的 Docker CI 使用相同入口。
+
+`node --test test/napcat-init.test.js test/connection.test.js` 验证初始化、重复启动、配置保留、鉴权和模拟重连。真实验收依次检查首次扫码、WS 的只读 `get_login_info` 和 `get_status`、重启及自动恢复。需要验证重建时，再执行 `docker compose up -d --force-recreate napcat` 并复查在线状态。
 
 官方参考：[Docker 启动脚本](https://github.com/NapNeko/NapCat-Docker/blob/main/entrypoint.sh)、[OneBot 配置](https://napneko.github.io/config/basic)。

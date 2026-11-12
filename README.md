@@ -17,7 +17,7 @@
 
 本鱼有一颗用 **Node.js 自己写的脑袋**，通过 OneBot 11 协议和 NapCat 对话，由 NapCat 帮本鱼接入 QQ。接上模型就能开聊；人设、记忆和图片都存在你自己的本地目录里，还有一个网页工作台可以照顾本鱼。
 
-已发布的 **0.30.0 公开测试版**见 [GitHub Release](https://github.com/kiraTheresa/big-fat-fish-3/releases/tag/v0.30.0) 与 [发布说明](docs/releases/0.30.0.md)。本页说明当前开发分支的功能，包含该版本之后的改动；版本变化见 [更新日志](CHANGELOG.md)，文档基线见 [总索引](docs/README.md)。
+**1.0.0** 是首个稳定版本。升级前请看 [1.0.0 发布说明](docs/releases/1.0.0.md) 中的端口与备份说明。版本记录和其他专题见 [更新日志](CHANGELOG.md) 与 [文档总索引](docs/README.md)。
 
 ## 本鱼会些什么
 
@@ -59,10 +59,11 @@ cp -n config.example.json config.json
 在 `.env` 填好 `NAPCAT_ACCOUNT`、`ONEBOT_ACCESS_TOKEN` 和聊天模型的 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`。想让本鱼画画，再配置 `IMAGE_API_*` / `IMAGE_MODEL`；想打开工作台，设置至少 24 字符的随机 `ADMIN_TOKEN`。
 
 ```sh
+mkdir -p data
 docker compose up -d --build
 ```
 
-打开 [NapCat 登录页](http://localhost:6099/webui) 完成 QQ 登录，再到 [肥鱼工作台](http://127.0.0.1:3210) 输入 `ADMIN_TOKEN`。完整步骤、宿主机开发和重启说明见 [部署文档](docs/napcat-deployment.md)。
+打开 NapCat 登录页完成 QQ 登录，再到肥鱼工作台输入 `ADMIN_TOKEN`。Linux 宿主机还需确认容器用户能写入 `data/`。 [NapCat 登录](http://localhost:6099/webui) · [肥鱼工作台](http://127.0.0.1:3210) · [完整部署步骤](docs/napcat-deployment.md)
 
 ## 本鱼也有不会的
 
