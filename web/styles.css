@@ -278,8 +278,20 @@ label{display:block;font-size:12px;font-weight:550}small{font-size:12px}
   border: 1px solid var(--line);
   border-radius: var(--radius);
   color: var(--muted);
-  font: 12px/1.65 "SFMono-Regular", Consolas, monospace;
 }
+.json-tree { font: 12px/1.65 "SFMono-Regular", Consolas, monospace; }
+.json-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+.json-toolbar label { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.json-toolbar select { width: 13rem; height: 36px; }
+.json-toolbar button { color: var(--ink); white-space: nowrap; }
 .json-empty { margin: 0; padding: 12px 8px; }
 .json-viewer summary {
   padding: 5px 7px;
@@ -338,6 +350,8 @@ label{display:block;font-size:12px;font-weight:550}small{font-size:12px}
 }
 @media (max-width: 560px) {
   .json-viewer { padding-inline: 4px; }
+  .json-toolbar label { width: 100%; }
+  #prompt-console .json-toolbar :is(select, .button) { min-height: 44px; }
   .json-viewer summary { min-height: 44px; padding-block: 10px; }
   .json-viewer .json-children { margin-inline-start: 7px; padding-inline-start: 2px; }
 }

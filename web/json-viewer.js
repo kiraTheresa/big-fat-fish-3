@@ -13,6 +13,13 @@ function field(key) {
   return `<span class="json-key">${escape(label)}</span><span aria-hidden="true">:</span>`;
 }
 
+function pathLabel(id) {
+  return '$' + JSON.parse(id).map((key) => {
+    if (typeof key === 'string' && /^[A-Za-z_$][\w$]*$/.test(key)) return `.${key}`;
+    return `[${JSON.stringify(key)}]`;
+  }).join('');
+}
+
 function node(value, path, expanded) {
   const label = field(path.at(-1));
   const id = JSON.stringify(path);
@@ -39,13 +46,44 @@ function node(value, path, expanded) {
   return `<div class="json-row">${label}${scalar(value)}</div>`;
 }
 
-// Render parsed JSON while retaining the disclosure and keyboard state at each path.
+// Render parsed JSON while retaining the scope, disclosures, and keyboard focus.
 export function updateJsonViewer(container, value) {
+  if (!container.querySelector('.json-tree')) {
+    container.innerHTML = `<div class="json-toolbar">
+      <label>操作范围 <select class="json-scope"></select></label>
+      <button type="button" class="button small" data-json-open="true">全部展开</button>
+      <button type="button" class="button small" data-json-open="false">全部收起</button>
+    </div><div class="json-tree"></div>`;
+    const scope = container.querySelector('.json-scope');
+    container.querySelector('.json-toolbar').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-json-open]');
+      if (!button) return;
+      const target = Array.from(container.querySelectorAll('[data-json-path]'))
+        .find((element) => element.dataset.jsonPath === scope.value);
+      if (!target) return;
+      const open = button.dataset.jsonOpen === 'true';
+      for (const element of [target, ...target.querySelectorAll('[data-json-path]')]) element.open = open;
+      if (open) {
+        for (let parent = target.parentElement.closest('details'); parent && container.contains(parent); parent = parent.parentElement.closest('details')) {
+          parent.open = true;
+        }
+      }
+    });
+  }
   const disclosures = () => Array.from(container.querySelectorAll('[data-json-path]'));
+  const scope = container.querySelector('.json-scope');
+  const selected = scope.value;
   const active = container.ownerDocument?.activeElement;
   const focused = active && container.contains(active) ? active.parentElement?.dataset.jsonPath : undefined;
   const expanded = new Map(disclosures().map((element) => [element.dataset.jsonPath, element.open]));
-  container.innerHTML = node(value, [], expanded);
+  container.querySelector('.json-tree').innerHTML = node(value, [], expanded);
+  const paths = disclosures().map((element) => element.dataset.jsonPath);
+  scope.innerHTML = '<option value="[]">整个 JSON</option>' + paths.filter((id) => id !== '[]')
+    .map((id) => `<option value="${escape(id)}">${escape(pathLabel(id))}</option>`).join('');
+  scope.value = paths.includes(selected) ? selected : '[]';
+  for (const control of container.querySelector('.json-toolbar').querySelectorAll('select, button')) {
+    control.disabled = paths.length === 0;
+  }
   if (focused !== undefined) {
     disclosures().find((element) => element.dataset.jsonPath === focused)?.firstElementChild.focus({ preventScroll: true });
   }
