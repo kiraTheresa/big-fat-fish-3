@@ -6,21 +6,47 @@ import { logger, redactText } from './utils/logger.js';
 import { saveGeneratedImage } from './store/media-store.js';
 
 export async function generateImage(prompt, { sessionKey = 'system', onAttempt, logContext = {} } = {}) {
-  const attempt = await beginUsage({ kind: 'draw', model: config.imageModel, sessionKey, traceId: logContext.traceId, source: logContext.source });
+  const request = { model: config.imageModel, prompt, size: config.imageSize };
+  const { b64 } = await requestImage(request, { sessionKey, onAttempt, logContext });
+  let asset = null;
+  try {
+    asset = await saveGeneratedImage(b64, { prompt, sessionKey, model: request.model, size: request.size });
+  } catch (error) {
+    // A disk failure must not discard an already paid-for image or trigger a redraw.
+    logger.warn('[imagegen] 原图本地保存失败，继续发送图片', { code: error.code ?? 'MEDIA_SAVE_FAILED' });
+  }
+  return { b64, asset };
+}
+
+export async function requestImage(request, {
+  references = [], sessionKey = 'system', onAttempt, logContext = {}, timeoutMs = config.imageTimeoutMs, lab,
+} = {}) {
+  const attempt = await beginUsage({ kind: 'draw', model: lab?.model ?? request.model, sessionKey, traceId: logContext.traceId, source: logContext.source });
   let usage = null;
   let httpStatus;
   let images = 0;
   let imageResponseComplete = false;
   let failure;
-  const request = { model: config.imageModel, prompt, size: config.imageSize };
   const startedAt = Date.now();
-  onAttempt?.({ phase: 'request', name: 'image_api', request, at: startedAt });
   try {
-    const res = await fetch(`${config.imageApiBaseUrl}/images/generations`, {
+    onAttempt?.({ phase: 'request', name: 'image_api', request, at: startedAt });
+    const headers = { Authorization: `Bearer ${config.imageApiKey}` };
+    let body;
+    if (references.length) {
+      body = new FormData();
+      for (const [key, value] of Object.entries(request)) body.set(key, value);
+      for (const file of references) body.append(references.length === 1 ? 'image' : 'image[]', file, file.name);
+    } else {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(request);
+    }
+    const operation = references.length ? 'edits' : 'generations';
+    const endpoint = lab ? new URL(lab.endpoint, config.imageApiBaseUrl)
+      : `${config.imageApiBaseUrl.replace(/\/$/, '')}/images/${operation}`;
+    const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.imageApiKey}` },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(config.imageTimeoutMs),
+      headers, body, signal: AbortSignal.timeout(timeoutMs),
+      ...(lab && { redirect: 'error' }),
     });
     httpStatus = res.status;
     if (!res.ok) {
@@ -35,27 +61,37 @@ export async function generateImage(prompt, { sessionKey = 'system', onAttempt, 
     }
     const data = await res.json();
     usage = data?.usage ?? null;
-    const item = data?.data?.[0];
+    const parts = lab?.protocol === 'gemini' && Array.isArray(data?.candidates)
+      ? data.candidates.flatMap((candidate) => Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []) : [];
+    const items = lab?.protocol === 'gemini'
+      ? parts.filter((part) => !part?.thought).map((part) => ({ b64_json: (part?.inlineData ?? part?.inline_data)?.data }))
+      : data?.data;
+    if (lab?.protocol === 'gemini' && data?.usageMetadata) {
+      usage = {
+        input_tokens: data.usageMetadata.promptTokenCount,
+        output_tokens: data.usageMetadata.candidatesTokenCount,
+        total_tokens: data.usageMetadata.totalTokenCount,
+      };
+    }
+    const item = items?.[0];
     // Image count is generated output, independent of a later download error.
-    imageResponseComplete = Array.isArray(data?.data);
-    images = imageResponseComplete ? data.data.filter((entry) =>
+    imageResponseComplete = Array.isArray(items);
+    images = imageResponseComplete ? items.filter((entry) =>
       (typeof entry?.b64_json === 'string' && entry.b64_json !== '') || (typeof entry?.url === 'string' && entry.url !== '')).length : 0;
     onAttempt?.({ phase: 'response', name: 'image_api', httpStatus, usage, images, elapsedMs: Date.now() - startedAt });
+    if (lab) {
+      if (!images) throw new Error('绘图 API 没有返回图片，请查看老张调用记录');
+      const text = parts.filter((part) => !part?.thought && typeof part?.text === 'string').map((part) => part.text).join('\n');
+      return { items, text, usage, httpStatus, elapsedMs: Date.now() - startedAt };
+    }
     let b64;
-    if (typeof item?.b64_json === 'string' && item.b64_json !== '') b64 = item.b64_json;
+    if (typeof item?.b64_json === 'string' && item.b64_json !== '') b64 = normalizeImageBase64(item.b64_json);
     else if (typeof item?.url === 'string' && item.url !== '') {
       const imgRes = await fetch(item.url, { signal: AbortSignal.timeout(60000) });
       if (!imgRes.ok) throw new Error(`图片下载失败 HTTP ${imgRes.status}`);
       b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
     } else throw new Error('Image API 响应缺少 data[0].b64_json/url');
-    let asset = null;
-    try {
-      asset = await saveGeneratedImage(b64, { prompt, sessionKey, model: request.model, size: request.size });
-    } catch (error) {
-      // A disk failure must not discard an already paid-for image or trigger a redraw.
-      logger.warn('[imagegen] 原图本地保存失败，继续发送图片', { code: error.code ?? 'MEDIA_SAVE_FAILED' });
-    }
-    return { b64, asset };
+    return { b64, usage, httpStatus, elapsedMs: Date.now() - startedAt };
   } catch (error) {
     failure = error;
     onAttempt?.({ phase: 'error', name: 'image_api', httpStatus, error: redactText(error.message, [config.imageApiKey]), elapsedMs: Date.now() - startedAt });
@@ -63,4 +99,8 @@ export async function generateImage(prompt, { sessionKey = 'system', onAttempt, 
   } finally {
     await finishUsage(attempt, { usage, error: failure, httpStatus, images, imageResponseComplete });
   }
+}
+
+export function normalizeImageBase64(value) {
+  return value.replace(/^data:[^,]+;base64,/i, '').replace(/\s+/g, '');
 }

@@ -19,6 +19,7 @@ import { scanOnce } from '../distill/distiller.js';
 import { initializeMemoryActivity } from '../distill/activity.js';
 import { startAdminServer } from '../admin/server.js';
 import { createMediaService } from '../admin/media-service.js';
+import { createImageLab } from '../admin/image-lab.js';
 import { acquireRuntimeLock } from './runtime-lock.js';
 import { initializePrompts, getPromptWorkspace, savePromptDraft, restorePromptVersion, reviewPromptTest, publishPromptDraft } from '../prompt/store.js';
 import { createPromptService } from '../prompt/service.js';
@@ -31,6 +32,8 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
     const startedAt = Date.now();
     configureLogger({ dataDir: config.dataDir, level: config.logLevel, sessionKey: config.logSession, retentionDays: config.retentionDays, secrets: [config.accessToken, config.deepseekApiKey, config.imageApiKey, config.adminToken] });
     await initializeMediaStore();
+    const imageLab = createImageLab();
+    await imageLab.recover();
     await initializeMemeLibrary();
     await initializeSettings(setUsagePolicy);
     await initializePermissions();
@@ -55,6 +58,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
     ]);
     const services = {
       media: createMediaService(),
+      imageLab,
       prompt: { ...prompt, workspace: getPromptWorkspace, saveDraft: savePromptDraft, restore: restorePromptVersion, review: reviewPromptTest, publish: publishPromptDraft },
       getSettings,
       updateSettings: async (value) => { const result = await updateSettings(value); logger.event('admin.settings.updated', { traceId: randomUUID(), source: 'admin', outcome: 'success', data: { revision: result.revision } }); return result; },
@@ -90,6 +94,7 @@ export async function startPlatform({ admin = true, schedule = true } = {}) {
       async stop() {
         await scheduler.stop();
         await management?.close();
+        await imageLab.close();
         await prompt.close();
         await closeUsageReportBrowser();
         await flushEventStore();

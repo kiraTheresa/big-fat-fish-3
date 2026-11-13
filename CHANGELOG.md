@@ -5,6 +5,14 @@ Versions follow Semantic Versioning. Entries are grouped by change type: `feat` 
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [1.4.0] - 2026-11-13
+
+### feat
+
+- Add a developer image workspace for GPT Image, Grok Imagine, and Nano Banana with model-specific controls and an upstream request preview.
+- Queue image generation and editing in the background. Keep task history, parameters, and usage available after a refresh, and mark unfinished tasks as interrupted after a restart.
+- Archive generated originals in Drawing Works and reuse saved parameters or output images for another task.
+
 ## [1.3.0] - 2026-11-13
 
 ### feat

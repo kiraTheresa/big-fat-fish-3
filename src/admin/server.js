@@ -5,6 +5,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { BlockList } from 'node:net';
+import { maxReferenceBytes } from './image-lab-request.js';
 
 const WEB_DIR = fileURLToPath(new URL('../../web/', import.meta.url));
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
@@ -30,6 +31,8 @@ STATIC.set('/usage.css', ['usage.css', 'text/css']);
 STATIC.set('/usage-view.js', ['usage-view.js', 'text/javascript']);
 STATIC.set('/request-view.js', ['request-view.js', 'text/javascript']);
 STATIC.set('/json-viewer.js', ['json-viewer.js', 'text/javascript']);
+STATIC.set('/image-lab.js', ['image-lab.js', 'text/javascript']);
+STATIC.set('/image-lab-request.js', ['../src/admin/image-lab-request.js', 'text/javascript']);
 STATIC.set('/requests.css', ['requests.css', 'text/css']);
 STATIC.set('/src/utils/log-format.js', ['../src/utils/log-format.js', 'text/javascript']);
 const hash = (value) => createHash('sha256').update(value).digest();
@@ -37,8 +40,7 @@ function reply(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(value));
 }
-async function body(req, limit = 65536) {
-  if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) throw Object.assign(new Error('需要 application/json'), { status: 415 });
+async function readBody(req, limit) {
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -46,8 +48,20 @@ async function body(req, limit = 65536) {
     if (size > limit) throw Object.assign(new Error(`请求体超过 ${limit / 1024} KiB`), { status: 413 });
     chunks.push(chunk);
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  return Buffer.concat(chunks);
+}
+async function body(req, limit = 65536) {
+  if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) throw Object.assign(new Error('需要 application/json'), { status: 415 });
+  const bytes = await readBody(req, limit);
+  try { return JSON.parse(bytes.toString('utf8')); }
   catch { throw Object.assign(new Error('JSON 格式不正确'), { status: 400 }); }
+}
+async function imageLabForm(req) {
+  const type = String(req.headers['content-type'] ?? '');
+  if (!type.startsWith('multipart/form-data;')) throw Object.assign(new Error('需要 multipart/form-data'), { status: 415 });
+  const bytes = await readBody(req, maxReferenceBytes + 65536);
+  try { return await new Response(bytes, { headers: { 'Content-Type': type } }).formData(); }
+  catch { throw Object.assign(new Error('表单格式不正确'), { status: 400 }); }
 }
 export async function startAdminServer({ host = '127.0.0.1', port = 3210, token, services, webDir = WEB_DIR, annotationPreview = false }) {
   if (typeof token !== 'string' || token.length < 24) throw new Error('ADMIN_TOKEN 至少需要 24 个字符');
@@ -96,6 +110,11 @@ export async function startAdminServer({ host = '127.0.0.1', port = 3210, token,
       }
       for (const key of Object.keys(query)) if (query[key] === '') delete query[key];
       const route = `${req.method} ${url.pathname}`;
+      if (route === 'GET /api/image-lab' && services.imageLab) return reply(res, 200, services.imageLab.settings());
+      if (route === 'POST /api/image-lab' && services.imageLab) return reply(res, 202, await services.imageLab.submit(await imageLabForm(req)));
+      if (route === 'GET /api/image-lab/tasks' && services.imageLab) return reply(res, 200, await services.imageLab.list(query));
+      const imageTask = url.pathname.match(/^\/api\/image-lab\/tasks\/([0-9a-f-]+)$/);
+      if (imageTask && req.method === 'GET' && services.imageLab) return reply(res, 200, await services.imageLab.read(imageTask[1]));
       if (route === 'GET /api/media' && services.media) return reply(res, 200, await services.media.list(query));
       if (route === 'GET /api/media/file' && services.media) {
         const file = await services.media.readFile(query);

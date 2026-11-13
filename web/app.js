@@ -1,6 +1,7 @@
 import { usageMoney, usageTime, usageSession, renderUsageShareContent } from './usage-view.js';
 import { renderRequestsView, renderRequestDetail, renderRequestTrace } from './request-view.js';
 import { describeLog } from '../src/utils/log-format.js';
+import { createImageLab } from './image-lab.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -42,6 +43,7 @@ const pages = {
   prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。'],
   images: ['素材库', '浏览生成的图片、提示词与来源会话。'],
   memes: ['素材库', '浏览已记录的表情与收藏状态。'],
+  'image-lab': ['开发者生图台', '用文字或参考图调试绘图 API，查看请求和生成结果。'],
   config: ['对话与能力', '设置 Bot 如何回复、开放哪些能力，以及每天最多用多少。'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。'],
@@ -52,7 +54,7 @@ const pages = {
 const navigation = [
   ['运行', [['overview', '概览'], ['usage', '用量与费用'], ['requests', '排障', 'logs']]],
   ['Bot 管理', [['config', '对话与能力'], ['prompt', 'Prompt'], ['users', '用户权限'], ['jobs', '任务调度']]],
-  ['素材', [['images', '绘图作品'], ['memes', '表情收藏']]],
+  ['素材', [['images', '绘图作品'], ['memes', '表情收藏'], ['image-lab', '开发者生图台']]],
 ];
 const resolvePage = (page) => page === 'media' ? 'images' : page;
 const initialPage = resolvePage(location.hash.slice(1));
@@ -64,6 +66,7 @@ const state = {
   requestDashboard: null, requestTrace: null, requestTraceVersion: 0,
 };
 let promptConsole;
+let imageLab;
 let usageReportUrl;
 const mediaGalleries = new Map();
 if (location.hash === '#media') history.replaceState(null, '', '#images');
@@ -153,6 +156,8 @@ function logout(message = '', { forget = true } = {}) {
   if (forget) clearSavedLogin();
   resetLoginButton();
   promptConsole?.clear();
+  imageLab?.clear();
+  imageLab = null;
   clearUsageReport();
   state.usageDashboard = null;
   state.requestDashboard = null;
@@ -182,13 +187,14 @@ function logout(message = '', { forget = true } = {}) {
   $('#admin-token').focus();
 }
 
-async function api(path, { method = 'GET', body, token = state.token, responseType = 'json' } = {}) {
+async function api(path, { method = 'GET', body, token = state.token, responseType = 'json', timeoutMs = 20000 } = {}) {
   if (token === state.token && expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
   let response;
   try {
+    const json = body !== undefined && !(body instanceof FormData);
     response = await fetch(`/api${path}`, {
-      method, headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}), cache: 'no-store', signal: AbortSignal.timeout(20000),
+      method, headers: { Authorization: `Bearer ${token}`, ...(json ? { 'Content-Type': 'application/json' } : {}) },
+      body: json ? JSON.stringify(body) : body, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new Error(error.name === 'TimeoutError' ? '请求超时，请稍后重试。' : '无法连接管理服务，请检查 Bot 是否仍在运行。');
@@ -311,6 +317,10 @@ async function loadPage({ quiet = false } = {}) {
     if (sequence !== state.sequence || !state.token) return;
     $('#content').innerHTML = html;
     if (page === 'prompt') promptConsole.attach($('#content'));
+    if (page === 'image-lab') {
+      $('#content').append(imageLab.element);
+      imageLab.refresh();
+    }
     if (page === 'images' || page === 'memes') mediaGalleries.get(page)?.attach($('#content'));
     $('#updated-at').textContent = `更新于 ${date(Date.now(), true)}`;
     if (page !== 'overview') api('/status').then((status) => { if (sequence === state.sequence && state.token) updateStatus(status); }).catch(() => {});
@@ -608,7 +618,15 @@ async function showRequestTrace(button, more = false) {
     $('#detail-dialog').scrollTop = 0;
   });
 }
-const renderers = { requests: renderRequests, images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+async function renderImageLab(sequence) {
+  const settings = await api('/image-lab');
+  if (sequence !== state.sequence || !state.token) return '';
+  imageLab ??= createImageLab({ api, fetchMediaFile, toast });
+  imageLab.setSettings(settings);
+  return '';
+}
+
+const renderers = { requests: renderRequests, images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), 'image-lab': renderImageLab, prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;

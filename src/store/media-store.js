@@ -16,7 +16,7 @@ export async function initializeMediaStore() {
   return paths;
 }
 
-function imageFormat(bytes) {
+export function imageFormat(bytes) {
   if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return ['png', 'image/png'];
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return ['jpg', 'image/jpeg'];
   if (['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))) return ['gif', 'image/gif'];
@@ -72,11 +72,11 @@ async function saveAsset(kind, bytes, details, previewBytes = null) {
   });
 }
 
-export function saveGeneratedImage(b64, { prompt, sessionKey, model, size } = {}) {
+export function saveGeneratedImage(b64, { prompt, sessionKey, model, size, taskId } = {}) {
   if (typeof b64 !== 'string' || !b64.length || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64) || b64.length % 4 === 1) {
     throw new Error('生成图片不是有效的 Base64');
   }
-  return saveAsset('generated', Buffer.from(b64, 'base64'), { prompt, sessionKey, model, size });
+  return saveAsset('generated', Buffer.from(b64, 'base64'), { prompt, sessionKey, model, size, taskId });
 }
 
 // Reject values JSON would silently drop/change. Extension fields remain plain data.

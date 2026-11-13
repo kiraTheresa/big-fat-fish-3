@@ -40,6 +40,7 @@ Prompt 工作台在顶部提供编辑、保存和「去试聊」。试聊结果�
 | Prompt 工作台 | 全局草稿、请求预览、会话快照测试、人工评审、发布 / 回退与工具调用观察；见 [操作说明](prompt-console.md) |
 | 绘图作品 | 浏览生成图片，搜索、按来源会话筛选、分页、查看提示词等详情及下载本地原图 |
 | 表情收藏 | 浏览已记录的表情，搜索、按来源会话和收藏状态筛选、分页、查看详情及下载本地原图 |
+| 开发者生图台 | 提交文生图和参考图编辑任务，查看历史、沿用参数、将结果用作参考图 |
 | 用户权限 | 登记 QQ，设为普通用户、管理员或封禁，恢复默认权限 |
 | 任务调度 | 新建、修改、暂停、删除单次或间隔任务；查看执行结果 |
 | 运行日志 | 默认仅看失败，可切换全部日志并筛选 DEBUG/INFO/WARN/ERROR、会话与关键词；从详情进入完整业务链路 |
@@ -51,6 +52,30 @@ Prompt 工作台在顶部提供编辑、保存和「去试聊」。试聊结果�
 ### 绘图作品与表情收藏
 
 “绘图作品”（`#images`）与“表情收藏”（`#memes`）分别浏览、筛选、预览和下载本地素材；两个页面均只读。收藏、改名、停用与发送通过 [表情指令与工具](memes.md) 完成。分页、预览限制及接口见 [媒体文件存储](media-storage.md#管理台浏览与下载)。
+
+### 开发者生图台与模型接入
+
+上游资料核对日期为 2026-11-13。选型时先看模型 ID、接口、参考图能力和尺寸，再查对应模型的参数页。可用模型、分组和价格以老张在线文档及账号控制台为准，本节记录肥鱼的接入约定。[老张图像生成选型指南](https://docs.laozhang.ai/api-capabilities/image-generation-guide) · [Images API 参考](https://docs.laozhang.ai/api-reference/images) · [模型与价格总表](https://docs.laozhang.ai/models)
+
+「素材 → 开发者生图台」（`#image-lab`）使用后端的 `IMAGE_API_BASE_URL` 和 `IMAGE_API_KEY`。浏览器提交表单后，`POST /api/image-lab` 返回任务 ID，后台逐个执行，最多同时保留 5 个进行中或排队的任务。任务复用绘图开关和用量限额。QQ 的 `/draw` 和聊天绘图工具读取 `IMAGE_MODEL`，通过 Images API 文生图。
+
+任务记录保存在 `data/management/image-tasks/`。刷新页面可继续查看状态、请求、用量和作品。进程重启后，未完成任务标为中断，请先核对上游调用记录再提交。历史任务保留参考图文件信息，沿用编辑任务时需重新选择参考图。也可以将已生成的作品直接用作下一轮的参考图。
+
+| 生图台操作 | 发给老张的请求 | 「请求 JSON」显示 |
+| --- | --- | --- |
+| 文生图 | `POST /v1/images/generations`，JSON 顶层包含 `model`、`prompt` 和已选的可选字段 | 完整请求正文，鉴权与 Content-Type 通过 HTTP 请求头发送 |
+| 参考图编辑 | `POST /v1/images/edits`，multipart 上传文字字段和二进制图片。单图用 `image`，多图用重复的 `image[]` | 表单字段预览，附件显示文件名、类型和字节数 |
+| Nano Banana 生成或编辑 | `POST /v1beta/models/gemini-nano-banana-2.1:generateContent`，按 Gemini 原生格式发送 JSON | 参考图的 Base64 内容以文件信息代替 |
+
+- GPT Image 2.5 Flare VIP 和 Sunburst VIP 提供宽高、五档质量和透明 PNG。参考图最多 4 张、合计 20 MiB。蒙版能力见官转线路。[GPT Image 2.5 接入文档](https://docs.laozhang.ai/api-capabilities/gpt-image-2-5)
+- Grok Imagine 2.0 提供画幅。文生图可设置 1K／2K、两档质量和 1–10 张输出，编辑可上传最多 3 张参考图、合计 20 MiB。[Grok Imagine 2.0 接入文档](https://docs.laozhang.ai/api-capabilities/grok-imagine-image)
+- Nano Banana 2.1 提供画幅、1K／2K／4K、思考级别、PNG／JPEG、JPEG 压缩质量、图片或图文输出，以及可单独开启的网页搜索和图片搜索。启用搜索时发送图文输出，实际检索可能额外计费。支持上传最多 14 张参考图，原文件合计限 14 MiB，为 Base64 编码后的请求留出空间。[Nano Banana 2.1 接入文档](https://docs.laozhang.ai/api-capabilities/nano-banana-2-1-image)
+
+参考图使用本地 PNG、JPEG、WebP 文件。生图台请求 Base64 输出，生成的原图自动归入「绘图作品」，任务记录保存作品引用。运行前核对 [Clash / Mihomo 分流](napcat-deployment.md#使用-clash--mihomo-分流)。
+
+令牌分组决定可调用的模型，模型 ID 选定本次请求的模型。接口和参数兼容时可复用现有请求格式，例如 Flare VIP 和 Sunburst VIP 可以在同一类请求里替换 `model`。对于同样标为 Images 的其他型号，也要核对尺寸、质量和附件字段。比如 FLUX.2 和 Seedream 的参考图编辑走 `/v1/images/generations`，参考图放在各自的 JSON 字段里。Nano Banana 可走 Chat Completions 或 Gemini 原生协议，需按所选协议组装请求和解析响应。[老张图像生成选型指南](https://docs.laozhang.ai/api-capabilities/image-generation-guide)
+
+扩展模型时按目标模型确认生成和编辑各自的路径、请求字段、文件格式、响应结构及计费方式，再据此决定工作台开放哪些参数。项目已有绘图价目及适用范围见 [用量、费用与报告](usage-monitoring.md#费用计价与分享图片)。
 
 ## 配置优先级与生效
 
