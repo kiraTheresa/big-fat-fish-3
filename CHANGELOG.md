@@ -5,6 +5,18 @@ Versions follow Semantic Versioning. Entries are grouped by change type: `feat` 
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [1.5.0] - 2026-11-13
+
+### feat
+
+- Show developer image calls as a separate usage category while retaining the shared drawing switch and daily limits. Classify earlier admin drawing records without rewriting their ledger or price snapshots.
+- Estimate GPT Image VIP, Grok Imagine 2.0, and Nano Banana 2.1 costs using their respective per-call or per-image rules. Keep incomplete results and additional search charges pending confirmation.
+
+### fix
+
+- Bound streamed image API responses, error bodies, and individual images; stop reading oversized results without automatically retrying.
+- Preserve and skip corrupt image task records during startup and history loading, and report a clear error when opening an affected task.
+
 ## [1.4.0] - 2026-11-13
 
 ### feat

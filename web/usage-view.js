@@ -1,6 +1,6 @@
 const e = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const number = value => Number(value ?? 0).toLocaleString('zh-CN');
-const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
+const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image_lab: '开发者生图', image: '绘图', distill: '记忆提炼' };
 const empty = (title, description) => `<div class="empty-state"><h3>${e(title)}</h3><p>${e(description)}</p></div>`;
 const panelHead = (title, description) => `<div class="panel-header"><div><h2>${e(title)}</h2><p>${e(description)}</p></div></div>`;
 
@@ -25,7 +25,7 @@ function usageChart(result) {
 function usageKindRows(result) {
   const rows = result.byKind || [];
   const max = Math.max(1, result.totals?.costNano || 0);
-  return rows.length ? [...rows].sort((a,b) => (b.costNano || 0) - (a.costNano || 0)).map(row => `<button class="usage-kind" type="button" data-action="usage-kind" data-kind="${e(row.kind)}"><span class="usage-kind-heading"><strong>${e(kindNames[row.kind] || row.kind)}</strong><span>${e(usageMoney(row))}</span></span><progress class="usage-progress" value="${Math.round((row.costNano || 0) / max * 1000) / 10}" max="100" aria-label="${e(kindNames[row.kind] || row.kind)}预估费用占比" aria-valuetext="${row.calls && !row.pricedCalls ? '费用待确认，暂无占比' : Math.round((row.costNano || 0) / max * 1000) / 10+'%'}"></progress><span class="usage-kind-note"><span>${e(number(row.calls))} 次 · ${row.kind === 'draw' || row.kind === 'image' ? '已返回 '+e(number(row.images))+' 张图片' : row.unknownUsageCalls === row.calls ? 'token 未返回' : e(number(row.totalTokens))+' token'}</span><span>${e(number(row.pendingCostCalls))} 次待确认</span></span></button>`).join('') : empty('暂无调用用途', '统计包含聊天、识图、记忆提炼与绘图。', 'usage');
+  return rows.length ? [...rows].sort((a,b) => (b.costNano || 0) - (a.costNano || 0)).map(row => `<button class="usage-kind" type="button" data-action="usage-kind" data-kind="${e(row.kind)}"><span class="usage-kind-heading"><strong>${e(kindNames[row.kind] || row.kind)}</strong><span>${e(usageMoney(row))}</span></span><progress class="usage-progress" value="${Math.round((row.costNano || 0) / max * 1000) / 10}" max="100" aria-label="${e(kindNames[row.kind] || row.kind)}预估费用占比" aria-valuetext="${row.calls && !row.pricedCalls ? '费用待确认，暂无占比' : Math.round((row.costNano || 0) / max * 1000) / 10+'%'}"></progress><span class="usage-kind-note"><span>${e(number(row.calls))} 次 · ${['draw', 'image', 'image_lab'].includes(row.kind) ? '已返回 '+e(number(row.images))+' 张图片' : row.unknownUsageCalls === row.calls ? 'token 未返回' : e(number(row.totalTokens))+' token'}</span><span>${e(number(row.pendingCostCalls))} 次待确认</span></span></button>`).join('') : empty('暂无调用用途', '统计包含聊天、识图、记忆提炼与绘图。', 'usage');
 }
 
 // The workbench and Chromium capture render this same DOM with the same CSS.

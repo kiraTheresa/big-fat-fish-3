@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
@@ -214,10 +214,39 @@ test('重启后保留成功结果和任务参数，将进行中的任务标记�
   const { items } = await (await fetch(`${url}/tasks`, { headers: auth })).json();
   const completed = items.find((item) => item.status === 'completed');
   const id = `${Date.now()}-aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa`;
-  await writeFile(join(root, 'management', 'image-tasks', `${id}.json`), JSON.stringify({ id, status: 'running', parameters: { prompt: '未完成' } }));
+  await writeFile(join(root, 'management', 'image-tasks', `${id}.json`), JSON.stringify({ ...await imageLab.read(completed.id), id, status: 'running', parameters: { prompt: '未完成' } }));
   const restarted = createImageLab();
   await restarted.recover();
   assert.equal((await restarted.read(id)).status, 'interrupted');
   assert.deepEqual((await restarted.read(completed.id)).images, completed.images);
+  assert.equal(calls.length, count);
+});
+
+test('坏 JSON、无效结构及 ID 不匹配均保留原文件，不影响恢复、分页和正常任务', async () => {
+  const original = (await imageLab.list()).items.find((item) => item.status === 'completed');
+  const good = await imageLab.read(original.id);
+  const malformed = ['{broken', 'null', '{}', JSON.stringify({ ...good, parameters: {} }),
+    JSON.stringify({ ...good, images: [null] }), JSON.stringify(good)];
+  const ids = [];
+  for (const [index, raw] of malformed.entries()) {
+    const id = `${Date.now() + 1000 + index}-bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb`;
+    const body = index === 3 || index === 4 ? JSON.stringify({ ...JSON.parse(raw), id }) : raw;
+    malformed[index] = body;
+    ids.push(id);
+    await writeFile(join(root, 'management', 'image-tasks', `${id}.json`), body);
+  }
+  const count = calls.length;
+  const restarted = createImageLab();
+  await restarted.recover();
+  const page = await restarted.list({ limit: 1 });
+  assert.equal(page.items.length, 1);
+  assert.ok(!ids.includes(page.items[0].id));
+  assert.ok((await restarted.list({ before: page.nextCursor, limit: 50 })).items.length);
+  for (const [index, id] of ids.entries()) {
+    await assert.rejects(restarted.read(id), { status: 409, code: 'IMAGE_TASK_CORRUPT' });
+    assert.equal(await readFile(join(root, 'management', 'image-tasks', `${id}.json`), 'utf8'), malformed[index]);
+    assert.equal((await fetch(`${url}/tasks/${id}`, { headers: auth })).status, 409);
+  }
+  assert.deepEqual(await restarted.read(good.id), good);
   assert.equal(calls.length, count);
 });

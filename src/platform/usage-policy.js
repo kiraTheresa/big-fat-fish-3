@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { appendUsage, readUsageOverview, usageSessionKey } from '../store/usage-store.js';
 import { logger, redactText } from '../utils/logger.js';
-import { snapshotUsagePrice } from '../usage/pricing.js';
+import { isImageUsage, snapshotUsagePrice } from '../usage/pricing.js';
 
 const DEFAULT_POLICY = { enabled: { chat: true, vision: true, draw: true, distill: true }, maxCallsPerDay: 0, maxTokensPerDay: 0 };
 let policy = structuredClone(DEFAULT_POLICY);
@@ -68,11 +68,12 @@ async function loadPending() {
   loadedDir = dir;
 }
 
-export async function beginUsage({ kind = 'chat', model, sessionKey = 'system', traceId = randomUUID(), source = 'system', baseUrl = kind === 'draw' ? config.imageApiBaseUrl : config.deepseekBaseUrl }) {
+export async function beginUsage({ kind = 'chat', model, sessionKey = 'system', traceId = randomUUID(), source = 'system', imageSearch = false, baseUrl = isImageUsage(kind) ? config.imageApiBaseUrl : config.deepseekBaseUrl }) {
   const key = usageSessionKey(sessionKey);
   return serial(async () => {
-    if (!(kind in DEFAULT_POLICY.enabled)) throw new Error('Unknown model usage kind');
-    if (policy.enabled[kind] === false) throw new UsageLimitError(`${kind} 已被管理配置停用`, 'FEATURE_DISABLED');
+    const feature = kind === 'image_lab' ? 'draw' : kind;
+    if (!Object.hasOwn(DEFAULT_POLICY.enabled, feature)) throw new Error('Unknown model usage kind');
+    if (policy.enabled[feature] === false) throw new UsageLimitError(`${feature} 已被管理配置停用`, 'FEATURE_DISABLED');
     try { await loadPending(); }
     catch (error) {
       lastPersistenceError = redactText(error.message);
@@ -96,7 +97,7 @@ export async function beginUsage({ kind = 'chat', model, sessionKey = 'system', 
       throw new UsageLimitError('今日已报告 token 用量已达上限');
     }
     const attempt = { id: randomUUID(), time: now, kind, model: redactText(model), sessionKey: key, traceId, source, endpoint: redactText(baseUrl),
-      pricing: snapshotUsagePrice({ kind, model, baseUrl, time: now }) };
+      ...(imageSearch ? { imageSearch: true } : {}), pricing: snapshotUsagePrice({ kind, model, baseUrl, time: now }) };
     pending.set(attempt.id, attempt);
     try { await savePending(); }
     catch (error) {
@@ -125,7 +126,7 @@ export async function finishUsage(attempt, { usage, error, httpStatus, images = 
       finishedAt,
       elapsedMs: Math.max(0, finishedAt - attempt.time),
       usageKnown: totalTokens !== undefined,
-      ...(attempt.kind === 'draw' ? { imageResponseComplete: imageResponseComplete === true } : {}),
+      ...(isImageUsage(attempt.kind) ? { imageResponseComplete: imageResponseComplete === true } : {}),
       ...(typeof responseModel === 'string' ? { responseModel: redactText(responseModel).slice(0, 200) } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(error ? { error: redactText(error.message ?? error, [config.deepseekApiKey, config.imageApiKey]) } : {}),

@@ -28,6 +28,17 @@ function outputImage(item) {
 }
 
 const taskIdPattern = /^\d{13}-[0-9a-f-]{36}$/;
+const taskStatuses = ['queued', 'running', 'completed', 'failed', 'interrupted'];
+const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+function validTask(task, id) {
+  return object(task) && task.id === id && taskStatuses.includes(task.status)
+    && Number.isFinite(task.createdAt) && typeof task.model === 'string' && typeof task.endpoint === 'string'
+    && object(task.parameters) && typeof task.parameters.prompt === 'string' && object(task.request)
+    && Array.isArray(task.images) && task.images.every((image) => object(image)
+      && ['key', 'mimeType', 'filename'].every((key) => typeof image[key] === 'string'))
+    && Array.isArray(task.references) && task.references.every((file) => object(file)
+      && typeof file.name === 'string' && typeof file.type === 'string' && Number.isFinite(file.size));
+}
 
 export function createImageLab() {
   const directory = join(config.dataDir, 'management', 'image-tasks');
@@ -36,6 +47,7 @@ export function createImageLab() {
   let queue = Promise.resolve();
   let pending = 0;
   let closing = false;
+  const warned = new Set();
 
   async function taskIds() {
     const files = await readdir(directory).catch((err) => {
@@ -47,9 +59,28 @@ export function createImageLab() {
   }
 
   async function read(id) {
-    const task = taskIdPattern.test(id) && await readJson(fileFor(id), null);
-    if (!task) throw Object.assign(new Error('绘图任务不存在'), { status: 404 });
-    return task;
+    if (!taskIdPattern.test(id)) throw Object.assign(new Error('绘图任务不存在'), { status: 404 });
+    try {
+      const task = await readJson(fileFor(id));
+      if (task === undefined) throw Object.assign(new Error('绘图任务不存在'), { status: 404 });
+      if (!validTask(task, id)) throw new SyntaxError('Invalid image task');
+      return task;
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      if (!warned.has(id)) {
+        logger.warn('[image-lab] 任务记录损坏，已跳过并保留原文件', { taskId: id });
+        warned.add(id);
+      }
+      throw Object.assign(new Error('绘图任务记录损坏，原文件已保留，请检查后修复'), { status: 409, code: 'IMAGE_TASK_CORRUPT' });
+    }
+  }
+
+  async function readHistory(id) {
+    try { return await read(id); }
+    catch (err) {
+      if (err.code === 'IMAGE_TASK_CORRUPT' || err.status === 404) return null;
+      throw err;
+    }
   }
 
   async function execute(task, references, protocol) {
@@ -108,20 +139,25 @@ export function createImageLab() {
     },
     async recover() {
       for (const id of await taskIds()) {
-        const task = await read(id);
+        const task = await readHistory(id);
+        if (!task) continue;
         if (task.status !== 'queued' && task.status !== 'running') continue;
         await save({ ...task, status: 'interrupted', finishedAt: Date.now(), error: '服务已重启。请核对上游调用记录后再提交。' });
       }
     },
     async list({ before, limit = 20 } = {}) {
       const ids = (await taskIds()).filter((id) => !before || id < before);
-      const page = ids.slice(0, Math.min(limit, 50));
+      const items = [];
+      let index = 0;
+      while (index < ids.length && items.length < Math.min(limit, 50)) {
+        const task = await readHistory(ids[index++]);
+        if (!task) continue;
+        const { parameters, request, references, usage, text, ...summary } = task;
+        items.push({ ...summary, prompt: parameters.prompt.slice(0, 160) });
+      }
       return {
-        items: await Promise.all(page.map(async (id) => {
-          const { parameters, request, references, usage, text, ...summary } = await read(id);
-          return { ...summary, prompt: parameters.prompt.slice(0, 160) };
-        })),
-        nextCursor: ids.length > page.length ? page.at(-1) : null,
+        items,
+        nextCursor: index < ids.length ? ids[index - 1] : null,
       };
     },
     read,

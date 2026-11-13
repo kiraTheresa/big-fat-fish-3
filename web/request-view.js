@@ -9,7 +9,7 @@ const traceTime = value => {
   const time = Date.parse(value);
   return Number.isFinite(time) ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(time) : '未记录';
 };
-export const requestKinds = { chat: '文字对话', vision: '图片理解', distill: '记忆提炼', draw: '绘图' };
+export const requestKinds = { chat: '文字对话', vision: '图片理解', distill: '记忆提炼', draw: '绘图', image_lab: '开发者生图' };
 export const requestSources = { live: '线上调用', test: 'Prompt 测试', scheduled: '后台任务', admin: '管理操作', system: '系统调用', unknown: '历史未记录' };
 export const requestReasons = { upstream_busy: '503 · 服务繁忙', rate_limited: '429 · 请求限流', timeout: '请求超时', auth_failed: '401 · 认证失败', balance_required: '402 · 余额不足', request_rejected: '请求被拒绝', upstream_error: '上游服务器错误', network_error: '网络错误', interrupted: '进程中断，结果未知', other: '其他调用失败' };
 const outcomes = { success: '成功', failure: '失败', failed: '失败', interrupted: '已中断', unknown: '结果未知', confirmed: '平台已确认', completed: '处理器已返回', queued: '已入队', generated: '回复已生成', fallback: '兜底回复', skipped: '跳过', rejected: '准入拒绝', partial: '部分完成' };

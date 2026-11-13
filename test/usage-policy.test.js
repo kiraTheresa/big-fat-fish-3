@@ -42,8 +42,20 @@ test('all feature gates stop at the shared gateways, before any fetch', async ()
   globalThis.fetch = () => { assert.fail('disabled feature must never fetch'); };
   for (const kind of ['chat', 'vision', 'distill']) await assert.rejects(chatCompletion([], { kind }), { code: 'FEATURE_DISABLED' });
   await assert.rejects(generateImage('anything'), { code: 'FEATURE_DISABLED' });
+  await assert.rejects(beginUsage({ kind: 'image_lab', model: 'gpt-image-2.5-flare-vip' }), { code: 'FEATURE_DISABLED' });
   assert.equal((await readUsageOverview()).totals.calls, 0);
   assert.deepEqual(getUsagePolicy(), { features: { chat: false, vision: false, draw: false, distill: false }, limits: { maxCallsPerDay: 9, maxTokensPerDay: 0 } });
+});
+
+test('developer images share the global daily budget and keep their pricing reservation on interruption', async () => {
+  setUsagePolicy({ limits: { maxCallsPerDay: 1 } });
+  const attempt = await beginUsage({ kind: 'image_lab', model: 'gemini-nano-banana-2.1', source: 'admin', imageSearch: true });
+  await assert.rejects(beginUsage({ kind: 'draw', model: 'gpt-image-2.5-flare-vip' }), { code: 'USAGE_LIMIT' });
+  const pending = JSON.parse(await readFile(join(config.usageDir, '.pending.json'), 'utf8'));
+  assert.equal(pending[0].kind, 'image_lab');
+  assert.equal(pending[0].imageSearch, true);
+  await finishUsage(attempt, { error: new Error('timeout') });
+  await assert.rejects(beginUsage({ kind: 'image_lab' }), { code: 'USAGE_LIMIT' });
 });
 
 test('gateway records failures, missing usage, known vision tokens and generated image count without payloads', async () => {

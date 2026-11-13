@@ -3,7 +3,7 @@ import { usageDayStart } from '../platform/usage-policy.js';
 import { redactText } from '../utils/logger.js';
 
 const DAY = 86400000;
-const KINDS = ['chat', 'vision', 'distill', 'draw'];
+const KINDS = ['chat', 'vision', 'distill', 'draw', 'image_lab'];
 const SOURCES = ['live', 'test', 'scheduled', 'admin', 'system', 'unknown'];
 const REASONS = ['upstream_busy', 'rate_limited', 'timeout', 'auth_failed', 'balance_required', 'request_rejected', 'upstream_error', 'network_error', 'interrupted', 'other'];
 const invalid = message => Object.assign(new Error(message), { status: 400 });

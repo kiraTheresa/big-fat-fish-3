@@ -4,6 +4,10 @@ import { config } from './config.js';
 import { beginUsage, finishUsage } from './platform/usage-policy.js';
 import { logger, redactText } from './utils/logger.js';
 import { saveGeneratedImage } from './store/media-store.js';
+import { readResponseBytes } from './utils/read-response.js';
+
+const maxResponseBytes = 96 * 1024 * 1024;
+const maxImageBytes = 64 * 1024 * 1024;
 
 export async function generateImage(prompt, { sessionKey = 'system', onAttempt, logContext = {} } = {}) {
   const request = { model: config.imageModel, prompt, size: config.imageSize };
@@ -21,7 +25,8 @@ export async function generateImage(prompt, { sessionKey = 'system', onAttempt, 
 export async function requestImage(request, {
   references = [], sessionKey = 'system', onAttempt, logContext = {}, timeoutMs = config.imageTimeoutMs, lab,
 } = {}) {
-  const attempt = await beginUsage({ kind: 'draw', model: lab?.model ?? request.model, sessionKey, traceId: logContext.traceId, source: logContext.source });
+  const attempt = await beginUsage({ kind: lab ? 'image_lab' : 'draw', model: lab?.model ?? request.model, sessionKey,
+    traceId: logContext.traceId, source: logContext.source, imageSearch: lab?.protocol === 'gemini' && !!request.tools?.length });
   let usage = null;
   let httpStatus;
   let images = 0;
@@ -52,14 +57,17 @@ export async function requestImage(request, {
     if (!res.ok) {
       let detail = '';
       try {
-        const body = await res.json();
+        const body = JSON.parse((await readResponseBytes(res, 1024 * 1024)).toString('utf8'));
         usage = body.usage ?? null;
         const message = body.error?.message ?? body.message ?? body.error;
         if (typeof message === 'string') detail = redactText(message, [config.imageApiKey]).slice(0, 500);
-      } catch { /* Non-JSON errors still retain their HTTP status. */ }
+      } catch (err) {
+        if (err.code === 'IMAGE_RESPONSE_TOO_LARGE') detail = err.message;
+        // Non-JSON errors still retain their HTTP status.
+      }
       throw new Error(`Image API HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
     }
-    const data = await res.json();
+    const data = JSON.parse((await readResponseBytes(res, maxResponseBytes)).toString('utf8'));
     usage = data?.usage ?? null;
     const parts = lab?.protocol === 'gemini' && Array.isArray(data?.candidates)
       ? data.candidates.flatMap((candidate) => Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []) : [];
@@ -75,7 +83,8 @@ export async function requestImage(request, {
     }
     const item = items?.[0];
     // Image count is generated output, independent of a later download error.
-    imageResponseComplete = Array.isArray(items);
+    imageResponseComplete = lab?.protocol === 'gemini'
+      ? data !== null && typeof data === 'object' && !Array.isArray(data) : Array.isArray(items);
     images = imageResponseComplete ? items.filter((entry) =>
       (typeof entry?.b64_json === 'string' && entry.b64_json !== '') || (typeof entry?.url === 'string' && entry.url !== '')).length : 0;
     onAttempt?.({ phase: 'response', name: 'image_api', httpStatus, usage, images, elapsedMs: Date.now() - startedAt });
@@ -89,7 +98,7 @@ export async function requestImage(request, {
     else if (typeof item?.url === 'string' && item.url !== '') {
       const imgRes = await fetch(item.url, { signal: AbortSignal.timeout(60000) });
       if (!imgRes.ok) throw new Error(`图片下载失败 HTTP ${imgRes.status}`);
-      b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+      b64 = (await readResponseBytes(imgRes, maxImageBytes)).toString('base64');
     } else throw new Error('Image API 响应缺少 data[0].b64_json/url');
     return { b64, usage, httpStatus, elapsedMs: Date.now() - startedAt };
   } catch (error) {
@@ -102,5 +111,7 @@ export async function requestImage(request, {
 }
 
 export function normalizeImageBase64(value) {
-  return value.replace(/^data:[^,]+;base64,/i, '').replace(/\s+/g, '');
+  const b64 = value.replace(/^data:[^,]+;base64,/i, '').replace(/\s+/g, '');
+  if (Buffer.byteLength(b64, 'base64') > maxImageBytes) throw new Error('生成图片超过 64 MiB，无法归档；请核对上游扣费');
+  return b64;
 }

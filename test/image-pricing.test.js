@@ -14,7 +14,8 @@ const { snapshotUsagePrice, estimateUsageCost } = await import('../src/usage/pri
 const { appendUsage, readUsageOverview } = await import('../src/store/usage-store.js');
 const { beginUsage, finishUsage, setUsagePolicy } = await import('../src/platform/usage-policy.js');
 const { readUsageDashboard } = await import('../src/usage/overview.js');
-const { generateImage } = await import('../src/imagegen.js');
+const { generateImage, requestImage, normalizeImageBase64 } = await import('../src/imagegen.js');
+const { readRequestDashboard } = await import('../src/usage/requests.js');
 const now = Date.parse('2026-11-13T11:26:00+08:00');
 const nativeFetch = globalThis.fetch;
 const tariff = extra => snapshotUsagePrice({ kind: 'draw', model: 'gpt-image-2.5-flare-vip', baseUrl: 'https://api2.laozhang.ai/v1', time: now, ...extra });
@@ -131,4 +132,84 @@ test('persisted price snapshots survive configuration changes; all summaries and
   assert.match(html, /绘图/);
   assert.match(html, /2 次费用待确认/);
   assert.ok(!html.includes('g-one') && !html.includes('p-two'));
+});
+
+test('developer pricing covers GPT calls, Grok outputs, Banana empty results and uncertain search fees', async () => {
+  const cases = [
+    { model: 'gpt-image-2.5-flare-vip', images: 3, cost: 201000000 },
+    { model: 'grok-imagine-image-2.0', images: 3, cost: 1105500000 },
+    { model: 'grok-imagine-image-2.0', images: 0, cost: 0, error: true },
+    { model: 'gemini-nano-banana-2.1', images: 1, cost: 301500000 },
+    { model: 'gemini-nano-banana-2.1', images: 0, cost: 301500000, error: true },
+    { model: 'gemini-nano-banana-2.1', images: 0, blocked: true, cost: 301500000, error: true },
+    { model: 'gemini-nano-banana-2.1', images: 1, search: true },
+  ];
+  for (const [index, scenario] of cases.entries()) {
+    const gemini = scenario.model.startsWith('gemini');
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      if (scenario.blocked) return Response.json({ promptFeedback: { blockReason: 'SAFETY' } });
+      const images = Array.from({ length: scenario.images }, () => IMG_BYTES.toString('base64'));
+      return Response.json(gemini ? { candidates: [{ content: { parts: images.map(data => ({ inlineData: { data } })) } }] }
+        : { data: images.map(b64_json => ({ b64_json })) });
+    };
+    const invocation = requestImage({ model: scenario.model, ...(scenario.search ? { tools: [{ googleSearch: {} }] } : {}) }, {
+      sessionKey: `lab-${index}`, logContext: { source: 'admin' },
+      lab: { model: scenario.model, protocol: gemini ? 'gemini' : 'images', endpoint: '/v1/images/generations' },
+    });
+    if (scenario.error) await assert.rejects(invocation, /没有返回图片/); else await invocation;
+    assert.equal(calls, 1);
+    const { items: [record], totals } = await readUsageOverview({ sessionKey: `lab-${index}`, includeCost: true });
+    assert.equal(record.kind, 'image_lab');
+    assert.equal(record.images, scenario.images);
+    assert.equal(totals.cacheUnknownCalls, 0);
+    if (scenario.search) assert.match(record.cost.reason, /搜索/);
+    else assert.equal(record.cost.costNano, scenario.cost);
+  }
+  const dashboard = await readUsageDashboard({ detailKind: 'image_lab' }, now);
+  assert.equal(dashboard.totals.calls, 7);
+  assert.equal(dashboard.totals.costNano, 2211000000);
+  assert.equal(dashboard.totals.pendingCostCalls, 1);
+  assert.equal(dashboard.byKind.length, 1);
+  assert.match(renderUsageShareContent(dashboard), /开发者生图/);
+  assert.match(renderUsageShareContent(dashboard), /已返回 8 张图片/);
+  assert.equal((await readRequestDashboard({ kind: 'image_lab' }, now + 1)).totals.calls, 7);
+});
+
+test('historical draw/admin records are classified without rewriting or repricing; QQ remains draw', async () => {
+  for (const source of ['admin', 'live']) await appendUsage('system', row({ source }));
+  await appendUsage('system', row({ source: 'admin', pricing: { status: 'pending', reason: 'old unverified tariff' } }));
+  const before = await readFile(join(config.usageDir, 'system.jsonl'), 'utf8');
+  const dashboard = await readUsageDashboard({ detailKind: 'image_lab' }, now);
+  assert.equal(dashboard.items.length, 2);
+  assert.equal(dashboard.byKind.find(x => x.kind === 'image_lab').costNano, 201000000);
+  assert.equal(dashboard.byKind.find(x => x.kind === 'draw').calls, 1);
+  assert.equal(dashboard.totals.pendingCostCalls, 1);
+  assert.equal(await readFile(join(config.usageDir, 'system.jsonl'), 'utf8'), before);
+});
+
+test('oversized upstream success and error streams stop once and retain billing evidence', async () => {
+  for (const status of [200, 503]) {
+    let calls = 0;
+    let cancelled = false;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(new ReadableStream({
+        pull(controller) { controller.enqueue(new Uint8Array(1024)); },
+        cancel() { cancelled = true; },
+      }), { status, headers: { 'content-length': String(97 * 1024 * 1024) } });
+    };
+    await assert.rejects(requestImage({ model: 'gpt-image-2.5-flare-vip' }, {
+      sessionKey: `size-${status}`, lab: { model: 'gpt-image-2.5-flare-vip', endpoint: '/v1/images/generations', protocol: 'images' },
+    }), /超过/);
+    assert.equal(cancelled, true);
+    assert.equal(calls, 1);
+    const { items: [record] } = await readUsageOverview({ sessionKey: `size-${status}`, includeCost: true });
+    assert.equal(record.status, 'failure');
+    assert.equal(record.imageResponseComplete, false);
+    if (status === 200) assert.equal(record.cost.status, 'pending');
+    else assert.equal(record.cost.costNano, 0);
+  }
+  assert.throws(() => normalizeImageBase64('A'.repeat(Math.ceil(64 * 1024 * 1024 / 3) * 4 + 4)), /超过 64 MiB/);
 });
