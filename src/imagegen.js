@@ -10,7 +10,10 @@ const maxResponseBytes = 96 * 1024 * 1024;
 const maxImageBytes = 64 * 1024 * 1024;
 
 export async function generateImage(prompt, { sessionKey = 'system', onAttempt, logContext = {} } = {}) {
-  const request = { model: config.imageModel, prompt, size: config.imageSize };
+  const model = config.imageModel;
+  const request = model === 'grok-imagine-image-2.0'
+    ? { model, prompt, response_format: 'b64_json', n: 1 }
+    : { model, prompt, size: config.imageSize };
   const { b64 } = await requestImage(request, { sessionKey, onAttempt, logContext });
   let asset = null;
   try {

@@ -60,6 +60,22 @@ test('url 形态：data[0].url 指向外链 → 现下载转 base64，与原始�
   }
 });
 
+test('Grok 文生图请求使用工作台已验证的单张出图参数', async () => {
+  const original = config.imageModel;
+  config.imageModel = 'grok-imagine-image-2.0';
+  try {
+    const { b64 } = await generateImage('一只蓝色的鱼');
+    assert.equal(b64, IMG_BYTES.toString('base64'));
+    const request = imageServer.requests.at(-1);
+    assert.equal(request.url, '/images/generations');
+    assert.deepEqual(request.body, {
+      model: 'grok-imagine-image-2.0', prompt: '一只蓝色的鱼', response_format: 'b64_json', n: 1,
+    });
+  } finally {
+    config.imageModel = original;
+  }
+});
+
 test('落盘失败仍返回已生成的图片，asset 为 null，不重复请求绘图', async () => {
   const original = config.dataDir;
   const blocker = join(usageRoot, 'blocked');

@@ -147,7 +147,7 @@ export const config = {
   imageApiBaseUrl: process.env.IMAGE_API_BASE_URL ?? 'https://api2.laozhang.ai/v1',
   // 绘图 API Key（留空 = draw 触发器不生效，同 deepseekApiKey 模式）
   imageApiKey: process.env.IMAGE_API_KEY ?? '',
-  imageModel: process.env.IMAGE_MODEL ?? 'gpt-image-2.5-flare-vip',
+  imageModel: process.env.IMAGE_MODEL ?? 'grok-imagine-image-2.0',
   // 出图尺寸（老张兼容 '2K' 简写与 '1024x1024' 全写，实测 2K 可用）
   imageSize: process.env.IMAGE_SIZE ?? '2K',
   // 绘图超时（ms）：实测 GPT Image 2.5 出图 20-70s，给足余量
