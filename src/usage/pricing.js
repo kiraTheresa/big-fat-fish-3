@@ -10,6 +10,14 @@ export const USAGE_PRICING = Object.freeze({
     pro: { name: 'deepseek-v4-pro', offPeak: { cacheInputNano: 150, inputNano: 4500, outputNano: 13500 } },
   },
 });
+export const IMAGE_PRICING = Object.freeze({
+  version: 'laozhang-gpt-image-vip-2026-11-13', provider: 'laozhang', currency: 'CNY', unit: 'call',
+  verifiedAt: '2026-11-13', validFrom: Date.parse('2026-11-13T00:00:00+08:00'),
+  sourceUrl: 'https://docs.laozhang.ai/en/api-capabilities/gpt-image-2-5',
+  rulesUrl: 'https://docs.laozhang.ai/en/api-capabilities/image-billing-and-failures',
+  models: ['gpt-image-2.5-flare-vip', 'gpt-image-2.5-sunburst-vip'],
+  callUsd: 0.03, usdCny: 6.7,
+});
 const FLASH = new Set(['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'DeepSeek-V4.1-Flash-1017']);
 const PRO = new Set(['deepseek-v4-pro', 'DeepSeek-V4-Pro-0813']);
 const tier = (model) => FLASH.has(model) ? 'flash' : PRO.has(model) ? 'pro' : null;
@@ -17,13 +25,22 @@ const pending = (reason) => ({ status: 'pending', reason });
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
 
 export function snapshotUsagePrice({ baseUrl, model, kind, time }) {
-  if (kind === 'draw') return pending('绘图服务尚未配置价目');
-  let official = false;
+  let provider;
   try {
     const url = new URL(baseUrl);
-    official = url.origin === 'https://api.deepseek.com' && !url.username && !url.password && !url.search && !url.hash && ['', '/', '/v1', '/v1/'].includes(url.pathname);
+    if (!url.username && !url.password && !url.search && !url.hash && ['', '/', '/v1', '/v1/'].includes(url.pathname)) {
+      if (url.origin === 'https://api.deepseek.com') provider = 'deepseek';
+      if (['https://api.laozhang.ai', 'https://api2.laozhang.ai'].includes(url.origin)) provider = 'laozhang';
+    }
   } catch { /* Unknown providers must never inherit the official tariff. */ }
-  if (!official) return pending('非官方 DeepSeek 接口，未配置供应商价目');
+  if (kind === 'draw') {
+    if (provider !== 'laozhang' || !IMAGE_PRICING.models.includes(model)) return pending('绘图供应商或模型暂无已核对价目');
+    if (!Number.isFinite(time) || time < IMAGE_PRICING.validFrom) return pending('调用早于绘图价目核对日期');
+    const { version, currency, unit, callUsd, usdCny } = IMAGE_PRICING;
+    return { status: 'available', version, provider, currency, unit, model, callUsd, usdCny,
+      callNano: Math.round(callUsd * usdCny * 1e9) };
+  }
+  if (provider !== 'deepseek') return pending('非官方 DeepSeek 接口，未配置供应商价目');
   const modelTier = tier(model);
   if (!modelTier) return pending('模型暂无已核对价目');
   if (!Number.isFinite(time) || time < USAGE_PRICING.validFrom) return pending('调用早于当前价目核对日期');
@@ -43,6 +60,14 @@ export function estimateUsageCost(record) {
   const price = record.pricing;
   if (!price) return pending('历史记录缺少供应商与价目快照');
   if (price.status !== 'available') return pending(typeof price.reason === 'string' ? price.reason : '价目不可用');
+  if (record.kind === 'draw' && price.provider === 'laozhang' && price.unit === 'call') {
+    if (price.currency !== 'CNY' || !integer(price.callNano) || price.callNano === 0
+      || price.model !== record.model || !IMAGE_PRICING.models.includes(price.model)) return pending('绘图价目快照无效');
+    if (integer(record.httpStatus) && record.httpStatus >= 400 && record.httpStatus <= 599) return { status: 'estimated', costNano: 0 };
+    // A complete Images response is required: a timeout or truncated body can still be billed upstream.
+    if (record.httpStatus !== 200 || record.imageResponseComplete !== true || !integer(record.images)) return pending('绘图结果未完整返回，扣费待确认');
+    return { status: 'estimated', costNano: record.images > 0 ? price.callNano : 0 };
+  }
   if (record.kind === 'draw' || price.currency !== 'CNY' || price.provider !== 'deepseek'
     || !['cacheInputNano', 'inputNano', 'outputNano'].every(key => integer(price[key]))) return pending('价目快照无效');
   if (record.responseModel && tier(record.responseModel) !== price.modelTier) return pending('返回模型与请求模型价目不匹配');

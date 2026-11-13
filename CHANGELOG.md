@@ -5,6 +5,13 @@ Versions follow Semantic Versioning. Entries are grouped by change type: `feat` 
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [1.3.0] - 2026-11-13
+
+### feat
+
+- Include LaoZhang GPT Image 2.5 VIP generation in usage costs at $0.03 per call, estimated with a fixed 6.7 CNY/USD conversion (¥0.201 per call). Preserve the tariff on each new attempt and show the pricing basis in the console.
+- Count returned images as one billable request even if downloading or saving later fails. Explicit upstream errors and complete empty responses cost zero; timeouts and incomplete responses remain pending. Existing unpriced history is unchanged.
+
 ## [1.2.3] - 2026-11-13
 
 ### fix

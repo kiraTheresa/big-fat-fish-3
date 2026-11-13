@@ -9,7 +9,7 @@ export const usageMoney = (totals = {}) => totals.calls && !totals.pricedCalls ?
 export const usageTime = (value, timeOnly = false) => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: timeOnly ? undefined : '2-digit', day: timeOnly ? undefined : '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : '—';
 export const usageSession = (key) => key?.startsWith('g-') ? `群聊 · ${key.slice(2)}` : key?.startsWith('p-') ? `私聊 · ${key.slice(2)}` : key || '全部会话';
 function usageChart(result) {
-  if (result.totals?.calls && !result.totals.pricedCalls) return empty('费用走势待确认', '当前记录缺少可计价用量，不显示为零费用走势。', 'usage');
+  if (result.totals?.calls && !result.totals.pricedCalls) return empty('费用走势待确认', '当前记录缺少完整计价依据，不显示为零费用走势。', 'usage');
   const buckets = result.byTime || [];
   if (!buckets.length) return empty('暂无用量走势', '产生调用后显示当前时段的费用走势。', 'usage');
   const max = Math.max(1, ...buckets.map(row => row.costNano || 0));
@@ -20,7 +20,7 @@ function usageChart(result) {
     const height = (row.costNano || 0) / max * 98;
     const tick = (i % tickEvery === 0 && i < buckets.length - 2) || i === buckets.length - 1;
     return `<button class="usage-chart-bar" type="button" data-action="usage-chart" data-reading="${e(reading)}" aria-label="${e(reading)}" title="${e(reading)}"><svg viewBox="0 0 20 100" preserveAspectRatio="none" aria-hidden="true"><rect x="3" y="${100-height}" width="14" height="${height}" rx="1"/></svg><span>${tick ? e(label) : ''}</span></button>`;
-  }).join('')}</div></div><p class="field-hint" id="usage-chart-reading">选择柱形查看该时段费用；无完整用量的调用不作为零费用计入。</p>`;
+  }).join('')}</div></div><p class="field-hint" id="usage-chart-reading">选择柱形查看该时段费用；计价依据不完整的调用标为待确认。</p>`;
 }
 function usageKindRows(result) {
   const rows = result.byKind || [];

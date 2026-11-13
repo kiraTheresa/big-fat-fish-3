@@ -112,7 +112,7 @@ export async function beginUsage({ kind = 'chat', model, sessionKey = 'system', 
   });
 }
 
-export async function finishUsage(attempt, { usage, error, httpStatus, images = 0, responseModel } = {}) {
+export async function finishUsage(attempt, { usage, error, httpStatus, images = 0, responseModel, imageResponseComplete } = {}) {
   return serial(async () => {
     const numeric = (value) => Number.isFinite(value) && value >= 0 ? value : undefined;
     const promptTokens = numeric(usage?.prompt_tokens ?? usage?.input_tokens);
@@ -125,6 +125,7 @@ export async function finishUsage(attempt, { usage, error, httpStatus, images = 
       finishedAt,
       elapsedMs: Math.max(0, finishedAt - attempt.time),
       usageKnown: totalTokens !== undefined,
+      ...(attempt.kind === 'draw' ? { imageResponseComplete: imageResponseComplete === true } : {}),
       ...(typeof responseModel === 'string' ? { responseModel: redactText(responseModel).slice(0, 200) } : {}),
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(error ? { error: redactText(error.message ?? error, [config.deepseekApiKey, config.imageApiKey]) } : {}),

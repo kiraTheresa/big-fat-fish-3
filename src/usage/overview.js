@@ -1,6 +1,6 @@
 import { readUsageOverview } from '../store/usage-store.js';
 import { usageDayStart } from '../platform/usage-policy.js';
-import { USAGE_PRICING } from './pricing.js';
+import { USAGE_PRICING, IMAGE_PRICING } from './pricing.js';
 
 export const USAGE_PERIODS = Object.freeze({ today: 1, '7d': 7, '30d': 30 });
 const DAY = 86400000;
@@ -31,5 +31,5 @@ export async function readUsageDashboard({ period = 'today', since: customSince,
   }
   return { ...current, byTime, previous: previous.totals,
     range: { period, since, until, timeZone: 'Asia/Shanghai', interval, sessionKey: sessionKey || null },
-    pricing: USAGE_PRICING };
+    pricing: { ...USAGE_PRICING, image: IMAGE_PRICING } };
 }
