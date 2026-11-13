@@ -289,9 +289,48 @@ label{display:block;font-size:12px;font-weight:550}small{font-size:12px}
   margin-bottom: 5px;
   border-bottom: 1px solid var(--line);
 }
-.json-toolbar label { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
-.json-toolbar select { width: 13rem; height: 36px; }
-.json-toolbar button { color: var(--ink); white-space: nowrap; }
+.json-toolbar .json-scope { position: relative; min-width: 0; max-width: 100%; }
+.json-toolbar .json-scope > summary {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.json-scope-label { margin-inline-start: 5px; color: var(--accent); }
+.json-scope-options {
+  position: absolute;
+  z-index: 2;
+  inset-inline-start: 0;
+  top: calc(100% + 4px);
+  width: min(20rem, calc(100vw - 82px));
+  max-height: 16rem;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  box-shadow: 0 4px 12px #20273420;
+}
+.json-scope-options button {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: white;
+  color: var(--ink);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.json-scope-options button:is(:hover, [aria-pressed="true"]) { background: #edf2fb; }
+.json-scope-options button:focus-visible { outline-offset: -2px; }
+.json-toolbar > button { color: var(--ink); white-space: nowrap; }
 .json-empty { margin: 0; padding: 12px 8px; }
 .json-viewer summary {
   padding: 5px 7px;
@@ -350,8 +389,9 @@ label{display:block;font-size:12px;font-weight:550}small{font-size:12px}
 }
 @media (max-width: 560px) {
   .json-viewer { padding-inline: 4px; }
-  .json-toolbar label { width: 100%; }
-  #prompt-console .json-toolbar :is(select, .button) { min-height: 44px; }
+  .json-toolbar .json-scope { width: 100%; }
+  .json-toolbar .json-scope > summary { padding-block: 10px; }
+  #prompt-console .json-toolbar :is(.json-scope summary, button) { min-height: 44px; }
   .json-viewer summary { min-height: 44px; padding-block: 10px; }
   .json-viewer .json-children { margin-inline-start: 7px; padding-inline-start: 2px; }
 }

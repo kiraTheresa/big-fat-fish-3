@@ -5,6 +5,12 @@ Versions follow Semantic Versioning. Entries are grouped by change type: `feat` 
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [1.2.1] - 2026-11-13
+
+### fix
+
+- Keep the selected Prompt JSON node as the scope for bulk expand and collapse when choosing it with the mouse.
+
 ## [1.2.0] - 2026-11-13
 
 ### feat
