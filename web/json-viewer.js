@@ -14,19 +14,17 @@ function field(key) {
 }
 
 function pathLabel(id) {
-  if (id === '[]') return '整个 JSON';
   return '$' + JSON.parse(id).map((key) => {
     if (typeof key === 'string' && /^[A-Za-z_$][\w$]*$/.test(key)) return `.${key}`;
     return `[${JSON.stringify(key)}]`;
   }).join('');
 }
 
-function disclosure(id, kind, label, content, open) {
+function nodeView(id, kind, label, content = '', open = false) {
   return `<div class="${kind}" data-json-path="${escape(id)}">
-    <div class="json-node-row">
-      <button type="button" class="json-toggle" aria-expanded="${open}" aria-label="${escape(pathLabel(id))} 的内容"></button>
-      <button type="button" class="json-row json-select" aria-pressed="false">${label}</button>
-    </div>
+    <button type="button" class="json-node-row json-select" aria-pressed="false"${content ? ` aria-expanded="${open}"` : ''}>
+      <span class="json-toggle" aria-hidden="true"></span><span class="json-row">${label}</span>
+    </button>
     ${content}
   </div>`;
 }
@@ -39,20 +37,20 @@ function node(value, path, expanded) {
     const array = Array.isArray(value);
     const entries = Object.entries(value);
     const brackets = array ? '[ ]' : '{ }';
-    if (!entries.length) return `<div class="json-row">${label}<span class="json-shape">${brackets}</span></div>`;
+    if (!entries.length) return nodeView(id, 'json-leaf', `${label}<span class="json-shape">${brackets}</span>`);
     const open = saved ?? (path.length === 0 || (path.length === 1 && entries.length <= 4));
     const preview = !array && path.length > 0 && entries.find(([, item]) =>
       item === null || ['boolean', 'number'].includes(typeof item) || (typeof item === 'string' && item.length <= 28));
-    return disclosure(id, `json-branch json-depth-${path.length % 3}`,
+    return nodeView(id, `json-branch json-depth-${path.length % 3}`,
       `${label}<span class="json-shape">${brackets}</span><span class="json-count">${entries.length} 项</span>${preview ? `<span class="json-preview">${field(preview[0])}${scalar(preview[1])}</span>` : ''}`,
       `<div class="json-children"${open ? '' : ' hidden'}>${entries.map(([key, item]) => node(item, [...path, array ? Number(key) : key], expanded)).join('')}</div>`, open);
   }
   if (typeof value === 'string' && (value.length > 96 || value.includes('\n'))) {
-    return disclosure(id, 'json-text',
+    return nodeView(id, 'json-text',
       `${label}${scalar(value.split('\n', 1)[0].slice(0, 72))}<span class="json-count">${value.length} 字符</span>`,
       `<pre class="json-text-body"${saved ? '' : ' hidden'}>${escape(value)}</pre>`, saved ?? false);
   }
-  return `<div class="json-row">${label}${scalar(value)}</div>`;
+  return nodeView(id, 'json-leaf', `${label}${scalar(value)}`);
 }
 
 const selectedRow = (container) => container.querySelector('.json-select[aria-pressed="true"]');
@@ -60,12 +58,18 @@ const selectedRow = (container) => container.querySelector('.json-select[aria-pr
 function selectRow(container, row) {
   selectedRow(container)?.setAttribute('aria-pressed', 'false');
   row?.setAttribute('aria-pressed', 'true');
-  container.querySelector('.json-scope-label').textContent = pathLabel(row?.closest('[data-json-path]').dataset.jsonPath ?? '[]');
+  container.querySelector('.json-scope-label').textContent = row
+    ? `当前节点 · ${pathLabel(row.parentElement.dataset.jsonPath)}` : '整个 JSON';
   container.querySelector('.json-clear-selection').hidden = !row;
+  const target = row?.parentElement ?? container.querySelector('[data-json-path]');
+  for (const button of container.querySelectorAll('[data-json-open]')) {
+    button.disabled = !target?.firstElementChild.hasAttribute('aria-expanded');
+  }
 }
 
 function setExpanded(element, open) {
-  element.firstElementChild.querySelector('.json-toggle').setAttribute('aria-expanded', String(open));
+  if (!element.firstElementChild.hasAttribute('aria-expanded')) return;
+  element.firstElementChild.setAttribute('aria-expanded', String(open));
   element.lastElementChild.hidden = !open;
 }
 
@@ -73,26 +77,27 @@ function setExpanded(element, open) {
 export function updateJsonViewer(container, value) {
   if (!container.querySelector('.json-tree')) {
     container.innerHTML = `<div class="json-toolbar">
-      <span class="json-scope">范围 <strong class="json-scope-label" aria-live="polite"></strong></span>
+      <span class="json-scope"><strong class="json-scope-label" aria-live="polite"></strong></span>
       <button type="button" class="text-button json-clear-selection" hidden>取消选择</button>
       <button type="button" class="button small" data-json-open="true">全部展开</button>
       <button type="button" class="button small" data-json-open="false">全部收起</button>
     </div><div class="json-tree"></div>`;
     container.addEventListener('click', (event) => {
       const button = event.target.closest('button');
-      if (!button) return;
-      if (button.matches('.json-select')) {
-        selectRow(container, button === selectedRow(container) ? null : button);
+      const selection = container.ownerDocument.getSelection();
+      if (event.detail && (!button || button.matches('.json-select')) && selection && !selection.isCollapsed && container.contains(selection.anchorNode)) return;
+      if (!button) {
+        if (event.target.matches('.json-viewer, .json-tree, .json-children, .json-toolbar')) selectRow(container, null);
         return;
       }
-      if (button.matches('.json-toggle')) {
-        const target = button.closest('[data-json-path]');
-        setExpanded(target, target.lastElementChild.hidden);
+      if (button.matches('.json-select')) {
+        selectRow(container, button);
+        setExpanded(button.parentElement, button.getAttribute('aria-expanded') !== 'true');
         return;
       }
       if (button.matches('.json-clear-selection')) {
         selectRow(container, null);
-        container.querySelector('[data-json-open]').focus({ preventScroll: true });
+        container.querySelector('[data-json-open]:not(:disabled), .json-select').focus({ preventScroll: true });
         return;
       }
       if (!button.matches('[data-json-open]')) return;
@@ -104,18 +109,24 @@ export function updateJsonViewer(container, value) {
         setExpanded(parent, true);
       }
     });
+    container.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      selectRow(container, null);
+      if (event.target.matches('.json-clear-selection')) container.querySelector('.json-select').focus({ preventScroll: true });
+      event.stopPropagation();
+    });
   }
   const disclosures = () => Array.from(container.querySelectorAll('[data-json-path]'));
   const selected = selectedRow(container)?.closest('[data-json-path]').dataset.jsonPath;
   const active = container.ownerDocument.activeElement;
   const focused = container.contains(active) ? active.closest('[data-json-path]')?.dataset.jsonPath : undefined;
-  const expanded = new Map(disclosures().map((element) => [element.dataset.jsonPath, !element.lastElementChild.hidden]));
+  const expanded = new Map(disclosures().filter((element) => element.firstElementChild.hasAttribute('aria-expanded'))
+    .map((element) => [element.dataset.jsonPath, element.firstElementChild.getAttribute('aria-expanded') === 'true']));
   container.querySelector('.json-tree').innerHTML = node(value, [], expanded);
   const nodes = disclosures();
-  selectRow(container, nodes.find((element) => element.dataset.jsonPath === selected)?.firstElementChild.querySelector('.json-select'));
-  container.querySelector('.json-toolbar').hidden = nodes.length === 0;
+  selectRow(container, nodes.find((element) => element.dataset.jsonPath === selected)?.firstElementChild);
   if (focused !== undefined) {
-    const control = active.matches('.json-toggle') ? '.json-toggle' : '.json-select';
-    nodes.find((element) => element.dataset.jsonPath === focused)?.firstElementChild.querySelector(control).focus({ preventScroll: true });
+    const target = nodes.find((element) => element.dataset.jsonPath === focused) ?? nodes[0];
+    target.firstElementChild.focus({ preventScroll: true });
   }
 }

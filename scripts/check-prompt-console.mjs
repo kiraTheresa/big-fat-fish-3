@@ -44,54 +44,87 @@ try {
   const viewer = page.locator('#pp-request-viewer');
   const branch = (...path) => viewer.locator(`[data-json-path='${JSON.stringify(path)}']`);
   const scope = viewer.locator('.json-scope-label');
-  const toggle = (...path) => branch(...path).locator(':scope > .json-node-row > .json-toggle');
-  const row = (...path) => branch(...path).locator(':scope > .json-node-row > .json-select');
-  const expanded = async (...path) => (await toggle(...path).getAttribute('aria-expanded')) === 'true';
+  const row = (...path) => branch(...path).locator(':scope > .json-select');
+  const toggle = (...path) => row(...path).locator('.json-toggle');
+  const expanded = async (...path) => (await row(...path).getAttribute('aria-expanded')) === 'true';
   const selected = async (...path) => (await row(...path).getAttribute('aria-pressed')) === 'true';
   const expandAll = viewer.getByRole('button', { name: '全部展开' });
   const collapseAll = viewer.getByRole('button', { name: '全部收起' });
+  const clearSelection = viewer.getByRole('button', { name: '取消选择' });
   assert.equal(await scope.innerText(), '整个 JSON');
   await expandAll.press('Enter');
-  assert.equal(await viewer.locator('.json-toggle[aria-expanded="false"]').count(), 0);
+  assert.equal(await viewer.locator('[aria-expanded="false"]').count(), 0);
   await collapseAll.click();
-  assert.equal(await viewer.locator('.json-toggle[aria-expanded="true"]').count(), 0);
-  await toggle().click();
+  assert.equal(await viewer.locator('[aria-expanded="true"]').count(), 0);
+  await row().click();
+  assert.ok(await selected());
+  await row('tools').click();
+  assert.ok(await selected('tools'));
+  assert.ok(await expanded('tools'));
   await row('tools').click();
   assert.ok(await selected('tools'));
   assert.equal(await expanded('tools'), false);
   await expandAll.click();
-  assert.ok(await expanded('tools'));
-  assert.equal(await branch('tools').locator('.json-toggle[aria-expanded="false"]').count(), 0);
+  assert.equal(await branch('tools').locator('[aria-expanded="false"]').count(), 0);
   assert.equal(await expanded('messages'), false);
+  await row('tools').click();
+  await row('tools').click();
+  assert.equal(await branch('tools').locator('[aria-expanded="false"]').count(), 0, 'single-node toggling preserves descendants');
   await toggle('messages').click();
-  await toggle('messages', 0).click();
-  assert.ok(await selected('tools'));
+  assert.ok(await selected('messages'));
+  assert.ok(await expanded('messages'));
+  await row('messages', 0).click();
   await row('messages', 0, 'content').press('Space');
   assert.ok(await selected('messages', 0, 'content'));
-  assert.equal(await selected('tools'), false);
-  await expandAll.click();
   assert.ok(await expanded('messages', 0, 'content'));
   assert.equal(await expanded('messages', 1), false);
   await collapseAll.click();
+  assert.ok(await selected('messages', 0, 'content'));
   assert.equal(await expanded('messages', 0, 'content'), false);
   assert.ok(await expanded('messages', 0));
   assert.ok(await expanded('tools'));
-  await row('messages', 0, 'content').click();
+  await row('messages', 0, 'content').press('Enter');
+  const body = branch('messages', 0, 'content').locator('pre');
+  await body.evaluate((node) => window.scrollBy(0, node.getBoundingClientRect().top - 180));
+  const bodyBox = await body.boundingBox();
+  await page.mouse.move(bodyBox.x + 14, bodyBox.y + 17);
+  await page.mouse.down();
+  await page.mouse.move(bodyBox.x + 95, bodyBox.y + 17, { steps: 8 });
+  await page.mouse.up();
+  assert.ok(await body.evaluate((node) => {
+    const selection = window.getSelection();
+    return selection.toString().length > 0 && node.contains(selection.anchorNode);
+  }));
+  assert.ok(await selected('messages', 0, 'content'));
+  assert.ok(await expanded('messages', 0, 'content'));
+  await page.evaluate(() => window.getSelection().removeAllRanges());
+  await page.mouse.click(bodyBox.x + 15, bodyBox.y + 16);
+  assert.ok(await selected('messages', 0, 'content'));
+  assert.ok(await expanded('messages', 0, 'content'));
+  await row('messages', 0, 'content').press('Escape');
   assert.equal(await scope.innerText(), '整个 JSON');
+  assert.ok(await expanded('messages', 0, 'content'));
+  await row('model').click();
+  assert.ok(await selected('model'));
+  assert.ok(await expandAll.isDisabled());
+  assert.ok(await collapseAll.isDisabled());
+  await viewer.click({ position: { x: 3, y: 3 } });
+  assert.equal(await scope.innerText(), '整个 JSON');
+  assert.ok(await expandAll.isEnabled());
   await row('tools').click();
   await collapseAll.click();
   assert.equal(await expanded('tools'), false);
-  await viewer.getByRole('button', { name: '取消选择' }).click();
+  assert.equal(await branch('tools').locator('[aria-expanded="true"]').count(), 0);
+  await clearSelection.click();
   assert.equal(await scope.innerText(), '整个 JSON');
+  await row('stream_options').click();
   await row('messages').click();
   await expandAll.click();
-  assert.equal(await branch('messages').locator('.json-toggle[aria-expanded="false"]').count(), 0);
-  assert.equal(await expanded('tools'), false);
-  await toggle('stream_options').click();
+  assert.equal(await branch('messages').locator('[aria-expanded="false"]').count(), 0);
   await collapseAll.click();
   assert.ok(await selected('messages'));
   assert.equal(await expanded('messages'), false);
-  assert.equal(await branch('messages').locator('.json-toggle[aria-expanded="true"]').count(), 0);
+  assert.equal(await branch('messages').locator('[aria-expanded="true"]').count(), 0);
   assert.ok(await expanded('stream_options'));
   if (screenshotDir) await page.locator('#pp-request-view').screenshot({ path: join(screenshotDir, 'prompt-json-scope-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -106,7 +139,7 @@ try {
   await page.locator('[data-pp-action="copy-request"]').click();
   await page.getByText('JSON 已复制', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await raw.inputValue());
-  const systemContent = toggle('messages', 0, 'content');
+  const systemContent = row('messages', 0, 'content');
   await systemContent.click();
   assert.match(await branch('messages', 0, 'content').locator('pre').innerText(), /# 大肥鱼\n/);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -121,7 +154,7 @@ try {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }, hostileText);
   await page.waitForFunction((text) => document.querySelector('#pp-request-json').value.includes(text), 'alert(1)');
-  assert.ok(await selected('messages'));
+  assert.ok(await selected('messages', 0, 'content'));
   assert.ok(await expanded('messages', 0, 'content'));
   assert.ok(await systemContent.evaluate((node) => node === document.activeElement));
   await toggle('messages', 1).click();
@@ -136,6 +169,59 @@ try {
   assert.ok(await viewer.isVisible());
   assert.ok(await raw.isHidden());
   assert.ok(JSON.parse(await raw.inputValue()).messages);
+  // Keep renderer fixtures independent of the workbench's asynchronous previews.
+  {
+    await page.evaluate(() => {
+      const container = document.createElement('div');
+      container.id = 'json-fixture';
+      container.className = 'json-viewer';
+      document.body.prepend(container);
+    });
+    const fixtureViewer = page.locator('#json-fixture');
+    const nodeRow = (path) => fixtureViewer.locator(`[data-json-path='${JSON.stringify(path)}'] > .json-select`);
+    const expand = fixtureViewer.getByRole('button', { name: '全部展开' });
+    const collapse = fixtureViewer.getByRole('button', { name: '全部收起' });
+    const renderValue = (value) => page.evaluate(async (value) => {
+      const { updateJsonViewer } = await import('/json-viewer.js');
+      updateJsonViewer(document.querySelector('#json-fixture'), value);
+    }, value);
+    const fixture = { object: { nested: { value: 1 } }, empty: {}, list: [], zero: 0, flag: false, nothing: null, text: 'short' };
+    await renderValue(fixture);
+    for (const key of ['empty', 'list', 'zero', 'flag', 'nothing', 'text']) {
+      await nodeRow([key]).click();
+      assert.equal(await nodeRow([key]).getAttribute('aria-pressed'), 'true');
+      assert.ok(await expand.isDisabled());
+      assert.ok(await collapse.isDisabled());
+      assert.equal(await nodeRow([]).getAttribute('aria-expanded'), 'true');
+    }
+    await nodeRow(['empty']).click();
+    await renderValue({ ...fixture, empty: { value: 'now expandable' } });
+    assert.equal(await nodeRow(['empty']).getAttribute('aria-pressed'), 'true');
+    assert.ok(await expand.isEnabled());
+    assert.ok(await nodeRow(['empty']).evaluate((node) => node === document.activeElement));
+    await collapse.click();
+    assert.equal(await nodeRow(['empty']).getAttribute('aria-expanded'), 'false');
+    await renderValue(fixture);
+    assert.equal(await nodeRow(['empty']).getAttribute('aria-pressed'), 'true');
+    assert.ok(await expand.isDisabled());
+    await renderValue({ object: fixture.object });
+    assert.equal(await fixtureViewer.locator('.json-scope-label').innerText(), '整个 JSON');
+    assert.equal(await fixtureViewer.locator('[aria-pressed="true"]').count(), 0);
+    assert.ok(await expand.isEnabled());
+    for (const value of [{}, [], null, false, 0, 'text']) {
+      await renderValue(value);
+      await nodeRow([]).click();
+      assert.equal(await nodeRow([]).getAttribute('aria-pressed'), 'true');
+      assert.ok(await expand.isDisabled());
+      await fixtureViewer.getByRole('button', { name: '取消选择' }).click();
+      assert.ok(await nodeRow([]).evaluate((node) => node === document.activeElement));
+      await nodeRow([]).click();
+      await nodeRow([]).press('Escape');
+      assert.equal(await fixtureViewer.locator('.json-scope-label').innerText(), '整个 JSON');
+      assert.ok(await expand.isDisabled());
+    }
+    await fixtureViewer.evaluate((node) => node.remove());
+  }
   await page.locator('[data-pp-view="cards"]').click();
   await page.locator('.pp-delivery > summary').click();
   assert.match(await page.locator('#pp-publish-reason').innerText(), /聊天测试/);
@@ -199,7 +285,7 @@ try {
     }
   }
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'PASS', checked: ['login', 'JSON disclosures and focus', 'JSON text escaping', 'raw JSON copy and editing', 'workflow navigation', 'publish requirements', 'draft save', 'tools trace', 'manual review', 'publish', 'same snapshot compare', 'edit invalidates pass', 'tool preview', 'all pages desktop/mobile overflow'], pageErrors: errors }));
+  console.log(JSON.stringify({ result: 'PASS', checked: ['login', 'JSON click selection, disclosures, leaves and refresh', 'JSON text escaping', 'raw JSON copy and editing', 'workflow navigation', 'publish requirements', 'draft save', 'tools trace', 'manual review', 'publish', 'same snapshot compare', 'edit invalidates pass', 'tool preview', 'all pages desktop/mobile overflow'], pageErrors: errors }));
 } finally {
   await browser?.close(); await platform.stop(); mock.closeAllConnections(); await new Promise((resolve) => mock.close(resolve)); await rm(dir, { recursive: true, force: true });
 }
