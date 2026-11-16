@@ -20,6 +20,7 @@ await new Promise((resolve) => mock.listen(0, '127.0.0.1', resolve));
 process.env.DEEPSEEK_API_KEY = 'prompt-test-secret';
 process.env.DEEPSEEK_BASE_URL = `http://127.0.0.1:${mock.address().port}`;
 process.env.IMAGE_API_KEY = '';
+process.env.IMAGE_MODEL = 'gpt-image-2.5-flare-vip';
 process.env.DATA_DIR = root;
 const { config } = await import('../src/config.js');
 const store = await import('../src/prompt/store.js');

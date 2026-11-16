@@ -12,6 +12,7 @@ process.env.USAGE_DIR = join(root, 'initial');
 process.env.CONFIG_PATH = join(root, 'absent.json');
 process.env.DEEPSEEK_API_KEY = 'usage-secret-key';
 process.env.IMAGE_API_KEY = 'image-secret-key';
+process.env.IMAGE_MODEL = 'gpt-image-2.5-flare-vip';
 const { config } = await import('../src/config.js');
 const { beginUsage, finishUsage, setUsagePolicy, getUsagePolicy, usageDayStart, readUsageMonitor } = await import('../src/platform/usage-policy.js');
 const { readUsageOverview, appendUsage } = await import('../src/store/usage-store.js');

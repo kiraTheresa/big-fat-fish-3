@@ -57,7 +57,7 @@ Prompt 工作台在顶部提供编辑、保存和「去试聊」。试聊结果�
 
 上游资料核对日期为 2026-11-13。选型时先看模型 ID、接口、参考图能力和尺寸，再查对应模型的参数页。可用模型、分组和价格以老张在线文档及账号控制台为准，本节记录肥鱼的接入约定。[老张图像生成选型指南](https://docs.laozhang.ai/api-capabilities/image-generation-guide) · [Images API 参考](https://docs.laozhang.ai/api-reference/images) · [模型与价格总表](https://docs.laozhang.ai/models)
 
-「素材 → 开发者生图台」（`#image-lab`）使用后端的 `IMAGE_API_BASE_URL` 和 `IMAGE_API_KEY`。浏览器提交表单后，`POST /api/image-lab` 返回任务 ID，后台逐个执行，最多同时保留 5 个进行中或排队的任务。任务复用绘图开关和用量限额。QQ 的 `/draw` 和聊天绘图工具读取 `IMAGE_MODEL`，通过 Images API 文生图。
+「素材 → 开发者生图台」（`#image-lab`）使用后端的 `IMAGE_API_BASE_URL` 和 `IMAGE_API_KEY`。浏览器提交表单后，`POST /api/image-lab` 返回任务 ID，后台逐个执行，最多同时保留 5 个进行中或排队的任务。任务复用绘图开关和用量限额。QQ 的 `/draw` 和聊天绘图工具读取 `IMAGE_MODEL`，默认通过 Gemini 原生接口使用 Nano Banana 2.1 文生图。
 
 任务记录保存在 `data/management/image-tasks/`。刷新页面可继续查看状态、请求、用量和作品。进程重启后，未完成任务标为中断，请先核对上游调用记录再提交。历史任务保留参考图文件信息，沿用编辑任务时需重新选择参考图。也可以将已生成的作品直接用作下一轮的参考图。
 

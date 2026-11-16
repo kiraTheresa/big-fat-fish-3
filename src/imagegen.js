@@ -1,4 +1,4 @@
-// Shared Images API gateway; generated payloads and signed download URLs are
+// Shared image gateway; generated payloads and signed download URLs are
 // never included in usage records or logs.
 import { config } from './config.js';
 import { beginUsage, finishUsage } from './platform/usage-policy.js';
@@ -8,16 +8,25 @@ import { readResponseBytes } from './utils/read-response.js';
 
 const maxResponseBytes = 96 * 1024 * 1024;
 const maxImageBytes = 64 * 1024 * 1024;
+const nanoBananaModel = 'gemini-nano-banana-2.1';
 
 export async function generateImage(prompt, { sessionKey = 'system', onAttempt, logContext = {} } = {}) {
   const model = config.imageModel;
-  const request = model === 'grok-imagine-image-2.0'
-    ? { model, prompt, response_format: 'b64_json', n: 1 }
-    : { model, prompt, size: config.imageSize };
-  const { b64 } = await requestImage(request, { sessionKey, onAttempt, logContext });
+  let request;
+  if (model === nanoBananaModel) {
+    request = {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { responseModalities: ['IMAGE'], thinkingConfig: { thinkingLevel: 'medium' } },
+    };
+  } else if (model === 'grok-imagine-image-2.0') {
+    request = { model, prompt, response_format: 'b64_json', n: 1 };
+  } else {
+    request = { model, prompt, size: config.imageSize };
+  }
+  const { b64 } = await requestImage(request, { model, sessionKey, onAttempt, logContext });
   let asset = null;
   try {
-    asset = await saveGeneratedImage(b64, { prompt, sessionKey, model: request.model, size: request.size });
+    asset = await saveGeneratedImage(b64, { prompt, sessionKey, model, size: request.size });
   } catch (error) {
     // A disk failure must not discard an already paid-for image or trigger a redraw.
     logger.warn('[imagegen] 原图本地保存失败，继续发送图片', { code: error.code ?? 'MEDIA_SAVE_FAILED' });
@@ -27,9 +36,11 @@ export async function generateImage(prompt, { sessionKey = 'system', onAttempt, 
 
 export async function requestImage(request, {
   references = [], sessionKey = 'system', onAttempt, logContext = {}, timeoutMs = config.imageTimeoutMs, lab,
+  model = lab?.model ?? request.model,
 } = {}) {
-  const attempt = await beginUsage({ kind: lab ? 'image_lab' : 'draw', model: lab?.model ?? request.model, sessionKey,
-    traceId: logContext.traceId, source: logContext.source, imageSearch: lab?.protocol === 'gemini' && !!request.tools?.length });
+  const gemini = lab ? lab.protocol === 'gemini' : model === nanoBananaModel;
+  const attempt = await beginUsage({ kind: lab ? 'image_lab' : 'draw', model, sessionKey,
+    traceId: logContext.traceId, source: logContext.source, imageSearch: gemini && !!request.tools?.length });
   let usage = null;
   let httpStatus;
   let images = 0;
@@ -49,12 +60,13 @@ export async function requestImage(request, {
       body = JSON.stringify(request);
     }
     const operation = references.length ? 'edits' : 'generations';
-    const endpoint = lab ? new URL(lab.endpoint, config.imageApiBaseUrl)
+    const endpoint = lab || gemini
+      ? new URL(lab?.endpoint ?? `/v1beta/models/${model}:generateContent`, config.imageApiBaseUrl)
       : `${config.imageApiBaseUrl.replace(/\/$/, '')}/images/${operation}`;
     const res = await fetch(endpoint, {
       method: 'POST',
       headers, body, signal: AbortSignal.timeout(timeoutMs),
-      ...(lab && { redirect: 'error' }),
+      ...((lab || gemini) && { redirect: 'error' }),
     });
     httpStatus = res.status;
     if (!res.ok) {
@@ -72,27 +84,27 @@ export async function requestImage(request, {
     }
     const data = JSON.parse((await readResponseBytes(res, maxResponseBytes)).toString('utf8'));
     usage = data?.usage ?? null;
-    const parts = lab?.protocol === 'gemini' && Array.isArray(data?.candidates)
+    const parts = gemini && Array.isArray(data?.candidates)
       ? data.candidates.flatMap((candidate) => Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []) : [];
-    const items = lab?.protocol === 'gemini'
+    const items = gemini
       ? parts.filter((part) => !part?.thought).map((part) => ({ b64_json: (part?.inlineData ?? part?.inline_data)?.data }))
       : data?.data;
-    if (lab?.protocol === 'gemini' && data?.usageMetadata) {
+    if (gemini && data?.usageMetadata) {
       usage = {
         input_tokens: data.usageMetadata.promptTokenCount,
         output_tokens: data.usageMetadata.candidatesTokenCount,
         total_tokens: data.usageMetadata.totalTokenCount,
       };
     }
-    const item = items?.[0];
+    const item = gemini ? items.find((entry) => typeof entry.b64_json === 'string' && entry.b64_json) : items?.[0];
     // Image count is generated output, independent of a later download error.
-    imageResponseComplete = lab?.protocol === 'gemini'
+    imageResponseComplete = gemini
       ? data !== null && typeof data === 'object' && !Array.isArray(data) : Array.isArray(items);
     images = imageResponseComplete ? items.filter((entry) =>
       (typeof entry?.b64_json === 'string' && entry.b64_json !== '') || (typeof entry?.url === 'string' && entry.url !== '')).length : 0;
     onAttempt?.({ phase: 'response', name: 'image_api', httpStatus, usage, images, elapsedMs: Date.now() - startedAt });
+    if ((lab || gemini) && !images) throw new Error('绘图 API 没有返回图片，请查看老张调用记录');
     if (lab) {
-      if (!images) throw new Error('绘图 API 没有返回图片，请查看老张调用记录');
       const text = parts.filter((part) => !part?.thought && typeof part?.text === 'string').map((part) => part.text).join('\n');
       return { items, text, usage, httpStatus, elapsedMs: Date.now() - startedAt };
     }
