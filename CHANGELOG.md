@@ -5,6 +5,13 @@ Versions follow Semantic Versioning. Entries are grouped by change type: `feat` 
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [1.7.1] - 2026-11-19
+
+### fix
+
+- Refresh the local admin console with a blue-branded sign-in, aligned navigation and page controls, and clearer sections for runtime status, usage, and recent failures.
+- Keep instance details expanded when refreshing the overview and remove duplicate text from legacy failure records.
+
 ## [1.5.0] - 2026-11-13
 
 ### feat

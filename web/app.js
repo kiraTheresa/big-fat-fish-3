@@ -26,10 +26,12 @@ const icons = {
   events: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 14h5"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
   jobs: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  activity: '<path d="M2 12h5l3-7 4 14 3-7h5"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
   usage: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3a7 7 0 0 0 11.6-2"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   shield: '<path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4Z"/><path d="m8 12 3 3 5-6"/>',
@@ -101,7 +103,7 @@ function expireLogin() {
 
 function resetLoginButton() {
   $('.login-submit').disabled = false;
-  $('.login-submit').innerHTML = '进入工作台 <span aria-hidden="true">↗</span>';
+  $('.login-submit').textContent = '进入工作台';
 }
 
 async function login(token, expiresAt = null) {
@@ -239,7 +241,7 @@ const query = (values) => {
 const pill = (text, color = '') => `<span class="badge ${color}">${e(text)}</span>`;
 const empty = (title, description, name = 'inbox') => `<div class="empty-state"><div class="empty-icon">${icon(name)}</div><h3>${e(title)}</h3><p>${e(description)}</p></div>`;
 const panelHead = (title, description = '', action = '') => `<div class="panel-header"><div><h2>${e(title)}</h2>${description ? `<p>${e(description)}</p>` : ''}</div>${action}</div>`;
-const pageLink = (page, text) => `<button type="button" class="text-button" data-page="${page}">${e(text)} ↗</button>`;
+const pageLink = (page, text) => `<button type="button" class="text-button page-link" data-page="${page}">${e(text)} ${icon('arrow')}</button>`;
 const selectOptions = (options, selected) => options.map(([value, label]) => `<option value="${e(value)}"${value === selected ? ' selected' : ''}>${e(label)}</option>`).join('');
 
 function connectionInfo(connection) {
@@ -298,6 +300,7 @@ async function loadPage({ quiet = false } = {}) {
   if (!state.token) return;
   const sequence = ++state.sequence;
   const page = state.page;
+  const restoreInstanceDetails = !quiet && page === 'overview' && $('#instance-details')?.open;
   if (page === 'usage' && $('#usage-ledger')) state.usageDetailsOpen = $('#usage-ledger').open;
   for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
@@ -316,6 +319,7 @@ async function loadPage({ quiet = false } = {}) {
     const html = await renderers[page](sequence);
     if (sequence !== state.sequence || !state.token) return;
     $('#content').innerHTML = html;
+    if (restoreInstanceDetails) $('#instance-details').open = true;
     if (page === 'prompt') promptConsole.attach($('#content'));
     if (page === 'image-lab') {
       $('#content').append(imageLab.element);
@@ -374,34 +378,44 @@ async function renderOverview(sequence) {
     : `<dl class="key-values"><div><dt>今日调用</dt><dd><strong>${e(number(usage.calls))}</strong> 次</dd></div><div><dt>已报告 Token</dt><dd>${e(number(usage.totalTokens))}</dd></div><div><dt>失败调用 / 出图</dt><dd>${e(number(usage.failures))} 次 / ${e(number(usage.images))} 张</dd></div></dl>`;
   return `${persistenceError ? `<div class="notice error" role="alert">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}
     <div class="overview-grid">
-      <section class="panel">${panelHead('当前状态', '', pageLink('jobs', '任务调度'))}
+      <section class="panel overview-status">
+        <header class="panel-header"><h2>${icon('activity')}当前状态</h2>${pageLink('jobs', '任务调度')}</header>
         <dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.dot)}<span class="cell-sub">最近收到事件 ${e(date(status.connection?.lastEventAt))}</span></dd></div>
         <div><dt>调度器</dt><dd>${pill(schedulerText, scheduler?.activeJobId ? 'blue' : scheduler?.running ? '' : 'neutral')}${active ? `<span class="cell-sub">${e(active.name)}</span>` : ''}</dd></div>
         <div><dt>最近任务结果</dt><dd>${lastExecution}</dd></div></dl>
       </section>
-      <section class="panel">${panelHead('今日用量', '', pageLink('usage', '查看用量'))}${usageSummary}</section>
-    </div>
-    <section class="panel">${panelHead('最近失败', '', pageLink('logs', '进入排障'))}${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到运行日志重试。</div>'}</section>
-    <details id="instance-details" class="panel instance-details"${$('#instance-details')?.open ? ' open' : ''}>
-      <summary>实例详情</summary>
-      <dl class="key-values"><div><dt>运行时间</dt><dd>${e(duration(status.uptimeSeconds))} · 启动于 ${e(date(status.startedAt))}</dd></div>
-        <div><dt>数据目录</dt><dd class="mono">${e(status.storage?.dataDir || '—')}</dd></div>
-        <div><dt>待发送 / 进行中调用 / 待写入</dt><dd>${e(number(status.sender?.queued))} / ${e(number(status.usage?.inFlight?.length))} / ${e(number(status.storage?.pendingWrites))}</dd></div>
-        <div><dt>进程内存</dt><dd>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</dd></div>
-        ${config ? `<div><dt>QQ 地址</dt><dd class="mono">${e(config.connection?.wsUrl || '—')}</dd></div>
-        <div><dt>对话模型</dt><dd class="mono">${e(config.connection?.model || config.connection?.deepseekModel || '—')}</dd></div>
-        <div><dt>绘图模型</dt><dd class="mono">${e(config.connection?.imageModel || '—')}</dd></div>
-        <div><dt>配置版本</dt><dd class="mono">${e(config.revision ?? '—')}</dd></div>` : ''}
-      </dl>
-      <p class="field-hint">${config ? `对话接口：${config.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${config.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}。修改连接或模型的环境变量后需重启 Bot。` : '连接和模型配置暂不可读。'}</p>
-    </details>`;
+      <section class="panel overview-usage">
+        <header class="panel-header"><h2>${icon('usage')}今日用量</h2>${pageLink('usage', '查看用量')}</header>
+        ${usageSummary}
+      </section>
+      <section class="panel overview-failures">
+        <header class="panel-header"><h2>${icon('warning')}最近失败</h2>${pageLink('logs', '进入排障')}</header>
+        ${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到运行日志重试。</div>'}
+      </section>
+      <details id="instance-details" class="panel instance-details"${$('#instance-details')?.open ? ' open' : ''}>
+        <summary>${icon('logs')}实例详情${icon('chevron')}</summary>
+        <dl class="key-values"><div><dt>运行时间</dt><dd>${e(duration(status.uptimeSeconds))} · 启动于 ${e(date(status.startedAt))}</dd></div>
+          <div><dt>数据目录</dt><dd class="mono">${e(status.storage?.dataDir || '—')}</dd></div>
+          <div><dt>待发送 / 进行中调用 / 待写入</dt><dd>${e(number(status.sender?.queued))} / ${e(number(status.usage?.inFlight?.length))} / ${e(number(status.storage?.pendingWrites))}</dd></div>
+          <div><dt>进程内存</dt><dd>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</dd></div>
+          ${config ? `<div><dt>QQ 地址</dt><dd class="mono">${e(config.connection?.wsUrl || '—')}</dd></div>
+          <div><dt>对话模型</dt><dd class="mono">${e(config.connection?.model || config.connection?.deepseekModel || '—')}</dd></div>
+          <div><dt>绘图模型</dt><dd class="mono">${e(config.connection?.imageModel || '—')}</dd></div>
+          <div><dt>配置版本</dt><dd class="mono">${e(config.revision ?? '—')}</dd></div>` : ''}
+        </dl>
+        <p class="field-hint">${config ? `对话接口：${config.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${config.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}。修改连接或模型的环境变量后需重启 Bot。` : '连接和模型配置暂不可读。'}</p>
+      </details>
+    </div>`;
 }
 
 function recentFailures(items) {
   if (!items.length) return '<p class="muted">暂无失败、降级或结果未知的记录。</p>';
   return `<div class="event-list">${items.map((row, index) => {
     const info = describeLog(row);
-    return `<div class="event-row failure-row"><span class="event-icon">${icon('warning')}</span><div class="event-text"><strong>${e(info.title)} · ${e(info.result)}</strong><p>${e(row.sessionKey || '系统')} · ${e(info.detail || row.message)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
+    const title = [info.title, info.result].filter(Boolean).join(' · ');
+    const detail = info.detail || row.message;
+    const context = [row.sessionKey || '系统', detail === info.title ? '' : detail].filter(Boolean).join(' · ');
+    return `<div class="event-row failure-row"><div class="event-text"><strong>${e(title)}</strong><p>${e(context)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
   }).join('')}</div>`;
 }
 
