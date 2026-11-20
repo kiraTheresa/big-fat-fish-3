@@ -5,6 +5,70 @@ Versions follow Semantic Versioning. Entries are grouped by change type: `feat` 
 
 Documentation reconciliation on 2026-10-26: missing entries from `0.10.0` through `0.11.0` were restored from the corresponding commits, and current behavior boundaries were clarified. The group-command entry previously labeled `0.9.4` belongs to `0.10.1`. This reconciliation does not introduce a new feature release.
 
+## [1.7.1] - 2026-11-19
+
+### fix
+
+- Refresh the local admin console with a blue-branded sign-in, aligned navigation and page controls, and clearer sections for runtime status, usage, and recent failures.
+- Keep instance details expanded when refreshing the overview and remove duplicate text from legacy failure records.
+
+## [1.5.0] - 2026-11-13
+
+### feat
+
+- Show developer image calls as a separate usage category while retaining the shared drawing switch and daily limits. Classify earlier admin drawing records without rewriting their ledger or price snapshots.
+- Estimate GPT Image VIP, Grok Imagine 2.0, and Nano Banana 2.1 costs using their respective per-call or per-image rules. Keep incomplete results and additional search charges pending confirmation.
+
+### fix
+
+- Bound streamed image API responses, error bodies, and individual images; stop reading oversized results without automatically retrying.
+- Preserve and skip corrupt image task records during startup and history loading, and report a clear error when opening an affected task.
+
+## [1.4.0] - 2026-11-13
+
+### feat
+
+- Add a developer image workspace for GPT Image, Grok Imagine, and Nano Banana with model-specific controls and an upstream request preview.
+- Queue image generation and editing in the background. Keep task history, parameters, and usage available after a refresh, and mark unfinished tasks as interrupted after a restart.
+- Archive generated originals in Drawing Works and reuse saved parameters or output images for another task.
+
+## [1.3.0] - 2026-11-13
+
+### feat
+
+- Include LaoZhang GPT Image 2.5 VIP generation in usage costs at $0.03 per call, estimated with a fixed 6.7 CNY/USD conversion (¥0.201 per call). Preserve the tariff on each new attempt and show the pricing basis in the console.
+- Count returned images as one billable request even if downloading or saving later fails. Explicit upstream errors and complete empty responses cost zero; timeouts and incomplete responses remain pending. Existing unpriced history is unchanged.
+
+## [1.2.3] - 2026-11-13
+
+### fix
+
+- Select and toggle JSON nodes with one click while retaining child expansion states. Support leaf selection, Escape and blank-area deselection, and text selection without toggling nodes.
+
+## [1.2.2] - 2026-11-13
+
+### fix
+
+- Select and highlight the target directly in the Prompt JSON tree for bulk expand and collapse.
+
+## [1.2.1] - 2026-11-13
+
+### fix
+
+- Keep the selected Prompt JSON node as the scope for bulk expand and collapse when choosing it with the mouse.
+
+## [1.2.0] - 2026-11-13
+
+### feat
+
+- Expand or collapse the entire Prompt request JSON tree or a selected node and its descendants.
+
+## [1.1.0] - 2026-11-12
+
+### feat
+
+- Show Prompt requests in a reusable, color-coded JSON tree with collapsible objects, arrays, and long strings. Keep full JSON copying and temporary editing available.
+
 ## [1.0.0] - 2026-11-12
 
 ### feat

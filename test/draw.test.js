@@ -44,6 +44,7 @@ process.env.DATA_DIR = DATA_DIR;
 delete process.env.DRAW_WHITELIST_QQ; // 未配置名单也应向所有用户开放
 process.env.IMAGE_API_KEY = 'test-image-key';
 process.env.IMAGE_API_BASE_URL = imageServer.url;
+delete process.env.IMAGE_MODEL;
 process.env.IMAGE_TIMEOUT_MS = '2000';
 process.env.DEEPSEEK_API_KEY = ''; // chat 不生效：本文件只验 draw/command 链路
 // CONFIG_PATH 指向不存在路径：行为开关跑全默认，不受本机 config.json 干扰
@@ -56,6 +57,7 @@ const ping = (await import('../src/triggers/ping.js')).default;
 const draw = (await import('../src/triggers/draw.js')).default;
 const command = (await import('../src/triggers/command.js')).default;
 const chat = (await import('../src/triggers/chat.js')).default;
+const { readUsageOverview } = await import('../src/store/usage-store.js');
 
 after(async () => {
   await delay(SEND_INTERVAL_MS * 3); // 等发送队列的间隔定时器自然落定
@@ -178,9 +180,18 @@ test('群聊成功流（@ 本鱼）：「在画了」文本帧 → 图片段帧�
   assert.equal(seg.data.file.slice('base64://'.length), IMG_BYTES.toString('base64'));
   assert.equal(imgFrame.params.group_id, GROUP_ID);
 
-  // API 侧：prompt 原样上送
+  // API 侧：默认模型走 Gemini 原生请求，提示词原样上送。
   assert.equal(imageServer.requests.length, 1);
-  assert.equal(imageServer.requests[0].body.prompt, '一只橘猫');
+  const request = imageServer.requests[0];
+  assert.equal(request.url, '/v1beta/models/gemini-nano-banana-2.1:generateContent');
+  assert.deepEqual(request.body, {
+    contents: [{ role: 'user', parts: [{ text: '一只橘猫' }] }],
+    generationConfig: { responseModalities: ['IMAGE'], thinkingConfig: { thinkingLevel: 'medium' } },
+  });
+  const { items: [usage] } = await readUsageOverview({ sessionKey: `g-${GROUP_ID}`, kind: 'draw' });
+  assert.equal(usage.model, 'gemini-nano-banana-2.1');
+  assert.equal(usage.images, 1);
+  assert.equal(usage.total_tokens, 12);
 
   // JSONL 侧：占位 bot 行已落盘（图不进上下文，占位文本可被后续追问接上）
   await waitUntil(async () => {
@@ -199,7 +210,7 @@ test('私聊成功流：图片段经 sendPrivate（params.user_id，无 group_id
   const imgFrame = await onebotServer.waitForFrame(onlyNew(mark, (f) => imageFrame(f) !== null));
   assert.equal(imgFrame.params.user_id, OTHER_USER_QQ);
   assert.equal(imgFrame.params.group_id, undefined);
-  assert.equal(imageServer.requests.at(-1).body.prompt, '奶茶');
+  assert.equal(imageServer.requests.at(-1).body.contents[0].parts[0].text, '奶茶');
 });
 
 test('生成失败（API 500）：回兜底文案，无图片段出站', async () => {

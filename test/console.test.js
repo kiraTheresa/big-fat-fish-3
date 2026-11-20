@@ -39,7 +39,7 @@ function harness(responder = () => ({}), { signedIn = true, storage = new Map(),
     setInterval() {},
     setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, at: now + delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
-    AbortSignal, URLSearchParams, Intl, structuredClone,
+    AbortSignal, FormData, URLSearchParams, Intl, structuredClone,
     fetch: async (url, options) => {
       calls.push({ url, options });
       const response = await responder(url, options);
@@ -316,6 +316,18 @@ test('失败记录读取失败明确报错，不把查询错误显示成暂无�
   const html = await ui.run('renderOverview(1)');
   assert.match(html, /失败记录暂时无法读取/);
   assert.doesNotMatch(html, /暂无失败、降级或结果未知的记录/);
+});
+
+test('概览的失败列表不重复历史日志正文，并保留结构化失败的原因', async () => {
+  const ui = harness(() => ({}));
+  const html = ui.run(`recentFailures([
+    { level: 'WARN', message: '历史日志正文', sessionKey: 'g-100' },
+    { event: 'model.request.finished', outcome: 'failed', reason: 'timeout' }
+  ])`);
+  assert.equal(html.split('历史日志正文').length, 2);
+  assert.match(html, /模型请求结束 · 失败/);
+  assert.match(html, /系统 · 请求超时/);
+  assert.equal((html.match(/data-action="log-detail"/g) || []).length, 2);
 });
 
 test('运行日志可切换全部日志并筛选 DEBUG，重置恢复默认失败范围', async () => {

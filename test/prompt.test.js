@@ -20,6 +20,7 @@ await new Promise((resolve) => mock.listen(0, '127.0.0.1', resolve));
 process.env.DEEPSEEK_API_KEY = 'prompt-test-secret';
 process.env.DEEPSEEK_BASE_URL = `http://127.0.0.1:${mock.address().port}`;
 process.env.IMAGE_API_KEY = '';
+process.env.IMAGE_MODEL = 'gpt-image-2.5-flare-vip';
 process.env.DATA_DIR = root;
 const { config } = await import('../src/config.js');
 const store = await import('../src/prompt/store.js');
@@ -240,6 +241,7 @@ test('HTTP API 鉴权、快照、预览、测试、评审与发布串通；静�
   try {
     assert.equal((await fetch(`${url}/api/prompt/workspace`)).status, 401);
     assert.equal((await fetch(`${url}/prompt.js`)).status, 200);
+    assert.equal((await fetch(`${url}/json-viewer.js`)).status, 200);
     const w = (await request('workspace')).body;
     const snap = (await request('snapshot', 'POST', {})).body;
     const args = { revision: w.draft.revision, snapshotId: snap.id, input: '你好' };

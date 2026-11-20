@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const dir = await mkdtemp(join(tmpdir(), 'fish-admin-integration-'));
@@ -16,6 +16,9 @@ const { dispatch } = await import('../src/dispatch/dispatcher.js');
 const { register } = await import('../src/dispatch/registry.js');
 let handled = 0;
 register({ name: 'test-handler', match: () => true, handle: () => { handled++; } });
+const corruptTask = join(dir, 'management', 'image-tasks', '1794556800000-aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.json');
+await mkdir(join(dir, 'management', 'image-tasks'), { recursive: true });
+await writeFile(corruptTask, '{broken');
 let platform = await startPlatform({ schedule: false });
 const headers = { Authorization: `Bearer ${process.env.ADMIN_TOKEN}`, 'Content-Type': 'application/json' };
 const request = (path, method = 'GET', body) => fetch(`http://127.0.0.1:${platform.management.port}${path}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -30,6 +33,8 @@ test('静态页面、真实 API 与完整新事件收件闭环', async () => {
   const status = await (await request('/api/status')).json();
   assert.equal(status.connection.connected, false);
   assert.equal(status.usage.today.calls, 0);
+  assert.equal(await readFile(corruptTask, 'utf8'), '{broken');
+  assert.equal((await request('/api/image-lab/tasks')).status, 200);
   assert.equal(status.scheduler.jobs, 2);
   const jobs = (await (await request('/api/jobs')).json()).items;
   assert.equal(jobs.find((job) => job.type === 'distill').schedule.everyMs, 300000);

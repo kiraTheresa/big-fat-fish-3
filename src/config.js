@@ -141,14 +141,13 @@ export const config = {
   // LLM 用量 JSONL 落盘根目录
   usageDir: process.env.USAGE_DIR ?? join(process.env.DATA_DIR ?? 'data', 'usage'),
   // ---- 绘图（draw 触发器 / imagegen.js 唯一出口）----
-  // 上游可切换（OpenAI Images 协议 /v1/images/generations：老张中转 / 火山方舟 /
-  // 任意兼容源），换上游只改 base_url + key + model 三项，代码零改动。
+  // Nano Banana 走 Gemini 原生接口，其他模型走兼容的 Images API。
   // 域名注意（2026-10 实测）：老张默认主域名 api.laozhang.ai 国内直连不通，用 api2。
   imageApiBaseUrl: process.env.IMAGE_API_BASE_URL ?? 'https://api2.laozhang.ai/v1',
   // 绘图 API Key（留空 = draw 触发器不生效，同 deepseekApiKey 模式）
   imageApiKey: process.env.IMAGE_API_KEY ?? '',
-  imageModel: process.env.IMAGE_MODEL ?? 'gpt-image-2.5-flare-vip',
-  // 出图尺寸（老张兼容 '2K' 简写与 '1024x1024' 全写，实测 2K 可用）
+  imageModel: process.env.IMAGE_MODEL ?? 'gemini-nano-banana-2.1',
+  // Images API 的 size 参数，Nano Banana 和 Grok 使用模型默认尺寸。
   imageSize: process.env.IMAGE_SIZE ?? '2K',
   // 绘图超时（ms）：实测 GPT Image 2.5 出图 20-70s，给足余量
   imageTimeoutMs: num(process.env.IMAGE_TIMEOUT_MS, 120000),

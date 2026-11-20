@@ -56,6 +56,8 @@ Compose 默认把 NapCat 的 6099 和 3001、肥鱼工作台的 3210 映射到�
 
 前两条对应默认绘图和聊天接口。使用自定义供应商时按实际主机名调整。绘图接口返回 Base64 时直接读取响应，返回 URL 时 Bot 还会下载图片，下载域名独立匹配规则。QQ 使用裸 IP 时也不会命中域名规则。排查时在客户端连接记录中查看目标、进程、命中规则和出口，并检查 Verge 的前置规则是否覆盖这里的顺序。
 
+开发者生图台的 Images API 和 Gemini 原生 API 都经配置的老张主机出站，默认是 `api2.laozhang.ai`。若手动使用主域名，同样为 `api.laozhang.ai` 添加直连规则。生图台要求关闭 Node 的环境代理模式，禁止上游 HTTP 重定向，并以返回的 Base64 图片归档作品。TUN、容器或宿主机透明代理仍由网络规则控制。首次出图前在实际部署网络中用 `curl --noproxy '*' -sS -o /dev/null -w '%{http_code} %{remote_ip}\n' https://api2.laozhang.ai/v1/models` 进行无密钥探测，预期收到 401，同时核对代理连接记录中的出口。 [网络路由 Issue #3](https://github.com/kiraTheresa/big-fat-fish-3/issues/3)
+
 ## 在宿主机开发
 
 使用 Node.js 22.9+，保留 NapCat 容器，Bot 在容器或宿主机运行二选一。同一数据目录不能启动两个 Bot。

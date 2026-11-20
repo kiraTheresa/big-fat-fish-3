@@ -124,5 +124,7 @@ test('streamed response models reach the ledger; a different model tier stays un
   const image=await readUsageOverview({sessionKey:'g-image-failed',includeCost:true});
   assert.equal(image.totals.totalTokens,5);
   assert.equal(image.totals.failures,1);
-  assert.equal(image.totals.pendingCostCalls,1);
+  assert.equal(image.totals.pendingCostCalls,0);
+  assert.equal(image.totals.pricedCalls,1);
+  assert.equal(image.totals.costNano,0);
 });

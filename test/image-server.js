@@ -50,9 +50,13 @@ export async function startImageServer() {
         res.end(JSON.stringify({ created: 0, data: [{ url: `http://127.0.0.1:${port}/img` }] }));
         return;
       }
-      // kind === 'b64'
+      const b64 = IMG_BYTES.toString('base64');
+      const result = req.url === '/v1beta/models/gemini-nano-banana-2.1:generateContent'
+        ? { candidates: [{ content: { parts: [{ thought: true, inlineData: { data: 'dGhvdWdodA==' } }, { text: '完成' }, { inlineData: { data: b64 } }] } }],
+          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 7, totalTokenCount: 12 } }
+        : { created: 0, data: [{ b64_json: b64 }] };
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ created: 0, data: [{ b64_json: IMG_BYTES.toString('base64') }] }));
+      res.end(JSON.stringify(result));
     });
   });
 

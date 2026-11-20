@@ -14,6 +14,7 @@ function harness() {
     if (!nodes.has(selector)) nodes.set(selector, {
       dataset: {}, value: '', checked: false, readOnly: false, disabled: false, textContent: '', innerHTML: '',
       attributes: {}, selectionStart: 0, selectionEnd: 0, scrollTop: 0, open: false,
+      querySelectorAll() { return []; },
       setAttribute(key, value) { this.attributes[key] = value; },
     });
     return nodes.get(selector);

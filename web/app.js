@@ -1,6 +1,7 @@
 import { usageMoney, usageTime, usageSession, renderUsageShareContent } from './usage-view.js';
 import { renderRequestsView, renderRequestDetail, renderRequestTrace } from './request-view.js';
 import { describeLog } from '../src/utils/log-format.js';
+import { createImageLab } from './image-lab.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -25,10 +26,12 @@ const icons = {
   events: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 14h5"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
   jobs: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  activity: '<path d="M2 12h5l3-7 4 14 3-7h5"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
   usage: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3a7 7 0 0 0 11.6-2"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   shield: '<path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4Z"/><path d="m8 12 3 3 5-6"/>',
@@ -42,6 +45,7 @@ const pages = {
   prompt: ['Prompt 工作台', '编辑 → 保存 → 测试与评审 → 发布。草稿不会直接影响线上。'],
   images: ['素材库', '浏览生成的图片、提示词与来源会话。'],
   memes: ['素材库', '浏览已记录的表情与收藏状态。'],
+  'image-lab': ['开发者生图台', '用文字或参考图调试绘图 API，查看请求和生成结果。'],
   config: ['对话与能力', '设置 Bot 如何回复、开放哪些能力，以及每天最多用多少。'],
   users: ['用户与权限', '默认开放，需要时再为个别用户设置边界。'],
   jobs: ['任务调度', '安排记忆提炼与数据维护，查看执行结果。'],
@@ -52,7 +56,7 @@ const pages = {
 const navigation = [
   ['运行', [['overview', '概览'], ['usage', '用量与费用'], ['requests', '排障', 'logs']]],
   ['Bot 管理', [['config', '对话与能力'], ['prompt', 'Prompt'], ['users', '用户权限'], ['jobs', '任务调度']]],
-  ['素材', [['images', '绘图作品'], ['memes', '表情收藏']]],
+  ['素材', [['images', '绘图作品'], ['memes', '表情收藏'], ['image-lab', '开发者生图台']]],
 ];
 const resolvePage = (page) => page === 'media' ? 'images' : page;
 const initialPage = resolvePage(location.hash.slice(1));
@@ -64,6 +68,7 @@ const state = {
   requestDashboard: null, requestTrace: null, requestTraceVersion: 0,
 };
 let promptConsole;
+let imageLab;
 let usageReportUrl;
 const mediaGalleries = new Map();
 if (location.hash === '#media') history.replaceState(null, '', '#images');
@@ -98,7 +103,7 @@ function expireLogin() {
 
 function resetLoginButton() {
   $('.login-submit').disabled = false;
-  $('.login-submit').innerHTML = '进入工作台 <span aria-hidden="true">↗</span>';
+  $('.login-submit').textContent = '进入工作台';
 }
 
 async function login(token, expiresAt = null) {
@@ -153,6 +158,8 @@ function logout(message = '', { forget = true } = {}) {
   if (forget) clearSavedLogin();
   resetLoginButton();
   promptConsole?.clear();
+  imageLab?.clear();
+  imageLab = null;
   clearUsageReport();
   state.usageDashboard = null;
   state.requestDashboard = null;
@@ -182,13 +189,14 @@ function logout(message = '', { forget = true } = {}) {
   $('#admin-token').focus();
 }
 
-async function api(path, { method = 'GET', body, token = state.token, responseType = 'json' } = {}) {
+async function api(path, { method = 'GET', body, token = state.token, responseType = 'json', timeoutMs = 20000 } = {}) {
   if (token === state.token && expireLogin()) throw new Error(LOGIN_EXPIRED_MESSAGE);
   let response;
   try {
+    const json = body !== undefined && !(body instanceof FormData);
     response = await fetch(`/api${path}`, {
-      method, headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}), cache: 'no-store', signal: AbortSignal.timeout(20000),
+      method, headers: { Authorization: `Bearer ${token}`, ...(json ? { 'Content-Type': 'application/json' } : {}) },
+      body: json ? JSON.stringify(body) : body, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new Error(error.name === 'TimeoutError' ? '请求超时，请稍后重试。' : '无法连接管理服务，请检查 Bot 是否仍在运行。');
@@ -233,7 +241,7 @@ const query = (values) => {
 const pill = (text, color = '') => `<span class="badge ${color}">${e(text)}</span>`;
 const empty = (title, description, name = 'inbox') => `<div class="empty-state"><div class="empty-icon">${icon(name)}</div><h3>${e(title)}</h3><p>${e(description)}</p></div>`;
 const panelHead = (title, description = '', action = '') => `<div class="panel-header"><div><h2>${e(title)}</h2>${description ? `<p>${e(description)}</p>` : ''}</div>${action}</div>`;
-const pageLink = (page, text) => `<button type="button" class="text-button" data-page="${page}">${e(text)} ↗</button>`;
+const pageLink = (page, text) => `<button type="button" class="text-button page-link" data-page="${page}">${e(text)} ${icon('arrow')}</button>`;
 const selectOptions = (options, selected) => options.map(([value, label]) => `<option value="${e(value)}"${value === selected ? ' selected' : ''}>${e(label)}</option>`).join('');
 
 function connectionInfo(connection) {
@@ -292,6 +300,7 @@ async function loadPage({ quiet = false } = {}) {
   if (!state.token) return;
   const sequence = ++state.sequence;
   const page = state.page;
+  const restoreInstanceDetails = !quiet && page === 'overview' && $('#instance-details')?.open;
   if (page === 'usage' && $('#usage-ledger')) state.usageDetailsOpen = $('#usage-ledger').open;
   for (const gallery of mediaGalleries.values()) gallery.detach();
   state.loading = true;
@@ -310,7 +319,12 @@ async function loadPage({ quiet = false } = {}) {
     const html = await renderers[page](sequence);
     if (sequence !== state.sequence || !state.token) return;
     $('#content').innerHTML = html;
+    if (restoreInstanceDetails) $('#instance-details').open = true;
     if (page === 'prompt') promptConsole.attach($('#content'));
+    if (page === 'image-lab') {
+      $('#content').append(imageLab.element);
+      imageLab.refresh();
+    }
     if (page === 'images' || page === 'memes') mediaGalleries.get(page)?.attach($('#content'));
     $('#updated-at').textContent = `更新于 ${date(Date.now(), true)}`;
     if (page !== 'overview') api('/status').then((status) => { if (sequence === state.sequence && state.token) updateStatus(status); }).catch(() => {});
@@ -364,34 +378,44 @@ async function renderOverview(sequence) {
     : `<dl class="key-values"><div><dt>今日调用</dt><dd><strong>${e(number(usage.calls))}</strong> 次</dd></div><div><dt>已报告 Token</dt><dd>${e(number(usage.totalTokens))}</dd></div><div><dt>失败调用 / 出图</dt><dd>${e(number(usage.failures))} 次 / ${e(number(usage.images))} 张</dd></div></dl>`;
   return `${persistenceError ? `<div class="notice error" role="alert">持久化或调度存在异常：${e(typeof persistenceError === 'object' ? JSON.stringify(persistenceError) : persistenceError)}</div>` : ''}
     <div class="overview-grid">
-      <section class="panel">${panelHead('当前状态', '', pageLink('jobs', '任务调度'))}
+      <section class="panel overview-status">
+        <header class="panel-header"><h2>${icon('activity')}当前状态</h2>${pageLink('jobs', '任务调度')}</header>
         <dl class="key-values"><div><dt>QQ 连接</dt><dd>${pill(connection.text, connection.dot)}<span class="cell-sub">最近收到事件 ${e(date(status.connection?.lastEventAt))}</span></dd></div>
         <div><dt>调度器</dt><dd>${pill(schedulerText, scheduler?.activeJobId ? 'blue' : scheduler?.running ? '' : 'neutral')}${active ? `<span class="cell-sub">${e(active.name)}</span>` : ''}</dd></div>
         <div><dt>最近任务结果</dt><dd>${lastExecution}</dd></div></dl>
       </section>
-      <section class="panel">${panelHead('今日用量', '', pageLink('usage', '查看用量'))}${usageSummary}</section>
-    </div>
-    <section class="panel">${panelHead('最近失败', '', pageLink('logs', '进入排障'))}${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到运行日志重试。</div>'}</section>
-    <details id="instance-details" class="panel instance-details"${$('#instance-details')?.open ? ' open' : ''}>
-      <summary>实例详情</summary>
-      <dl class="key-values"><div><dt>运行时间</dt><dd>${e(duration(status.uptimeSeconds))} · 启动于 ${e(date(status.startedAt))}</dd></div>
-        <div><dt>数据目录</dt><dd class="mono">${e(status.storage?.dataDir || '—')}</dd></div>
-        <div><dt>待发送 / 进行中调用 / 待写入</dt><dd>${e(number(status.sender?.queued))} / ${e(number(status.usage?.inFlight?.length))} / ${e(number(status.storage?.pendingWrites))}</dd></div>
-        <div><dt>进程内存</dt><dd>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</dd></div>
-        ${config ? `<div><dt>QQ 地址</dt><dd class="mono">${e(config.connection?.wsUrl || '—')}</dd></div>
-        <div><dt>对话模型</dt><dd class="mono">${e(config.connection?.model || config.connection?.deepseekModel || '—')}</dd></div>
-        <div><dt>绘图模型</dt><dd class="mono">${e(config.connection?.imageModel || '—')}</dd></div>
-        <div><dt>配置版本</dt><dd class="mono">${e(config.revision ?? '—')}</dd></div>` : ''}
-      </dl>
-      <p class="field-hint">${config ? `对话接口：${config.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${config.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}。修改连接或模型的环境变量后需重启 Bot。` : '连接和模型配置暂不可读。'}</p>
-    </details>`;
+      <section class="panel overview-usage">
+        <header class="panel-header"><h2>${icon('usage')}今日用量</h2>${pageLink('usage', '查看用量')}</header>
+        ${usageSummary}
+      </section>
+      <section class="panel overview-failures">
+        <header class="panel-header"><h2>${icon('warning')}最近失败</h2>${pageLink('logs', '进入排障')}</header>
+        ${failures ? recentFailures(state.rows) : '<div class="notice error" role="alert">失败记录暂时无法读取，请到运行日志重试。</div>'}
+      </section>
+      <details id="instance-details" class="panel instance-details"${$('#instance-details')?.open ? ' open' : ''}>
+        <summary>${icon('logs')}实例详情${icon('chevron')}</summary>
+        <dl class="key-values"><div><dt>运行时间</dt><dd>${e(duration(status.uptimeSeconds))} · 启动于 ${e(date(status.startedAt))}</dd></div>
+          <div><dt>数据目录</dt><dd class="mono">${e(status.storage?.dataDir || '—')}</dd></div>
+          <div><dt>待发送 / 进行中调用 / 待写入</dt><dd>${e(number(status.sender?.queued))} / ${e(number(status.usage?.inFlight?.length))} / ${e(number(status.storage?.pendingWrites))}</dd></div>
+          <div><dt>进程内存</dt><dd>${e(number(Math.round((status.memory?.rssBytes || 0) / 1048576)))} MiB</dd></div>
+          ${config ? `<div><dt>QQ 地址</dt><dd class="mono">${e(config.connection?.wsUrl || '—')}</dd></div>
+          <div><dt>对话模型</dt><dd class="mono">${e(config.connection?.model || config.connection?.deepseekModel || '—')}</dd></div>
+          <div><dt>绘图模型</dt><dd class="mono">${e(config.connection?.imageModel || '—')}</dd></div>
+          <div><dt>配置版本</dt><dd class="mono">${e(config.revision ?? '—')}</dd></div>` : ''}
+        </dl>
+        <p class="field-hint">${config ? `对话接口：${config.capabilities?.chatConfigured ? '已配置' : '尚未配置密钥'} · 绘图接口：${config.capabilities?.drawConfigured ? '已配置' : '尚未配置密钥'}。修改连接或模型的环境变量后需重启 Bot。` : '连接和模型配置暂不可读。'}</p>
+      </details>
+    </div>`;
 }
 
 function recentFailures(items) {
   if (!items.length) return '<p class="muted">暂无失败、降级或结果未知的记录。</p>';
   return `<div class="event-list">${items.map((row, index) => {
     const info = describeLog(row);
-    return `<div class="event-row failure-row"><span class="event-icon">${icon('warning')}</span><div class="event-text"><strong>${e(info.title)} · ${e(info.result)}</strong><p>${e(row.sessionKey || '系统')} · ${e(info.detail || row.message)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
+    const title = [info.title, info.result].filter(Boolean).join(' · ');
+    const detail = info.detail || row.message;
+    const context = [row.sessionKey || '系统', detail === info.title ? '' : detail].filter(Boolean).join(' · ');
+    return `<div class="event-row failure-row"><div class="event-text"><strong>${e(title)}</strong><p>${e(context)}</p></div><time>${e(date(row.time, true))}</time><button type="button" class="button small" data-action="log-detail" data-index="${index}">详情</button></div>`;
   }).join('')}</div>`;
 }
 
@@ -501,14 +525,14 @@ function showLogDetail(row) {
   showDialog('日志详情', 'LOGS / RECORD', `<dl class="key-values"><div><dt>时间</dt><dd>${e(date(row.time))}</dd></div><div><dt>会话</dt><dd>${e(row.sessionKey || '系统 / 历史未记录')}</dd></div><div><dt>阶段 / 结果</dt><dd>${e(info.title)} · ${e(info.result)}</dd></div><div><dt>原因 / 过程</dt><dd>${e(info.detail || row.message)}</dd></div></dl><p class="field-hint">此处是单个阶段的结果；后续是否降级、兜底或发送成功，请查看本轮链路。</p>${row.traceId ? `<div class="dialog-actions"><button type="button" class="button" data-action="request-trace" data-trace="${e(row.traceId)}">查看本轮业务链路</button></div>` : '<p class="field-hint">此记录没有链路 ID，无法可靠关联后续结果。</p>'}<details><summary>原始记录（已脱敏）</summary><pre class="json-block">${e(JSON.stringify(row, null, 2))}</pre></details>`);
 }
 
-const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
+const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image_lab: '开发者生图', image: '绘图', distill: '记忆提炼' };
 function usageSessionTable(result) {
   const rows = [...(result.bySession || [])].sort((a,b) => (b.costNano || 0) - (a.costNano || 0) || b.calls - a.calls).slice(0,8);
   return rows.length ? `<div class="table-wrap"><table><thead><tr><th>会话</th><th>已报告 token</th><th>预估费用</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td><span class="cell-main">${e(usageSession(row.sessionKey))}</span><span class="cell-sub">${e(number(row.calls))} 次调用 · ${e(number(row.pendingCostCalls))} 次待确认</span></td><td>${row.unknownUsageCalls === row.calls ? '未返回' : e(number(row.totalTokens))}</td><td class="usage-number">${e(usageMoney(row))}</td><td class="cell-actions"><button class="text-button" type="button" data-action="usage-session" data-session="${e(row.sessionKey)}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('暂无会话用量', '统计覆盖全部记录，此处最多展示费用最高的 8 个会话。', 'usage');
 }
 function usageLedger(result) {
   const f = state.filters.usage;
-  return `<details id="usage-ledger" class="panel usage-ledger"${f.detailKind || f.pendingOnly || state.usageDetailsOpen ? ' open' : ''}><summary><span>调用明细</span><span class="muted">匹配 ${e(number(result.itemCount ?? state.rows.length))} 次 · 展示最近 ${state.rows.length} 次</span></summary><form id="usage-detail-filter" class="filters"><label>用途<select name="detailKind">${selectOptions([['','全部用途'],...Object.entries(kindNames).filter(([key]) => key !== 'image')], f.detailKind)}</select></label><label>计价状态<select name="pendingOnly">${selectOptions([['','全部记录'],['true','费用待确认']], f.pendingOnly)}</select></label><button class="button" type="submit">筛选明细</button></form>${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间 / 模型</th><th>用途 / 会话</th><th>输入 / 输出 token</th><th>耗时 / 结果</th><th>预估费用</th><th>详情</th></tr></thead><tbody>${state.rows.map((row,index) => `<tr><td>${e(usageTime(row.time))}<span class="cell-sub mono">${e(row.responseModel || row.model || '—')}</span></td><td>${e(kindNames[row.kind] || row.kind || '—')}<span class="cell-sub">${e(usageSession(row.sessionKey))}</span></td><td>${row.prompt_tokens == null ? '未返回' : e(number(row.prompt_tokens))} / ${row.completion_tokens == null ? '未返回' : e(number(row.completion_tokens))}<span class="cell-sub">缓存输入 ${row.prompt_cache_hit_tokens == null ? '未返回' : e(number(row.prompt_cache_hit_tokens))}</span></td><td>${Number.isFinite(row.elapsedMs) ? e((row.elapsedMs / 1000).toFixed(1))+'s' : '—'}<span class="cell-sub">${row.status === 'failure' || row.status === 'interrupted' ? pill(row.status === 'interrupted' ? '已中断' : '失败','danger') : pill('成功')}</span></td><td class="usage-number">${row.cost?.status === 'estimated' ? e(usageMoney({costNano:row.cost.costNano})) : '待确认'}<span class="cell-sub usage-cost-reason">${e(row.cost?.reason || (row.pricing?.band === 'peak' ? '高峰时段价格' : row.pricing?.band === 'off-peak' ? '空闲时段价格' : ''))}</span></td><td class="cell-actions"><button class="button small" type="button" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有符合条件的调用', '当前明细筛选不会改变上方费用、趋势和会话汇总。', 'usage')}</details>`;
+  return `<details id="usage-ledger" class="panel usage-ledger"${f.detailKind || f.pendingOnly || state.usageDetailsOpen ? ' open' : ''}><summary><span>调用明细</span><span class="muted">匹配 ${e(number(result.itemCount ?? state.rows.length))} 次 · 展示最近 ${state.rows.length} 次</span></summary><form id="usage-detail-filter" class="filters"><label>用途<select name="detailKind">${selectOptions([['','全部用途'],...Object.entries(kindNames).filter(([key]) => key !== 'image')], f.detailKind)}</select></label><label>计价状态<select name="pendingOnly">${selectOptions([['','全部记录'],['true','费用待确认']], f.pendingOnly)}</select></label><button class="button" type="submit">筛选明细</button></form>${state.rows.length ? `<div class="table-wrap"><table><thead><tr><th>时间 / 模型</th><th>用途 / 会话</th><th>输入 / 输出 token</th><th>耗时 / 结果</th><th>预估费用</th><th>详情</th></tr></thead><tbody>${state.rows.map((row,index) => `<tr><td>${e(usageTime(row.time))}<span class="cell-sub mono">${e(row.responseModel || row.model || '—')}</span></td><td>${e(kindNames[row.kind] || row.kind || '—')}<span class="cell-sub">${e(usageSession(row.sessionKey))}</span></td><td>${row.prompt_tokens == null ? '未返回' : e(number(row.prompt_tokens))} / ${row.completion_tokens == null ? '未返回' : e(number(row.completion_tokens))}<span class="cell-sub">缓存输入 ${row.prompt_cache_hit_tokens == null ? '未返回' : e(number(row.prompt_cache_hit_tokens))}</span></td><td>${Number.isFinite(row.elapsedMs) ? e((row.elapsedMs / 1000).toFixed(1))+'s' : '—'}<span class="cell-sub">${row.status === 'failure' || row.status === 'interrupted' ? pill(row.status === 'interrupted' ? '已中断' : '失败','danger') : pill('成功')}</span></td><td class="usage-number">${row.cost?.status === 'estimated' ? e(usageMoney({costNano:row.cost.costNano})) : '待确认'}<span class="cell-sub usage-cost-reason">${e(row.cost?.reason || (row.pricing?.band === 'peak' ? '高峰时段价格' : row.pricing?.band === 'off-peak' ? '空闲时段价格' : ['call', 'image'].includes(row.pricing?.unit) ? ((row.pricing.unit === 'image' ? '按张计价' : '按次计价') + (row.cost?.costNano === 0 ? ' · 未产生费用' : ' · 固定汇率估算')) : ''))}</span></td><td class="cell-actions"><button class="button small" type="button" data-action="usage-detail" data-index="${index}">查看</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有符合条件的调用', '当前明细筛选不会改变上方费用、趋势和会话汇总。', 'usage')}</details>`;
 }
 async function renderUsage(sequence) {
   const f = state.filters.usage;
@@ -553,7 +577,9 @@ async function showUsageReport(button) {
 function showUsagePricing() {
   const pricing = state.usageDashboard?.pricing || {};
   const priceRows = Object.values(pricing.models || {}).map(model => [1,2].map(factor => `<tr><td>${e(model.name)} · ${factor === 1 ? '空闲' : '高峰'}</td>${['cacheInputNano','inputNano','outputNano'].map(key => `<td>${e(number(model.offPeak[key] * factor / 1000))}</td>`).join('')}</tr>`).join('')).join('');
-  showDialog('计价说明','USAGE / PRICING', `<p class="detail-caption">本地预估费用与供应商账单分别查看。费用 = 缓存输入 × 命中单价 + 非缓存输入 × 未命中单价 + 输出 × 输出单价。</p><div class="table-wrap"><table><thead><tr><th>模型（元 / 百万 token）</th><th>缓存输入</th><th>非缓存输入</th><th>输出</th></tr></thead><tbody>${priceRows}</tbody></table></div><ul class="usage-pricing-notes"><li>价目核对日期 ${e(pricing.verifiedAt || '—')}。当前计费日历覆盖至 2026 年末，后续需更新。</li><li>北京时间工作日（不含法定节假日）09:00–12:00、14:00–18:00 为高峰。按请求开始时刻保存价目快照，跨时段请求的实际扣费以供应商为准。</li><li>缓存命中率按输入 token 加权；没有返回缓存拆分的调用不混入分母。</li><li>历史记录缺少供应商或价目依据、未知模型、中转接口、绘图未定价、用量缺失或拆分矛盾时，费用待确认，不当作免费。</li><li>每次 API 尝试分别计数，包含失败和重试；API 调用次数不等于用户消息数。</li></ul><a class="button" href="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/" target="_blank" rel="noopener noreferrer">查看官方价目表 ↗</a>`);
+  const image = pricing.image;
+  const imageNotes = image ? `<h3>绘图 · 老张 API</h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>美元单价</th><th>人民币估算</th></tr></thead><tbody>${Object.entries(image.rates || {}).map(([model, rate]) => `<tr><td>${e(model)}</td><td>$${e(rate.usd)} / ${rate.unit === 'image' ? '张' : '次'}</td><td>¥${e(number(rate.usd * image.usdCny))} / ${rate.unit === 'image' ? '张' : '次'}</td></tr>`).join('')}</tbody></table></div><p>固定按 1 美元 = ¥${e(image.usdCny)} 折算。公开价估算，账号分组倍率、充值成本以供应商账单为准。</p><ul class="usage-pricing-notes"><li>GPT VIP 出图按次，Grok 按返回张数；Banana 返回 HTTP 200 即按次收费，无图也收费。后续保存失败不免除费用。</li><li>明确的上游错误不计费；超时、断线、响应超限或不完整、进程中断均待确认。Banana 开启搜索时，附加检索费用待供应商账单确认。</li><li>开发者生图单独归类，继续受绘图开关及每日额度限制。价目核对日期 ${e(image.verifiedAt)}；后续调价不改变旧账。</li></ul><a class="button" href="https://docs.laozhang.ai/api-capabilities/image-generation-guide" target="_blank" rel="noopener noreferrer">查看绘图价目 ↗</a>` : '';
+  showDialog('计价说明','USAGE / PRICING', `<p class="detail-caption">本地预估费用与供应商账单分别查看。DeepSeek 费用 = 缓存输入 × 命中单价 + 非缓存输入 × 未命中单价 + 输出 × 输出单价。</p><div class="table-wrap"><table><thead><tr><th>模型（元 / 百万 token）</th><th>缓存输入</th><th>非缓存输入</th><th>输出</th></tr></thead><tbody>${priceRows}</tbody></table></div><ul class="usage-pricing-notes"><li>价目核对日期 ${e(pricing.verifiedAt || '—')}。当前计费日历覆盖至 2026 年末，后续需更新。</li><li>北京时间工作日（不含法定节假日）09:00–12:00、14:00–18:00 为高峰。按请求开始时刻保存价目快照，跨时段请求的实际扣费以供应商为准。</li><li>缓存命中率按输入 token 加权；没有返回缓存拆分的调用不混入分母。</li><li>历史记录缺少供应商或价目依据、未配置价目的供应商或模型、DeepSeek 用量缺失或拆分矛盾时，费用待确认，不当作免费。</li><li>每次 API 尝试分别计数，包含失败和重试；API 调用次数不等于用户消息数。</li></ul><a class="button" href="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/" target="_blank" rel="noopener noreferrer">查看 DeepSeek 价目 ↗</a>${imageNotes}`);
 }
 async function renderPrompt(sequence) {
   if (!promptConsole) {
@@ -606,7 +632,15 @@ async function showRequestTrace(button, more = false) {
     $('#detail-dialog').scrollTop = 0;
   });
 }
-const renderers = { requests: renderRequests, images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
+async function renderImageLab(sequence) {
+  const settings = await api('/image-lab');
+  if (sequence !== state.sequence || !state.token) return '';
+  imageLab ??= createImageLab({ api, fetchMediaFile, toast });
+  imageLab.setSettings(settings);
+  return '';
+}
+
+const renderers = { requests: renderRequests, images: (sequence) => renderMedia('images', sequence), memes: (sequence) => renderMedia('memes', sequence), 'image-lab': renderImageLab, prompt: renderPrompt, overview: renderOverview, events: renderEvents, config: renderConfig, users: renderUsers, jobs: renderJobs, logs: renderLogs, usage: renderUsage };
 
 function showDialog(title, eyebrow, html) {
   lastFocus = document.activeElement;

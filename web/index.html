@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light">
-    <meta name="theme-color" content="#f4f5f7">
+    <meta name="theme-color" content="#f5f6f8">
     <meta name="description" content="大肥鱼本地管理台：排查失败、调试 Prompt、管理实例和观察用量。">
     <title>大肥鱼 · 开发工作台</title>
     <link rel="stylesheet" href="/styles.css">
@@ -14,27 +14,27 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <a class="skip-link" href="#content">跳到主要内容</a>
-
     <section id="login" class="login-view" aria-labelledby="login-title">
-      <div class="login-card glass">
-        <div class="brand-mark large" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div>
-        <p class="eyebrow">BIG FAT FISH / CONSOLE</p>
-        <h1 id="login-title">登录工作台</h1>
-        <p class="login-intro">调试 Prompt、检查运行状态、管理实例配置。</p>
-        <form id="login-form">
-          <label for="admin-token">管理令牌</label>
-          <div class="token-input"><input id="admin-token" name="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="输入 ADMIN_TOKEN"><button type="button" id="toggle-token" class="text-button" aria-label="显示管理令牌" aria-pressed="false">显示</button></div>
-          <p class="field-hint">使用启动时配置的 ADMIN_TOKEN。当前浏览器记住登录 30 分钟，期间刷新无需重新输入；退出后立即清除。</p>
-          <p id="login-error" class="form-error" role="alert" hidden></p>
-          <button type="submit" class="button primary login-submit">进入工作台 <span aria-hidden="true">↗</span></button>
-        </form>
-        <div class="login-footer"><span class="status-dot neutral"></span>本地管理 · 登录后读取运行数据</div>
+      <div class="login-card">
+        <div class="login-brand">
+          <div class="brand-mark large" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="#1b45a6"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div>
+          <div><strong>大肥鱼</strong><p>本地开发与调试</p></div>
+        </div>
+        <div class="login-main">
+          <h1 id="login-title">登录工作台</h1>
+          <form id="login-form">
+            <label for="admin-token">管理令牌</label>
+            <div class="token-input"><input id="admin-token" name="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="输入 ADMIN_TOKEN" aria-describedby="login-hint"><button type="button" id="toggle-token" class="text-button" aria-label="显示管理令牌" aria-pressed="false">显示</button></div>
+            <p class="field-hint" id="login-hint">当前浏览器记住登录 30 分钟。退出时立即清除。</p>
+            <p id="login-error" class="form-error" role="alert" hidden></p>
+            <button type="submit" class="button primary login-submit">进入工作台</button>
+          </form>
+        </div>
       </div>
-      <p class="login-caption">BIG FAT FISH · 本地开发与调试</p>
     </section>
 
     <div id="app" class="app-shell" hidden>
+      <a class="skip-link" href="#content">跳到主要内容</a>
       <header class="app-header">
         <a class="brand" href="#overview" data-page="overview"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 44 44" fill="none"><path d="M9 22c5-10 17-14 25-3l6-5v16l-6-5C26 36 14 32 9 22Z" fill="currentColor"/><circle cx="17" cy="21" r="2" fill="white"/><path d="M22 13c0-4 3-6 6-5M22 31c1 4 4 5 7 4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span><strong>大肥鱼</strong></a>
         <nav id="navigation" aria-label="业务分组"></nav>
@@ -44,13 +44,15 @@
         <nav id="section-navigation" aria-label="组内页面"></nav>
         <header class="page-header">
           <div><h1 id="page-title" tabindex="-1">运行概览</h1><p class="page-description" id="page-description"></p></div>
-          <div class="header-actions">
-            <button id="annotation-preview" class="button small" type="button" data-action="annotation-preview" aria-label="批注兼容" aria-pressed="false" title="作用于此实例的本机和局域网页面，刷新后生效" hidden>批注兼容 · 关</button>
-            <span id="connection-status" class="pill"><span class="status-dot neutral"></span>读取连接状态</span>
-            <button id="refresh" class="icon-button glass" type="button" aria-label="刷新当前页面" title="刷新当前页面"></button>
+          <div class="page-tools">
+            <div class="header-actions">
+              <span id="connection-status" class="pill"><span class="status-dot neutral"></span>读取连接状态</span>
+              <button id="annotation-preview" class="button small" type="button" data-action="annotation-preview" aria-label="批注兼容" aria-pressed="false" title="作用于此实例的本机和局域网页面，刷新后生效" hidden>批注兼容 · 关</button>
+              <button id="refresh" class="icon-button" type="button" aria-label="刷新当前页面" title="刷新当前页面"></button>
+            </div>
+            <div class="view-toolbar"><span id="updated-at" class="muted">等待更新</span><label id="live-control" class="live-control"><input type="checkbox" id="auto-refresh">每 20 秒更新</label></div>
           </div>
         </header>
-        <div class="view-toolbar"><span id="updated-at" class="muted">等待更新</span><label id="live-control" class="live-control"><input type="checkbox" id="auto-refresh">每 20 秒更新</label></div>
         <nav id="diagnostic-navigation" aria-label="排障视图" hidden></nav>
         <main id="content" tabindex="-1" aria-live="polite" aria-busy="false"></main>
       </div>

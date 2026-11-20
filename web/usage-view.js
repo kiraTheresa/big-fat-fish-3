@@ -1,6 +1,6 @@
 const e = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const number = value => Number(value ?? 0).toLocaleString('zh-CN');
-const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image: '绘图', distill: '记忆提炼' };
+const kindNames = { chat: '文字对话', vision: '图片理解', draw: '绘图', image_lab: '开发者生图', image: '绘图', distill: '记忆提炼' };
 const empty = (title, description) => `<div class="empty-state"><h3>${e(title)}</h3><p>${e(description)}</p></div>`;
 const panelHead = (title, description) => `<div class="panel-header"><div><h2>${e(title)}</h2><p>${e(description)}</p></div></div>`;
 
@@ -9,7 +9,7 @@ export const usageMoney = (totals = {}) => totals.calls && !totals.pricedCalls ?
 export const usageTime = (value, timeOnly = false) => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: timeOnly ? undefined : '2-digit', day: timeOnly ? undefined : '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : '—';
 export const usageSession = (key) => key?.startsWith('g-') ? `群聊 · ${key.slice(2)}` : key?.startsWith('p-') ? `私聊 · ${key.slice(2)}` : key || '全部会话';
 function usageChart(result) {
-  if (result.totals?.calls && !result.totals.pricedCalls) return empty('费用走势待确认', '当前记录缺少可计价用量，不显示为零费用走势。', 'usage');
+  if (result.totals?.calls && !result.totals.pricedCalls) return empty('费用走势待确认', '当前记录缺少完整计价依据，不显示为零费用走势。', 'usage');
   const buckets = result.byTime || [];
   if (!buckets.length) return empty('暂无用量走势', '产生调用后显示当前时段的费用走势。', 'usage');
   const max = Math.max(1, ...buckets.map(row => row.costNano || 0));
@@ -20,12 +20,12 @@ function usageChart(result) {
     const height = (row.costNano || 0) / max * 98;
     const tick = (i % tickEvery === 0 && i < buckets.length - 2) || i === buckets.length - 1;
     return `<button class="usage-chart-bar" type="button" data-action="usage-chart" data-reading="${e(reading)}" aria-label="${e(reading)}" title="${e(reading)}"><svg viewBox="0 0 20 100" preserveAspectRatio="none" aria-hidden="true"><rect x="3" y="${100-height}" width="14" height="${height}" rx="1"/></svg><span>${tick ? e(label) : ''}</span></button>`;
-  }).join('')}</div></div><p class="field-hint" id="usage-chart-reading">选择柱形查看该时段费用；无完整用量的调用不作为零费用计入。</p>`;
+  }).join('')}</div></div><p class="field-hint" id="usage-chart-reading">选择柱形查看该时段费用；计价依据不完整的调用标为待确认。</p>`;
 }
 function usageKindRows(result) {
   const rows = result.byKind || [];
   const max = Math.max(1, result.totals?.costNano || 0);
-  return rows.length ? [...rows].sort((a,b) => (b.costNano || 0) - (a.costNano || 0)).map(row => `<button class="usage-kind" type="button" data-action="usage-kind" data-kind="${e(row.kind)}"><span class="usage-kind-heading"><strong>${e(kindNames[row.kind] || row.kind)}</strong><span>${e(usageMoney(row))}</span></span><progress class="usage-progress" value="${Math.round((row.costNano || 0) / max * 1000) / 10}" max="100" aria-label="${e(kindNames[row.kind] || row.kind)}预估费用占比" aria-valuetext="${row.calls && !row.pricedCalls ? '费用待确认，暂无占比' : Math.round((row.costNano || 0) / max * 1000) / 10+'%'}"></progress><span class="usage-kind-note"><span>${e(number(row.calls))} 次 · ${row.kind === 'draw' || row.kind === 'image' ? '已返回 '+e(number(row.images))+' 张图片' : row.unknownUsageCalls === row.calls ? 'token 未返回' : e(number(row.totalTokens))+' token'}</span><span>${e(number(row.pendingCostCalls))} 次待确认</span></span></button>`).join('') : empty('暂无调用用途', '统计包含聊天、识图、记忆提炼与绘图。', 'usage');
+  return rows.length ? [...rows].sort((a,b) => (b.costNano || 0) - (a.costNano || 0)).map(row => `<button class="usage-kind" type="button" data-action="usage-kind" data-kind="${e(row.kind)}"><span class="usage-kind-heading"><strong>${e(kindNames[row.kind] || row.kind)}</strong><span>${e(usageMoney(row))}</span></span><progress class="usage-progress" value="${Math.round((row.costNano || 0) / max * 1000) / 10}" max="100" aria-label="${e(kindNames[row.kind] || row.kind)}预估费用占比" aria-valuetext="${row.calls && !row.pricedCalls ? '费用待确认，暂无占比' : Math.round((row.costNano || 0) / max * 1000) / 10+'%'}"></progress><span class="usage-kind-note"><span>${e(number(row.calls))} 次 · ${['draw', 'image', 'image_lab'].includes(row.kind) ? '已返回 '+e(number(row.images))+' 张图片' : row.unknownUsageCalls === row.calls ? 'token 未返回' : e(number(row.totalTokens))+' token'}</span><span>${e(number(row.pendingCostCalls))} 次待确认</span></span></button>`).join('') : empty('暂无调用用途', '统计包含聊天、识图、记忆提炼与绘图。', 'usage');
 }
 
 // The workbench and Chromium capture render this same DOM with the same CSS.

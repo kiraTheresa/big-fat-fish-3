@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { config } from '../config.js';
 import { logger, redactText } from '../utils/logger.js';
-import { estimateUsageCost } from '../usage/pricing.js';
+import { estimateUsageCost, isImageUsage } from '../usage/pricing.js';
 
 let writeChain = Promise.resolve();
 let lastWriteError = null;
@@ -60,7 +60,7 @@ function add(stats, rec, cost) {
     if (Number.isFinite(rec.prompt_cache_hit_tokens) && Number.isFinite(rec.prompt_tokens) && rec.prompt_cache_hit_tokens >= 0 && rec.prompt_cache_hit_tokens <= rec.prompt_tokens) {
       stats.cacheHitTokens += rec.prompt_cache_hit_tokens;
       stats.cacheReportedPromptTokens += rec.prompt_tokens;
-    } else if (rec.kind !== 'draw') stats.cacheUnknownCalls++;
+    } else if (!isImageUsage(rec.kind)) stats.cacheUnknownCalls++;
   }
 }
 function asTime(value, fallback) {
@@ -108,7 +108,8 @@ async function* records(sessionKey, { strict = false } = {}) {
         }
         if (strict && !validRecord(record)) throw ledgerError(name, lineNumber);
         if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
-        yield { ...record, sessionKey: name.slice(0, -6) };
+        // Earlier developer image calls used draw/admin; classify without rewriting the ledger or prices.
+        yield { ...record, ...(record.kind === 'draw' && record.source === 'admin' ? { kind: 'image_lab' } : {}), sessionKey: name.slice(0, -6) };
       }
     } catch (error) {
       if (error.code !== 'ENOENT' || !sessionKey) throw error;
